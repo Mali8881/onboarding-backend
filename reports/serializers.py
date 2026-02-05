@@ -1,0 +1,2 @@
+class ReportSerializer:
+    pass
