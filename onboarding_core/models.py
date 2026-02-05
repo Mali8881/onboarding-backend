@@ -32,7 +32,10 @@ class OnboardingMaterial(models.Model):
         related_name="materials",
         on_delete=models.CASCADE,
     )
-    type = models.CharField(max_length=16, choices=MaterialType.choices)
+    type = models.CharField(
+        max_length=10,
+        choices=MaterialType.choices,
+    )
     content = models.TextField()
     position = models.PositiveIntegerField(default=0)
 
@@ -40,4 +43,5 @@ class OnboardingMaterial(models.Model):
         ordering = ["position"]
 
     def __str__(self):
-        return f"{self.type} for day {self.onboarding_day.day_number}"
+        return f"{self.type} for {self.onboarding_day}"
+

@@ -12,6 +12,7 @@ ALLOWED_HOSTS = []
 # APPLICATIONS
 INSTALLED_APPS = [
     # django
+    "jazzmin",
     "django.contrib.admin",
     "django.contrib.auth",
     "django_extensions",
@@ -19,6 +20,8 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+
+
 
     # third-party
     "rest_framework",
@@ -116,3 +119,18 @@ USE_TZ = True
 STATIC_URL = "static/"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+JAZZMIN_SETTINGS = {
+    "site_title": "Onboarding Admin",
+    "site_header": "Onboarding Platform",
+    "site_brand": "Onboarding",
+    "welcome_sign": "Добро пожаловать в onboarding admin 🚀",
+
+    "show_sidebar": True,
+    "navigation_expanded": True,
+
+    "icons": {
+        "onboarding_core.OnboardingDay": "fas fa-calendar",
+        "onboarding_core.OnboardingMaterial": "fas fa-book",
+    },
+}

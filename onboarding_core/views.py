@@ -1,22 +1,28 @@
-from rest_framework import generics, permissions
+from rest_framework.generics import ListAPIView, RetrieveAPIView
+from rest_framework.permissions import IsAuthenticated
 
 from .models import OnboardingDay
 from .serializers import OnboardingDayListSerializer, OnboardingDayDetailSerializer
 
 
-class OnboardingDayListView(generics.ListAPIView):
-    permission_classes = [permissions.IsAuthenticated]
+class OnboardingDayListView(ListAPIView):
+    permission_classes = [IsAuthenticated]
     serializer_class = OnboardingDayListSerializer
 
     def get_queryset(self):
-        # пока так: показываем только активные
-        return OnboardingDay.objects.filter(is_active=True).order_by("position", "day_number")
+        return (
+            OnboardingDay.objects.filter(is_active=True)
+            .order_by("position", "day_number")
+        )
 
 
-class OnboardingDayDetailView(generics.RetrieveAPIView):
-    permission_classes = [permissions.IsAuthenticated]
+class OnboardingDayDetailView(RetrieveAPIView):
+    permission_classes = [IsAuthenticated]
     serializer_class = OnboardingDayDetailSerializer
     lookup_field = "id"
 
     def get_queryset(self):
-        return OnboardingDay.objects.filter(is_active=True).prefetch_related("materials")
+        return (
+            OnboardingDay.objects.filter(is_active=True)
+            .prefetch_related("materials")
+        )
