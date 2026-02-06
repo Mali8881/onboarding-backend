@@ -36,14 +36,16 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
 
+    "rest_framework.authtoken",
     # Third-party
     "rest_framework",
-
+    "regulations",
     "reports",
     "accounts",
     "onboarding",
     "content",
     "common",
+    'work_schedule',
 
 
 ]
@@ -71,6 +73,7 @@ ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
+        'rest_framework.authentication.TokenAuthentication',
     )
 }
 STATIC_URL = "static/"
@@ -80,3 +83,4 @@ ROOT_URLCONF = "config.urls"
 WSGI_APPLICATION = "config.wsgi.application"
 
 AUTH_USER_MODEL = 'accounts.User'
+

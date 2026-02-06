@@ -39,7 +39,13 @@ class User(AbstractUser):
     telegram = models.CharField(max_length=100, blank=True, null=True)
     department = models.ForeignKey(Department, null=True, blank=True, on_delete=models.SET_NULL)
     position = models.ForeignKey(Position, null=True, blank=True, on_delete=models.SET_NULL)
-    language = models.CharField(max_length=10, default="ru")
+
+
+    language = models.CharField(
+        max_length=2,
+        choices=[("ru", "RU"), ("en", "EN"), ("kg", "KG")],
+        default="ru"
+    )
 
     def __str__(self):
         return self.username
