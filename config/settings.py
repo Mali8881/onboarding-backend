@@ -29,9 +29,10 @@ INSTALLED_APPS = [
 
     # local
     "accounts",
-    "onboarding",
-    "content",
     "onboarding_core",
+    "reports",
+    "schedules",
+    "security",
 ]
 
 # MIDDLEWARE

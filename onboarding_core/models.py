@@ -1,14 +1,21 @@
 import uuid
 from django.db import models
+from django.conf import settings
+from django.utils import timezone
 
 
 class OnboardingDay(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
     day_number = models.PositiveIntegerField(unique=True)
     title = models.CharField(max_length=255)
+
+    goals = models.TextField(blank=True)
     description = models.TextField(blank=True)
     instructions = models.TextField(blank=True)
+
     deadline_time = models.TimeField(null=True, blank=True)
+
     is_active = models.BooleanField(default=True)
     position = models.PositiveIntegerField(default=0)
 
@@ -21,27 +28,83 @@ class OnboardingDay(models.Model):
 
 class OnboardingMaterial(models.Model):
     class MaterialType(models.TextChoices):
-        TEXT = "text", "Text"
         LINK = "link", "Link"
         VIDEO = "video", "Video"
+        TEXT = "text", "Text"
+        IMAGE = "image", "Image"
         FILE = "file", "File"
 
+    PRIORITY_ORDER = {
+        "link": 1,
+        "video": 2,
+        "text": 3,
+        "image": 4,
+        "file": 5,
+    }
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    onboarding_day = models.ForeignKey(
+
+    day = models.ForeignKey(
         OnboardingDay,
         related_name="materials",
         on_delete=models.CASCADE,
     )
-    type = models.CharField(
-        max_length=10,
-        choices=MaterialType.choices,
-    )
+
+    type = models.CharField(max_length=10, choices=MaterialType.choices)
     content = models.TextField()
     position = models.PositiveIntegerField(default=0)
 
     class Meta:
         ordering = ["position"]
+        unique_together = ("day", "position")
 
     def __str__(self):
-        return f"{self.type} for {self.onboarding_day}"
+        return f"{self.day} - {self.type}"
 
+    @property
+    def priority(self):
+        return self.PRIORITY_ORDER.get(self.type, 99)
+
+
+
+class OnboardingProgress(models.Model):
+    class Status(models.TextChoices):
+        NOT_STARTED = "not_started", "Not started"
+        IN_PROGRESS = "in_progress", "In progress"
+        DONE = "done", "Done"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="onboarding_progress",
+    )
+
+    day = models.ForeignKey(
+        OnboardingDay,
+        on_delete=models.CASCADE,
+        related_name="progress",
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.NOT_STARTED,
+    )
+
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("user", "day")
+        ordering = ["day__position", "day__day_number"]
+
+    def mark_done(self):
+        self.status = self.Status.DONE
+        self.completed_at = timezone.now()
+
+    def __str__(self):
+        return f"{self.user} - Day {self.day.day_number}: {self.status}"
