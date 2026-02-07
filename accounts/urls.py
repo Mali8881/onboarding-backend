@@ -1,7 +1,13 @@
+
 from django.urls import path
-from .views import MeAPIView, LogoutAPIView
+from .views import (
+    MyProfileAPIView,
+    DepartmentListAPIView,
+    PositionListAPIView,
+)
 
 urlpatterns = [
-    path("me/", MeAPIView.as_view()),
-    path("logout/", LogoutAPIView.as_view()),
+    path("me/profile/", MyProfileAPIView.as_view()),
+    path("departments/", DepartmentListAPIView.as_view()),
+    path("positions/", PositionListAPIView.as_view()),
 ]

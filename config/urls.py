@@ -1,6 +1,9 @@
 from django.contrib import admin
+from django.template.context_processors import static
 from django.urls import path, include
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+
+from config import settings
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -11,11 +14,12 @@ urlpatterns = [
     path("api/", include("regulations.urls")),
     path("api/", include("work_schedule.urls")),
     path("api/v1/", include("accounts.urls")),
-    path('admin/', admin.site.urls),
     path('onboarding/', include('onboarding.urls')),
     path("api/", include("common.urls")),
-
+    path("api/", include("content.urls")),
 
 ]
+
+
 
 

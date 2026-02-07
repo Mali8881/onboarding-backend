@@ -1,52 +1,68 @@
 import uuid
-from django.contrib.auth.models import AbstractUser
 from django.db import models
+from django.contrib.auth.models import AbstractUser
+
 
 class Department(models.Model):
-    name = models.CharField(max_length=255)
-    is_active = models.BooleanField(default=True)
+    name = models.CharField("Подразделение", max_length=255, unique=True)
+    is_active = models.BooleanField("Активен", default=True)  # Добавил verbose_name
+
     class Meta:
-        verbose_name = "Department"
-        verbose_name_plural = "Departments"
+        verbose_name = "Подразделение"
+        verbose_name_plural = "Подразделения"
+
     def __str__(self):
         return self.name
+
 
 class Position(models.Model):
-    name = models.CharField(max_length=255)
-    is_active = models.BooleanField(default=True)
+    name = models.CharField("Должность", max_length=255, unique=True)
+    is_active = models.BooleanField("Активна", default=True)  # Добавил verbose_name
+
     class Meta:
-        verbose_name = "Position"
-        verbose_name_plural = "Positions"
+        verbose_name = "Должность"
+        verbose_name_plural = "Должности"
+
     def __str__(self):
         return self.name
 
+
 class User(AbstractUser):
-    # КЛАСС ROLE ДОЛЖЕН БЫТЬ ТУТ
-    class Role(models.TextChoices):
-        ADMIN = 'admin', 'Администратор'
-        SUPER_ADMIN = 'super_admin', 'Супер-администратор'
-        USER = 'user', 'Пользователь'
+    avatar = models.ImageField("Аватар", upload_to="avatars/", null=True, blank=True)
 
-    role = models.CharField(
+    department = models.ForeignKey(
+        Department,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        verbose_name="Подразделение"
+    )
+
+    position = models.ForeignKey(
+        Position,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        verbose_name="Должность"
+    )
+
+    custom_position = models.CharField(
+        "Дополнительная информация о должности",
+        max_length=255,
+        blank=True,
+        null=True  # Добавлено для корректной работы миграций
+    )
+
+    # ИЗМЕНЕНО: Вместо default лучше разрешить NULL, чтобы не конфликтовать со старыми записями
+    telegram = models.CharField("Telegram", max_length=100, null=True, blank=True)
+
+    phone = models.CharField(
+        "Телефон",
         max_length=20,
-        choices=Role.choices,
-        default=Role.USER,
-        verbose_name="Роль"
-    )
-    full_name = models.CharField(max_length=255, blank=True)
-    photo = models.ImageField(upload_to="users/photos/", blank=True, null=True)
-    phone = models.CharField(max_length=50, blank=True, null=True)
-    telegram = models.CharField(max_length=100, blank=True, null=True)
-    department = models.ForeignKey(Department, null=True, blank=True, on_delete=models.SET_NULL)
-    position = models.ForeignKey(Position, null=True, blank=True, on_delete=models.SET_NULL)
-
-
-    language = models.CharField(
-        max_length=2,
-        choices=[("ru", "RU"), ("en", "EN"), ("kg", "KG")],
-        default="ru"
+        blank=True,
+        null=True
     )
 
-    def __str__(self):
-        return self.username
-
+    class Meta:
+        verbose_name = "Пользователь"
+        verbose_name_plural = "Пользователи"

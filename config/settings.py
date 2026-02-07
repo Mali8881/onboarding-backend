@@ -25,9 +25,14 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+
 ]
 
 INSTALLED_APPS = [
+    'jazzmin',
+    'ckeditor',  # Сам редактор
+    'ckeditor_uploader',  # Загрузчик файлов (если захотите вставлять картинки прямо в текст)
+
     # Django default apps
     "django.contrib.admin",
     "django.contrib.auth",
@@ -36,6 +41,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
 
+
     "rest_framework.authtoken",
     # Third-party
     "rest_framework",
@@ -43,7 +49,7 @@ INSTALLED_APPS = [
     "reports",
     "accounts",
     "onboarding",
-    "content",
+    'content.apps.ContentConfig',
     "common",
     'work_schedule',
 
@@ -84,3 +90,14 @@ WSGI_APPLICATION = "config.wsgi.application"
 
 AUTH_USER_MODEL = 'accounts.User'
 
+# Путь для загрузки картинок через редактор
+CKEDITOR_UPLOAD_PATH = "uploads/ckeditor/"
+
+# Настройка панелей инструментов (чтобы было как в Word)
+CKEDITOR_CONFIGS = {
+    'default': {
+        'toolbar': 'Full', # Полная панель инструментов
+        'height': 300,
+        'width': '100%',
+    },
+}

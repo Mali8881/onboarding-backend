@@ -1,56 +1,46 @@
 from rest_framework.views import APIView
+from rest_framework.generics import ListAPIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework import status
-from rest_framework.authtoken.models import Token
 
-from .serializers import MeSerializer, MeUpdateSerializer, PhotoUploadSerializer
+from .models import Department, Position
+from .serializers import (
+    UserProfileSerializer,
+    DepartmentSerializer,
+    PositionSerializer,
+)
 
 
-class MeView(APIView):
+class MyProfileAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        return Response(MeSerializer(request.user, context={"request": request}).data)
+        return Response(
+            UserProfileSerializer(request.user).data
+        )
 
     def patch(self, request):
-        ser = MeUpdateSerializer(request.user, data=request.data, partial=True)
-        ser.is_valid(raise_exception=True)
-        ser.save()
-        return Response(MeSerializer(request.user, context={"request": request}).data, status=status.HTTP_200_OK)
+        serializer = UserProfileSerializer(
+            request.user,
+            data=request.data,
+            partial=True
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
 
 
-class MePhotoView(APIView):
+class DepartmentListAPIView(ListAPIView):
+    serializer_class = DepartmentSerializer
     permission_classes = [IsAuthenticated]
 
-    def post(self, request):
-        ser = PhotoUploadSerializer(request.user, data=request.data, partial=True)
-        ser.is_valid(raise_exception=True)
-        ser.save()
-        return Response(MeSerializer(request.user, context={"request": request}).data, status=status.HTTP_200_OK)
-class MeAPIView(APIView):
+    def get_queryset(self):
+        return Department.objects.filter(is_active=True)
+
+
+class PositionListAPIView(ListAPIView):
+    serializer_class = PositionSerializer
     permission_classes = [IsAuthenticated]
 
-    def get(self, request):
-        user = request.user
-        return Response({
-            "id": user.id,
-            "full_name": user.get_full_name(),
-            "email": user.email,
-            "language": getattr(user, "language", "ru"),
-        })
-
-class LogoutAPIView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request):
-        Token.objects.filter(user=request.user).delete()
-        return Response({"detail": "Logged out"})
-
-class ChangeLanguageAPIView(APIView):
-        permission_classes = [IsAuthenticated]
-
-        def post(self, request):
-            request.user.language = request.data["language"]
-            request.user.save()
-            return Response({"detail": "Language updated"})
+    def get_queryset(self):
+        return Position.objects.filter(is_active=True)
