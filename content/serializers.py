@@ -50,15 +50,28 @@ class WelcomeBlockSerializer(serializers.ModelSerializer):
 
 
 # 3. ОБРАТНАЯ СВЯЗЬ
-class FeedbackSerializer(serializers.ModelSerializer):
+class FeedbackCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Feedback
-        fields = "__all__"
+        fields = (
+            "type",
+            "text",
+            "full_name",
+            "contact",
+        )
 
-    def validate_text(self, value):
-        if not value or not value.strip():
-            raise serializers.ValidationError("Текст обращения не может быть пустым")
-        return value
+class FeedbackResponseSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Feedback
+        fields = (
+            "id",
+            "type",
+            "text",
+            "full_name",
+            "contact",
+            "is_read",
+            "created_at",
+        )
 
 
 # 4. СОТРУДНИКИ

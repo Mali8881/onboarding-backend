@@ -32,7 +32,8 @@ class SystemLog(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ["-created_at"]
+        verbose_name = "Системный лог"
+        verbose_name_plural = "Системные логи"
 
     def __str__(self):
         return f"{self.created_at} | {self.action}"

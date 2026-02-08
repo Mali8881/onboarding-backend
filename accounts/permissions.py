@@ -4,10 +4,54 @@ from rest_framework.permissions import BasePermission
 def is_in_group(user, group_name: str) -> bool:
     return user.is_authenticated and user.groups.filter(name=group_name).exists()
 
+from rest_framework.permissions import BasePermission
+
+
+def is_in_group(user, group_name: str) -> bool:
+    """
+    Проверка принадлежности пользователя к группе.
+    Используется как основа RBAC.
+    """
+    return (
+        user.is_authenticated
+        and user.groups.filter(name=group_name).exists()
+    )
+
+
+class IsIntern(BasePermission):
+    """
+    Доступ только для стажёров
+    """
+    def has_permission(self, request, view):
+        return is_in_group(request.user, "INTERN")
+
+
+class IsAdmin(BasePermission):
+    """
+    Доступ только для администраторов
+    """
+    def has_permission(self, request, view):
+        return is_in_group(request.user, "ADMIN")
+
 
 class IsSuperAdmin(BasePermission):
+    """
+    Доступ только для суперадминистраторов
+    """
     def has_permission(self, request, view):
-        return is_in_group(request.user, "SUPER_ADMIN") or request.user.is_superuser
+        return is_in_group(request.user, "SUPER_ADMIN")
+
+
+class IsAdminOrSuperAdmin(BasePermission):
+    """
+    Доступ для администратора или суперадминистратора
+    """
+    def has_permission(self, request, view):
+        return (
+            is_in_group(request.user, "ADMIN")
+            or is_in_group(request.user, "SUPER_ADMIN")
+        )
+
 
 
 class HasPermissionCodename(BasePermission):

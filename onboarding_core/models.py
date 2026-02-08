@@ -4,27 +4,72 @@ from django.conf import settings
 from django.utils import timezone
 
 
+import uuid
+from django.db import models
+
+from accounts.models import User
+
+
 class OnboardingDay(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
-    day_number = models.PositiveIntegerField(unique=True)
-    title = models.CharField(max_length=255)
+    day_number = models.PositiveIntegerField(
+        unique=True,
+        verbose_name="Номер дня"
+    )
 
-    goals = models.TextField(blank=True)
-    description = models.TextField(blank=True)
-    instructions = models.TextField(blank=True)
+    title = models.CharField(
+        max_length=255,
+        verbose_name="Название дня"
+    )
 
-    deadline_time = models.TimeField(null=True, blank=True)
+    goals = models.TextField(
+        blank=True,
+        verbose_name="Цели дня"
+    )
 
-    is_active = models.BooleanField(default=True)
-    position = models.PositiveIntegerField(default=0)
+    description = models.TextField(
+        blank=True,
+        verbose_name="Описание дня"
+    )
+
+    instructions = models.TextField(
+        blank=True,
+        verbose_name="Инструкции"
+    )
+
+    # дедлайн без даты — строго по ТЗ
+    deadline_time = models.TimeField(
+        null=True,
+        blank=True,
+        verbose_name="Дедлайн (ЧЧ:ММ)"
+    )
+
+    # связь с регламентами
+    regulations = models.ManyToManyField(
+        "regulations.Regulation",
+        blank=True,
+        related_name="onboarding_days",
+        verbose_name="Регламенты"
+    )
+
+    is_active = models.BooleanField(
+        default=True,
+        verbose_name="Активен"
+    )
+
+    position = models.PositiveIntegerField(
+        default=0,
+        verbose_name="Порядок отображения"
+    )
 
     class Meta:
         ordering = ["position", "day_number"]
+        verbose_name = "День онбординга"
+        verbose_name_plural = "Дни онбординга"
 
     def __str__(self):
-        return f"Day {self.day_number}: {self.title}"
-
+        return f"День {self.day_number}: {self.title}"
 
 class OnboardingMaterial(models.Model):
     class MaterialType(models.TextChoices):
@@ -108,3 +153,32 @@ class OnboardingProgress(models.Model):
 
     def __str__(self):
         return f"{self.user} - Day {self.day.day_number}: {self.status}"
+
+# onboarding_core/models.py
+
+class OnboardingReport(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Черновик"
+        SENT = "SENT", "Отправлен"
+        ACCEPTED = "ACCEPTED", "Принят"
+        REVISION = "REVISION", "На доработку"
+        REJECTED = "REJECTED", "Отклонён"
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    day = models.ForeignKey(OnboardingDay, on_delete=models.CASCADE)
+
+    did = models.TextField()
+    will_do = models.TextField()
+    problems = models.TextField(blank=True)
+
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.SENT,
+    )
+
+    reviewer_comment = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("user", "day")

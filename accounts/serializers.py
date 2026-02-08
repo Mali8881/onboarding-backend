@@ -3,6 +3,19 @@ from .models import User, Department, Position
 
 
 class DepartmentSerializer(serializers.ModelSerializer):
+    id = serializers.IntegerField(
+        read_only=True,
+        help_text="Уникальный идентификатор подразделения."
+    )
+
+    name = serializers.CharField(
+        read_only=True,
+        help_text=(
+            "Название подразделения компании. "
+            "Используется для отображения в списках и выпадающих селектах."
+        )
+    )
+
     class Meta:
         model = Department
         fields = ("id", "name")
@@ -47,3 +60,28 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "telegram",
             "phone",
         )
+
+    def validate(self, attrs):
+        position = attrs.get("position")
+        custom_position = attrs.get("custom_position")
+
+        # если PATCH — учитываем текущие значения
+        if self.instance:
+            position = position if "position" in attrs else self.instance.position
+            custom_position = (
+                custom_position
+                if "custom_position" in attrs
+                else self.instance.custom_position
+            )
+
+        if position and custom_position:
+            raise serializers.ValidationError(
+                "Укажите либо должность из списка, либо другую должность, но не оба поля."
+            )
+
+        if not position and not custom_position:
+            raise serializers.ValidationError(
+                "Необходимо указать должность из списка или другую должность."
+            )
+
+        return attrs

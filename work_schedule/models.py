@@ -1,42 +1,50 @@
 import uuid
 from django.db import models
-from django.conf import settings
+
+from config import settings
 
 
 class WorkSchedule(models.Model):
     """
     Типовой график работы (5/2, 2/2 и т.д.)
     """
-    id = models.UUIDField(
-        primary_key=True,
-        default=uuid.uuid4,
-        editable=False
-    )
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
     name = models.CharField(
         max_length=255,
         verbose_name="Название"
     )
 
+    # пример: [0,1,2,3,4] (Пн–Пт)
     work_days = models.JSONField(
         verbose_name="Рабочие дни"
     )
-    # пример: [0,1,2,3,4]
 
     start_time = models.TimeField(
-        verbose_name="Начало"
+        verbose_name="Начало рабочего дня"
     )
 
     end_time = models.TimeField(
-        verbose_name="Конец"
+        verbose_name="Конец рабочего дня"
     )
 
-    break_time = models.JSONField(
+    # обеденный перерыв (основной)
+    break_start = models.TimeField(
         null=True,
         blank=True,
-        verbose_name="Перерыв"
+        verbose_name="Начало перерыва"
     )
-    # пример: {"start": "13:00", "end": "14:00"}
+
+    break_end = models.TimeField(
+        null=True,
+        blank=True,
+        verbose_name="Конец перерыва"
+    )
+
+    is_default = models.BooleanField(
+        default=False,
+        verbose_name="Базовый график компании"
+    )
 
     is_active = models.BooleanField(
         default=True,
@@ -49,11 +57,9 @@ class WorkSchedule(models.Model):
 
     def __str__(self):
         return self.name
-
-
 class ProductionCalendar(models.Model):
     """
-    Производственный календарь РФ
+    Производственный календарь Кыргызстана
     """
     date = models.DateField(
         unique=True,
@@ -66,20 +72,36 @@ class ProductionCalendar(models.Model):
 
     is_holiday = models.BooleanField(
         default=False,
-        verbose_name="Праздничный день"
+        verbose_name="Официальный праздник"
+    )
+
+    holiday_name = models.CharField(
+        max_length=255,
+        blank=True,
+        verbose_name="Название праздника"
     )
 
     class Meta:
-        verbose_name = "Производственный день"
-        verbose_name_plural = "Производственный календарь"
+        verbose_name = "Производственный день (КР)"
+        verbose_name_plural = "Производственный календарь (КР)"
+        ordering = ["date"]
+
+    def clean(self):
+        # день не может быть одновременно рабочим и праздничным
+        if self.is_working_day and self.is_holiday:
+            raise ValueError(
+                "День не может быть рабочим и праздничным одновременно"
+            )
 
     def __str__(self):
+        if self.is_holiday:
+            return f"{self.date} — {self.holiday_name}"
         return str(self.date)
 
 
 class UserWorkSchedule(models.Model):
     """
-    График конкретного пользователя (с согласованием)
+    График, выбранный пользователем
     """
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
@@ -93,11 +115,6 @@ class UserWorkSchedule(models.Model):
         blank=True,
         on_delete=models.SET_NULL,
         verbose_name="График"
-    )
-
-    approved = models.BooleanField(
-        default=False,
-        verbose_name="Согласован"
     )
 
     class Meta:

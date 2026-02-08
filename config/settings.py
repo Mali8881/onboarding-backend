@@ -33,6 +33,7 @@ INSTALLED_APPS = [
     'ckeditor',  # Сам редактор
     'ckeditor_uploader',  # Загрузчик файлов (если захотите вставлять картинки прямо в текст)
 
+    'accounts',
     # Django default apps
     "django.contrib.admin",
     "django.contrib.auth",
@@ -46,12 +47,16 @@ INSTALLED_APPS = [
     # Third-party
     "rest_framework",
     "regulations",
-    "reports",
-    "accounts",
-    "onboarding",
+
     'content.apps.ContentConfig',
     "common",
     'work_schedule',
+    'security',
+    'onboarding_core',
+    "drf_spectacular",
+
+
+
 
 
 ]
@@ -79,8 +84,8 @@ ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
-        'rest_framework.authentication.TokenAuthentication',
-    )
+    ),
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
 STATIC_URL = "static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
@@ -100,4 +105,11 @@ CKEDITOR_CONFIGS = {
         'height': 300,
         'width': '100%',
     },
+}
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "Onboarding API",
+    "DESCRIPTION": "API for onboarding platform",
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
 }

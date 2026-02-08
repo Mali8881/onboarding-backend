@@ -189,6 +189,10 @@ class Employee(models.Model):
     photo = models.ImageField(upload_to="employees/", null=True, blank=True)
     position_order = models.PositiveIntegerField("Порядок", default=0)
     is_active = models.BooleanField("Активен", default=True)
+    is_management = models.BooleanField(
+        "Руководство",
+        default=False
+    )
 
     class Meta:
         ordering = ["position_order", "full_name"]

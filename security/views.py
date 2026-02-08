@@ -1,7 +1,8 @@
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
 
-from common.permissions import IsSuperAdmin
+from accounts.permissions import IsSuperAdmin
+
 from .models import SystemLog
 from .serializers import SystemLogSerializer
 

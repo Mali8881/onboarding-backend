@@ -10,4 +10,9 @@ class RegulationListAPIView(ListAPIView):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return Regulation.objects.filter(is_active=True)
+        language = self.request.query_params.get("language", "ru")
+        return Regulation.objects.filter(
+            is_active=True,
+            language=language,
+        ).order_by("position")
+

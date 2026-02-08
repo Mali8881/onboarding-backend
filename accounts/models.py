@@ -1,11 +1,10 @@
-import uuid
 from django.db import models
 from django.contrib.auth.models import AbstractUser
 
 
 class Department(models.Model):
     name = models.CharField("Подразделение", max_length=255, unique=True)
-    is_active = models.BooleanField("Активен", default=True)  # Добавил verbose_name
+    is_active = models.BooleanField("Активен", default=True)
 
     class Meta:
         verbose_name = "Подразделение"
@@ -17,7 +16,7 @@ class Department(models.Model):
 
 class Position(models.Model):
     name = models.CharField("Должность", max_length=255, unique=True)
-    is_active = models.BooleanField("Активна", default=True)  # Добавил verbose_name
+    is_active = models.BooleanField("Активна", default=True)
 
     class Meta:
         verbose_name = "Должность"
@@ -28,41 +27,64 @@ class Position(models.Model):
 
 
 class User(AbstractUser):
-    avatar = models.ImageField("Аватар", upload_to="avatars/", null=True, blank=True)
-
-    department = models.ForeignKey(
-        Department,
-        on_delete=models.SET_NULL,
+    avatar = models.ImageField(
+        upload_to="avatars/",
         null=True,
         blank=True,
+        verbose_name="Аватар"
+    )
+
+    # Подразделение — выбор из справочника
+    department = models.ForeignKey(
+        Department,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
         verbose_name="Подразделение"
     )
 
+    # Должность — либо из справочника
     position = models.ForeignKey(
         Position,
-        on_delete=models.SET_NULL,
         null=True,
         blank=True,
+        on_delete=models.SET_NULL,
         verbose_name="Должность"
     )
 
+    # Либо кастомная должность (если выбрано «Другое»)
     custom_position = models.CharField(
-        "Дополнительная информация о должности",
+        "Другая должность",
         max_length=255,
-        blank=True,
-        null=True  # Добавлено для корректной работы миграций
+        null=True,
+        blank=True
     )
 
-    # ИЗМЕНЕНО: Вместо default лучше разрешить NULL, чтобы не конфликтовать со старыми записями
-    telegram = models.CharField("Telegram", max_length=100, null=True, blank=True)
+    # Контакты (по ТЗ — без строгой валидации)
+    telegram = models.CharField(
+        "Telegram",
+        max_length=255,
+        null=True,
+        blank=True
+    )
 
     phone = models.CharField(
         "Телефон",
-        max_length=20,
-        blank=True,
-        null=True
+        max_length=50,
+        null=True,
+        blank=True
     )
 
     class Meta:
         verbose_name = "Пользователь"
         verbose_name_plural = "Пользователи"
+
+    def clean(self):
+        """
+        Соответствие ТЗ:
+        либо position, либо custom_position — но не оба сразу
+        """
+        if self.position and self.custom_position:
+            raise ValueError(
+                "Нельзя указать должность и кастомную должность одновременно"
+            )

@@ -1,7 +1,6 @@
 # reviews/views.py
 from rest_framework import generics, viewsets, permissions
-from reports.models import Report
-from accounts.models import ReportReview
+
 from .serializers import (
     ReportListSerializer, 
     ReportReviewSerializer

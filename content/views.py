@@ -1,3 +1,4 @@
+from drf_spectacular.utils import extend_schema, OpenApiResponse
 from rest_framework.generics import ListAPIView, RetrieveAPIView, CreateAPIView
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
@@ -13,12 +14,10 @@ from .serializers import (
     NewsListSerializer,
     NewsDetailSerializer,
     WelcomeBlockSerializer,
-    FeedbackSerializer,
     EmployeeSerializer,
     InstructionSerializer,
     LanguageSettingSerializer,
-    NewsSerializer,
-    NewsSliderSettingsSerializer
+    FeedbackResponseSerializer, FeedbackCreateSerializer
 )
 
 
@@ -30,7 +29,10 @@ class NewsListAPIView(ListAPIView):
     def get_queryset(self):
         # Получаем язык из параметров или ставим 'ru' по умолчанию
         language = self.request.query_params.get("language", "ru")
-        return News.objects.filter(is_active=True, language=language)
+        return News.objects.filter(
+            is_active=True,
+            language=language
+        ).order_by("position", "-published_at")[:10]
 
 
 class NewsDetailAPIView(RetrieveAPIView):
@@ -48,10 +50,23 @@ class WelcomeBlockAPIView(ListAPIView):
     def get_queryset(self):
         return WelcomeBlock.objects.filter(is_active=True)
 
+@extend_schema(
+    description="""
+Отправка обращения через форму обратной связи.
+
+type — тип обращения.
+Допустимые значения: complaint | proposal | feedback
+""",
+    request=FeedbackCreateSerializer,
+    responses={
+        201: FeedbackResponseSerializer
+    }
+)
+
 
 # 🔹 ОБРАТНАЯ СВЯЗЬ
 class FeedbackCreateAPIView(CreateAPIView):
-    serializer_class = FeedbackSerializer
+    serializer_class = FeedbackCreateSerializer
     permission_classes = [AllowAny]
 
 
@@ -64,19 +79,49 @@ class EmployeeListAPIView(ListAPIView):
         show_management = self.request.query_params.get("management")
         qs = Employee.objects.filter(is_active=True)
 
-        # ВНИМАНИЕ: Поле is_management должно быть в моделях!
-        # Если его там нет, этот блок нужно убрать или добавить поле в models.py
         if show_management == "true":
-            # Проверьте, есть ли поле is_management в модели Employee
-            if hasattr(Employee, 'is_management'):
-                qs = qs.filter(is_management=True)
+            qs = qs.filter(is_management=True)
+
         return qs
+
 
 
 # 🔹 ИНСТРУКЦИИ
 class InstructionAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        description="""
+    Возвращает инструкцию по использованию платформы.
+
+    Инструкция может быть представлена в одном из форматов:
+    — текст;
+    — ссылка на внешний ресурс;
+    — файл для скачивания.
+
+    Доступ: любой авторизованный пользователь.
+    """,
+        responses={
+            200: OpenApiResponse(
+                description="Инструкция платформы",
+                response={
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "description": "Тип инструкции",
+                            "enum": ["text", "link", "file"]
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "Содержимое инструкции (текст или URL)"
+                        }
+                    }
+                }
+            ),
+            401: OpenApiResponse(description="Пользователь не авторизован")
+        }
+    )
     def get(self, request):
         lang = request.query_params.get("lang", "ru")
         instruction = Instruction.objects.filter(language=lang, is_active=True).first()
@@ -91,29 +136,78 @@ class InstructionAPIView(APIView):
 
 
 # 🔹 ЯЗЫКИ
+from drf_spectacular.utils import extend_schema, OpenApiResponse
+
 class EnabledLanguagesAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        description="""
+Возвращает список доступных (включённых) языков интерфейса платформы.
+
+Используется для:
+— переключателя языка интерфейса;
+— инициализации языка пользователя.
+
+Возвращаются только языки с флагом `is_enabled = true`.
+
+Доступ: любой авторизованный пользователь.
+""",
+        responses={
+            200: OpenApiResponse(
+                description="Список доступных языков",
+                response=LanguageSettingSerializer(many=True)
+            ),
+            401: OpenApiResponse(description="Пользователь не авторизован")
+        }
+    )
     def get(self, request):
         languages = LanguageSetting.objects.filter(is_enabled=True)
         return Response(LanguageSettingSerializer(languages, many=True).data)
 
+from drf_spectacular.utils import extend_schema, OpenApiResponse
 
-# 🔹 НАСТРОЙКИ СЛАЙДЕРА
 class NewsSliderSettingsAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        description="""
+Возвращает настройки слайдера новостей на главной странице.
+
+Если настройки отсутствуют в базе данных,
+возвращаются значения по умолчанию.
+
+Доступ: любой авторизованный пользователь.
+""",
+        responses={
+            200: OpenApiResponse(
+                description="Настройки слайдера новостей",
+                response={
+                    "type": "object",
+                    "properties": {
+                        "autoplay": {
+                            "type": "boolean",
+                            "description": "Включена ли автопрокрутка слайдера"
+                        },
+                        "autoplay_delay": {
+                            "type": "integer",
+                            "description": "Задержка автопрокрутки в миллисекундах"
+                        }
+                    }
+                }
+            ),
+            401: OpenApiResponse(description="Пользователь не авторизован")
+        }
+    )
     def get(self, request):
         settings_obj = NewsSliderSettings.objects.first()
 
         if not settings_obj:
-            # Дефолтные настройки, если в БД пусто
             return Response({
                 "autoplay": True,
                 "autoplay_delay": 5000
             })
 
-        # ИСПРАВЛЕНО: autoplay_delay вместо autoplay_de
         return Response({
             "autoplay": settings_obj.autoplay,
             "autoplay_delay": settings_obj.autoplay_delay

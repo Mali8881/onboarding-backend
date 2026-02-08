@@ -22,6 +22,5 @@ class ProductionCalendarAdmin(admin.ModelAdmin):
 
 @admin.register(UserWorkSchedule)
 class UserWorkScheduleAdmin(admin.ModelAdmin):
-    list_display = ("user", "schedule", "approved")
-    list_filter = ("approved",)
-    search_fields = ("user__username",)
+    list_display = ("user", "schedule")
+    list_filter = ()

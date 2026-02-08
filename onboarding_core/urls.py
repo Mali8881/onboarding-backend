@@ -1,6 +1,7 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
+
 from .views import (
     OnboardingDayListView,
     OnboardingDayDetailView,
@@ -9,6 +10,8 @@ from .views import (
     AdminOnboardingDayViewSet,
     AdminOnboardingMaterialViewSet,
     AdminOnboardingProgressViewSet,
+    SubmitOnboardingReportView, AdminOnboardingReportViewSet,
+
 )
 
 router = DefaultRouter()
@@ -27,13 +30,20 @@ router.register(
     AdminOnboardingProgressViewSet,
     basename="admin-onboarding-progress",
 )
+router.register(
+    r"admin/onboarding/reports",
+    AdminOnboardingReportViewSet,
+    basename="admin-onboarding-reports",
+)
+
 
 urlpatterns = [
-    # USER API
-    path("onboarding/days/", OnboardingDayListView.as_view()),
-    path("onboarding/days/<uuid:id>/", OnboardingDayDetailView.as_view()),
-    path("onboarding/days/<uuid:id>/complete/", CompleteOnboardingDayView.as_view()),
-    path("onboarding/overview/", OnboardingOverviewView.as_view()),
+    path("days/", OnboardingDayListView.as_view()),
+    path("days/<uuid:id>/", OnboardingDayDetailView.as_view()),
+    path("days/<uuid:id>/complete/", CompleteOnboardingDayView.as_view()),
+    path("overview/", OnboardingOverviewView.as_view()),
+    path("reports/submit/", SubmitOnboardingReportView.as_view()),
 ]
+
 
 urlpatterns += router.urls

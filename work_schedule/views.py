@@ -11,6 +11,33 @@ from .models import (
     UserWorkSchedule,
     ProductionCalendar,
 )
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import ValidationError
+
+from .services import get_month_calendar
+from .serializers import CalendarDaySerializer
+
+
+class CalendarView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        year = request.query_params.get("year")
+        month = request.query_params.get("month")
+
+        if not year or not month:
+            raise ValidationError("year and month are required")
+
+        calendar = get_month_calendar(
+            user=request.user,
+            year=int(year),
+            month=int(month),
+        )
+
+        serializer = CalendarDaySerializer(calendar, many=True)
+        return Response(serializer.data)
 
 
 class MyScheduleAPIView(APIView):

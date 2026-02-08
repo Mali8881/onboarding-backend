@@ -2,10 +2,12 @@ from rest_framework import serializers
 from django.utils import timezone
 from urllib.parse import urlparse
 
+from drf_spectacular.utils import extend_schema_field
+
 from .models import (
     OnboardingDay,
     OnboardingMaterial,
-    OnboardingProgress,
+    OnboardingProgress, OnboardingReport,
 )
 
 # =====================================================
@@ -88,10 +90,36 @@ class OnboardingDayDetailSerializer(serializers.ModelSerializer):
 
         return "IN_PROGRESS" if prev_done else "LOCKED"
 
+    @extend_schema_field(
+        {
+            "type": "string",
+            "enum": ["DONE", "IN_PROGRESS", "LOCKED"],
+            "description": "Статус онбординг-дня для текущего пользователя"
+        }
+    )
     def get_status(self, day):
         user = self.context["request"].user
         return self._get_day_status(day, user)
 
+    @extend_schema_field(
+        {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "format": "uuid"},
+                    "type": {
+                        "type": "string",
+                        "enum": ["TEXT", "LINK", "VIDEO", "FILE"],
+                    },
+                    "content": {"type": "string"},
+                    "position": {"type": "integer"},
+                    "priority": {"type": "integer"},
+                },
+            },
+            "description": "Материалы дня. Пустой список, если день заблокирован."
+        }
+    )
     def get_materials(self, day):
         user = self.context["request"].user
         status = self._get_day_status(day, user)
@@ -100,10 +128,7 @@ class OnboardingDayDetailSerializer(serializers.ModelSerializer):
             return []
 
         materials = list(day.materials.all())
-
-        # 🔥 ВАЖНО: сортировка по priority + position
         materials.sort(key=lambda m: (m.priority, m.position))
-
         return OnboardingMaterialSerializer(materials, many=True).data
 
 
@@ -244,3 +269,69 @@ class AdminOnboardingProgressSerializer(serializers.ModelSerializer):
             "completed_at",
             "created_at",
         )
+
+class OnboardingReportCreateSerializer(serializers.ModelSerializer):
+    day_id = serializers.UUIDField(write_only=True)
+
+    class Meta:
+        model = OnboardingReport
+        fields = (
+            "day_id",
+            "did",
+            "will_do",
+            "problems",
+        )
+
+    def validate(self, data):
+        if not data.get("did") or not data.get("will_do"):
+            raise serializers.ValidationError(
+                "Fields 'did' and 'will_do' are required"
+            )
+        return data
+
+class AdminOnboardingReportSerializer(serializers.ModelSerializer):
+    user = serializers.SerializerMethodField()
+    day = serializers.SerializerMethodField()
+
+    class Meta:
+        model = OnboardingReport
+        fields = (
+            "id",
+            "user",
+            "day",
+            "status",
+            "reviewer_comment",
+            "created_at",
+        )
+
+    @extend_schema_field(
+        {
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer"},
+                "username": {"type": "string"},
+            },
+        }
+    )
+    def get_user(self, obj):
+        return {
+            "id": obj.user.id,
+            "username": obj.user.username,
+        }
+
+    @extend_schema_field(
+        {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "format": "uuid"},
+                "day_number": {"type": "integer"},
+                "title": {"type": "string"},
+            },
+        }
+    )
+    def get_day(self, obj):
+        return {
+            "id": str(obj.day.id),
+            "day_number": obj.day.day_number,
+            "title": obj.day.title,
+        }
