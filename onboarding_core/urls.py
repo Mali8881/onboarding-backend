@@ -10,7 +10,7 @@ from .views import (
     AdminOnboardingDayViewSet,
     AdminOnboardingMaterialViewSet,
     AdminOnboardingProgressViewSet,
-    SubmitOnboardingReportView, AdminOnboardingReportViewSet,
+
 
 )
 
@@ -30,11 +30,7 @@ router.register(
     AdminOnboardingProgressViewSet,
     basename="admin-onboarding-progress",
 )
-router.register(
-    r"admin/onboarding/reports",
-    AdminOnboardingReportViewSet,
-    basename="admin-onboarding-reports",
-)
+
 
 
 urlpatterns = [
@@ -42,7 +38,7 @@ urlpatterns = [
     path("days/<uuid:id>/", OnboardingDayDetailView.as_view()),
     path("days/<uuid:id>/complete/", CompleteOnboardingDayView.as_view()),
     path("overview/", OnboardingOverviewView.as_view()),
-    path("reports/submit/", SubmitOnboardingReportView.as_view()),
+
 ]
 
 

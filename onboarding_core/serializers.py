@@ -7,7 +7,7 @@ from drf_spectacular.utils import extend_schema_field
 from .models import (
     OnboardingDay,
     OnboardingMaterial,
-    OnboardingProgress, OnboardingReport,
+    OnboardingProgress,
 )
 
 # =====================================================
@@ -269,69 +269,3 @@ class AdminOnboardingProgressSerializer(serializers.ModelSerializer):
             "completed_at",
             "created_at",
         )
-
-class OnboardingReportCreateSerializer(serializers.ModelSerializer):
-    day_id = serializers.UUIDField(write_only=True)
-
-    class Meta:
-        model = OnboardingReport
-        fields = (
-            "day_id",
-            "did",
-            "will_do",
-            "problems",
-        )
-
-    def validate(self, data):
-        if not data.get("did") or not data.get("will_do"):
-            raise serializers.ValidationError(
-                "Fields 'did' and 'will_do' are required"
-            )
-        return data
-
-class AdminOnboardingReportSerializer(serializers.ModelSerializer):
-    user = serializers.SerializerMethodField()
-    day = serializers.SerializerMethodField()
-
-    class Meta:
-        model = OnboardingReport
-        fields = (
-            "id",
-            "user",
-            "day",
-            "status",
-            "reviewer_comment",
-            "created_at",
-        )
-
-    @extend_schema_field(
-        {
-            "type": "object",
-            "properties": {
-                "id": {"type": "integer"},
-                "username": {"type": "string"},
-            },
-        }
-    )
-    def get_user(self, obj):
-        return {
-            "id": obj.user.id,
-            "username": obj.user.username,
-        }
-
-    @extend_schema_field(
-        {
-            "type": "object",
-            "properties": {
-                "id": {"type": "string", "format": "uuid"},
-                "day_number": {"type": "integer"},
-                "title": {"type": "string"},
-            },
-        }
-    )
-    def get_day(self, obj):
-        return {
-            "id": str(obj.day.id),
-            "day_number": obj.day.day_number,
-            "title": obj.day.title,
-        }

@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import OnboardingDay, OnboardingMaterial, OnboardingProgress, OnboardingReport
+from .models import OnboardingDay, OnboardingMaterial, OnboardingProgress
 
 
 class OnboardingMaterialInline(admin.TabularInline):
@@ -53,17 +53,3 @@ class OnboardingProgressAdmin(admin.ModelAdmin):
     search_fields = ("user__email", "user__username")
 
 
-@admin.register(OnboardingReport)
-class OnboardingReportAdmin(admin.ModelAdmin):
-    list_display = ("user", "day", "status", "created_at")
-    list_filter = ("status", "day")
-    search_fields = ("user__email", "user__username", "did", "will_do")
-    actions = ["accept_reports", "send_to_revision"]
-
-    @admin.action(description="Принять отчёт")
-    def accept_reports(self, request, queryset):
-        queryset.update(status=OnboardingReport.Status.ACCEPTED)
-
-    @admin.action(description="Отправить на доработку")
-    def send_to_revision(self, request, queryset):
-        queryset.update(status=OnboardingReport.Status.REVISION)

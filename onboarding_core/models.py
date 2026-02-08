@@ -154,31 +154,3 @@ class OnboardingProgress(models.Model):
     def __str__(self):
         return f"{self.user} - Day {self.day.day_number}: {self.status}"
 
-# onboarding_core/models.py
-
-class OnboardingReport(models.Model):
-    class Status(models.TextChoices):
-        DRAFT = "DRAFT", "Черновик"
-        SENT = "SENT", "Отправлен"
-        ACCEPTED = "ACCEPTED", "Принят"
-        REVISION = "REVISION", "На доработку"
-        REJECTED = "REJECTED", "Отклонён"
-
-    user = models.ForeignKey(User, on_delete=models.CASCADE)
-    day = models.ForeignKey(OnboardingDay, on_delete=models.CASCADE)
-
-    did = models.TextField()
-    will_do = models.TextField()
-    problems = models.TextField(blank=True)
-
-    status = models.CharField(
-        max_length=20,
-        choices=Status.choices,
-        default=Status.SENT,
-    )
-
-    reviewer_comment = models.TextField(blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        unique_together = ("user", "day")

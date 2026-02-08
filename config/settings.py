@@ -7,6 +7,16 @@ MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 AUTH_USER_MODEL = "accounts.User"
 
+CSRF_TRUSTED_ORIGINS = [
+    'https://natalie-theroid-tony.ngrok-free.dev',
+
+]
+
+CSRF_COOKIE_SECURE = True
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SAMESITE = 'None'
+SESSION_COOKIE_SAMESITE = 'None'
+
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
@@ -47,7 +57,7 @@ INSTALLED_APPS = [
     # Third-party
     "rest_framework",
     "regulations",
-
+    'reports',
     'content.apps.ContentConfig',
     "common",
     'work_schedule',
@@ -79,7 +89,8 @@ TEMPLATES = [
 ]
 
 DEBUG = True
-ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
+ALLOWED_HOSTS = ['*']
+
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
