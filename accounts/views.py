@@ -1,127 +1,119 @@
 from rest_framework.views import APIView
-from rest_framework.generics import ListAPIView
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from django.contrib.auth import authenticate
+from rest_framework_simplejwt.tokens import RefreshToken
+from datetime import timedelta
+from django.utils import timezone
 
-from content.models import News
-from content.serializers import NewsListSerializer
-
-from drf_spectacular.utils import extend_schema, OpenApiResponse
-
-from .permissions import IsSuperAdmin, IsAdminOrSuperAdmin
-from .models import Department, Position
+from .models import LoginHistory, User, Position
 from .serializers import (
-    UserProfileSerializer,
-    DepartmentSerializer,
-    PositionSerializer,
+    UserSerializer,
+    UserProfileUpdateSerializer,
+    PositionSerializer
 )
+from .permissions import HasPermission
+from .throttles import LoginRateThrottle
 
 
-@extend_schema(
-    description="""
-Получение и обновление профиля текущего пользователя.
+# ================= LOGIN =================
 
-GET:
-— возвращает данные профиля авторизованного пользователя.
+class LoginView(APIView):
+    throttle_classes = [LoginRateThrottle]
+    MAX_ATTEMPTS = 5
+    LOCKOUT_TIME_MINUTES = 15
 
-PATCH:
-— обновляет данные профиля;
-— стажёр НЕ может изменять подразделение и должность;
-— администратор и суперадминистратор могут изменять все поля.
+    def post(self, request):
+        username = request.data.get("username")
+        password = request.data.get("password")
 
-Доступ: любой авторизованный пользователь.
-""",
-    responses=UserProfileSerializer,
-)
+        user = authenticate(username=username, password=password)
+        existing_user = User.objects.filter(username=username).first()
+
+        # Проверка блокировки по попыткам
+        if existing_user:
+            if existing_user.lockout_until and existing_user.lockout_until > timezone.now():
+                return Response(
+                    {"error": "Too many failed attempts. Try again later."},
+                    status=403
+                )
+
+        if not user:
+            if existing_user:
+                existing_user.failed_login_attempts += 1
+
+                if existing_user.failed_login_attempts >= self.MAX_ATTEMPTS:
+                    existing_user.lockout_until = timezone.now() + timedelta(
+                        minutes=self.LOCKOUT_TIME_MINUTES
+                    )
+
+                existing_user.save()
+
+            LoginHistory.objects.create(
+                user=existing_user,
+                ip_address=request.META.get("REMOTE_ADDR"),
+                user_agent=request.META.get("HTTP_USER_AGENT"),
+                success=False
+            )
+
+            return Response({"error": "Invalid credentials"}, status=400)
+
+        # Блокировка вручную
+        if user.is_blocked:
+            return Response({"error": "User blocked"}, status=403)
+
+        # Сброс счетчиков
+        user.failed_login_attempts = 0
+        user.lockout_until = None
+        user.save()
+
+        refresh = RefreshToken.for_user(user)
+
+        LoginHistory.objects.create(
+            user=user,
+            ip_address=request.META.get("REMOTE_ADDR"),
+            user_agent=request.META.get("HTTP_USER_AGENT"),
+            success=True
+        )
+
+        return Response({
+            "access": str(refresh.access_token),
+            "refresh": str(refresh),
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "role": user.role.name if user.role else None
+            }
+        })
+
+
+# ================= PROFILE =================
+
 class MyProfileAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        return Response(
-            UserProfileSerializer(request.user).data
-        )
+        serializer = UserSerializer(request.user)
+        return Response(serializer.data)
 
-    @extend_schema(
-        request=UserProfileSerializer,
-        responses=UserProfileSerializer,
-    )
     def patch(self, request):
-        data = request.data.copy()
-
-        if not request.user.is_superuser:
-            data.pop("department", None)
-            data.pop("position", None)
-
-        serializer = UserProfileSerializer(
+        serializer = UserProfileUpdateSerializer(
             request.user,
-            data=data,
+            data=request.data,
             partial=True
         )
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
 
-@extend_schema(
-    description="""
-Возвращает список активных подразделений компании.
 
-Используется в административных формах
-(например, при редактировании профиля пользователя).
+# ================= POSITIONS =================
 
-Возвращаются только активные подразделения.
+class PositionListAPIView(APIView):
+    permission_classes = [IsAuthenticated, HasPermission]
+    required_permission = "view_positions"
 
-Доступ: только суперадминистратор.
-""",
-    responses=DepartmentSerializer,
-)
-class DepartmentListAPIView(ListAPIView):
-    serializer_class = DepartmentSerializer
-    permission_classes = [IsAuthenticated, IsSuperAdmin]
-
-    def get_queryset(self):
-        return Department.objects.filter(is_active=True)
-@extend_schema(
-    description="""
-Возвращает список активных должностей компании.
-
-Используется в административных интерфейсах
-и при редактировании профилей пользователей.
-
-Возвращаются только активные должности.
-
-Доступ: администратор / суперадминистратор.
-""",
-    responses=PositionSerializer,
-)
-class PositionListAPIView(ListAPIView):
-    serializer_class = PositionSerializer
-    permission_classes = [IsAuthenticated, IsAdminOrSuperAdmin]
-
-    def get_queryset(self):
-        return Position.objects.filter(is_active=True)
-
-@extend_schema(
-    description="""
-Возвращает список последних новостей платформы.
-
-Особенности:
-— можно указать язык через query-параметр `language`;
-— по умолчанию используется язык `ru`;
-— возвращаются только активные новости;
-— максимум 10 записей;
-— сортировка по дате создания (сначала новые).
-
-Доступ: любой авторизованный пользователь.
-""",
-    responses=NewsListSerializer,
-)
-class NewsListAPIView(ListAPIView):
-    serializer_class = NewsListSerializer
-    permission_classes = [IsAuthenticated]
-
-    def get_queryset(self):
-        language = self.request.query_params.get("language", "ru")
-        return News.objects.filter(
-            is_active=True,
-            language=language
-        ).order_by("-created_at")[:10]
+    def get(self, request):
+        positions = Position.objects.filter(is_active=True)
+        serializer = PositionSerializer(positions, many=True)
+        return Response(serializer.data)

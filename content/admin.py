@@ -45,12 +45,13 @@ class EmployeeAdmin(admin.ModelAdmin):
 
 @admin.register(Instruction)
 class InstructionAdmin(admin.ModelAdmin):
-    list_display = ("language", "type", "updated_at")
+    list_display = ("language", "type", "is_active", "updated_at")
+    list_filter = ("language", "is_active", "type")
     readonly_fields = ("preview",)
 
     fieldsets = (
         (None, {
-            "fields": ("language", "type")
+            "fields": ("language", "type", "is_active")
         }),
         ("Контент", {
             "fields": ("text", "external_url", "file")
@@ -72,6 +73,7 @@ class InstructionAdmin(admin.ModelAdmin):
         return "—"
 
     preview.short_description = "Предпросмотр"
+
 
 @admin.register(LanguageSetting)
 class LanguageSettingAdmin(admin.ModelAdmin):

@@ -50,6 +50,21 @@ class WelcomeBlockSerializer(serializers.ModelSerializer):
 
 
 # 3. ОБРАТНАЯ СВЯЗЬ
+from rest_framework import serializers
+
+
+class FeedbackSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Feedback
+        fields = '__all__'
+        read_only_fields = ('status', 'is_read', 'created_at')
+
+    def validate_text(self, value):
+        if not value.strip():
+            raise serializers.ValidationError("Текст не может быть пустым")
+        return value
+
 class FeedbackCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Feedback
@@ -125,3 +140,5 @@ class NewsSliderSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = NewsSliderSettings
         fields = ['autoplay', 'autoplay_delay']
+
+

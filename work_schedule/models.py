@@ -1,125 +1,90 @@
-import uuid
 from django.db import models
-
-from config import settings
+from django.core.exceptions import ValidationError
+from django.conf import settings
+from django.utils import timezone
 
 
 class WorkSchedule(models.Model):
-    """
-    Типовой график работы (5/2, 2/2 и т.д.)
-    """
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=100)
 
-    name = models.CharField(
-        max_length=255,
-        verbose_name="Название"
-    )
-
-    # пример: [0,1,2,3,4] (Пн–Пт)
     work_days = models.JSONField(
-        verbose_name="Рабочие дни"
+        help_text="Список рабочих дней недели (0=Пн ... 6=Вс)"
     )
 
-    start_time = models.TimeField(
-        verbose_name="Начало рабочего дня"
-    )
+    start_time = models.TimeField()
+    end_time = models.TimeField()
 
-    end_time = models.TimeField(
-        verbose_name="Конец рабочего дня"
-    )
+    break_start = models.TimeField(null=True, blank=True)
+    break_end = models.TimeField(null=True, blank=True)
 
-    # обеденный перерыв (основной)
-    break_start = models.TimeField(
-        null=True,
-        blank=True,
-        verbose_name="Начало перерыва"
-    )
-
-    break_end = models.TimeField(
-        null=True,
-        blank=True,
-        verbose_name="Конец перерыва"
-    )
-
-    is_default = models.BooleanField(
-        default=False,
-        verbose_name="Базовый график компании"
-    )
-
-    is_active = models.BooleanField(
-        default=True,
-        verbose_name="Активен"
-    )
+    is_default = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
 
     class Meta:
-        verbose_name = "График работы"
-        verbose_name_plural = "Графики работы"
+        indexes = [
+            models.Index(fields=["is_active"]),
+        ]
+
+    def clean(self):
+        if not isinstance(self.work_days, list):
+            raise ValidationError("work_days должен быть списком")
+
+        for day in self.work_days:
+            if not isinstance(day, int) or day < 0 or day > 6:
+                raise ValidationError("work_days может содержать только числа от 0 до 6")
+
+        if self.is_default:
+            if WorkSchedule.objects.exclude(pk=self.pk).filter(is_default=True).exists():
+                raise ValidationError("Может быть только один график по умолчанию")
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.name
+
 class ProductionCalendar(models.Model):
-    """
-    Производственный календарь Кыргызстана
-    """
-    date = models.DateField(
-        unique=True,
-        verbose_name="Дата"
-    )
-
-    is_working_day = models.BooleanField(
-        verbose_name="Рабочий день"
-    )
-
-    is_holiday = models.BooleanField(
-        default=False,
-        verbose_name="Официальный праздник"
-    )
-
-    holiday_name = models.CharField(
-        max_length=255,
-        blank=True,
-        verbose_name="Название праздника"
-    )
+    date = models.DateField(unique=True)
+    is_working_day = models.BooleanField(default=True)
+    is_holiday = models.BooleanField(default=False)
+    holiday_name = models.CharField(max_length=255, blank=True, null=True)
 
     class Meta:
-        verbose_name = "Производственный день (КР)"
-        verbose_name_plural = "Производственный календарь (КР)"
+        verbose_name = "Производственный день (РФ)"
+        verbose_name_plural = "Производственный календарь (РФ)"
         ordering = ["date"]
+        indexes = [
+            models.Index(fields=["date"]),
+        ]
 
     def clean(self):
-        # день не может быть одновременно рабочим и праздничным
-        if self.is_working_day and self.is_holiday:
-            raise ValueError(
-                "День не может быть рабочим и праздничным одновременно"
-            )
+        if self.is_holiday and self.is_working_day:
+            raise ValidationError("День не может быть одновременно рабочим и праздничным")
 
     def __str__(self):
-        if self.is_holiday:
-            return f"{self.date} — {self.holiday_name}"
-        return str(self.date)
-
+        return f"{self.date}"
 
 class UserWorkSchedule(models.Model):
-    """
-    График, выбранный пользователем
-    """
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        verbose_name="Пользователь"
+        related_name="work_schedule"
     )
 
     schedule = models.ForeignKey(
         WorkSchedule,
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        verbose_name="График"
+        on_delete=models.CASCADE,
+        related_name="users"
     )
 
+    approved = models.BooleanField(default=True)
+    requested_at = models.DateTimeField(auto_now_add=True)
+
     class Meta:
-        verbose_name = "График пользователя"
-        verbose_name_plural = "Графики пользователей"
+        indexes = [
+            models.Index(fields=["approved"]),
+        ]
 
     def __str__(self):
-        return f"{self.user} → {self.schedule}"
+        return f"{self.user} - {self.schedule}"

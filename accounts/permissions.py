@@ -1,70 +1,24 @@
 from rest_framework.permissions import BasePermission
 
 
-def is_in_group(user, group_name: str) -> bool:
-    return user.is_authenticated and user.groups.filter(name=group_name).exists()
-
-from rest_framework.permissions import BasePermission
-
-
-def is_in_group(user, group_name: str) -> bool:
+class HasPermission(BasePermission):
     """
-    Проверка принадлежности пользователя к группе.
-    Используется как основа RBAC.
+    Универсальный permission-класс.
+    В View нужно указать:
+        permission_classes = [HasPermission]
+        required_permission = "permission_code"
     """
-    return (
-        user.is_authenticated
-        and user.groups.filter(name=group_name).exists()
-    )
-
-
-class IsIntern(BasePermission):
-    """
-    Доступ только для стажёров
-    """
-    def has_permission(self, request, view):
-        return is_in_group(request.user, "INTERN")
-
-
-class IsAdmin(BasePermission):
-    """
-    Доступ только для администраторов
-    """
-    def has_permission(self, request, view):
-        return is_in_group(request.user, "ADMIN")
-
-
-class IsSuperAdmin(BasePermission):
-    """
-    Доступ только для суперадминистраторов
-    """
-    def has_permission(self, request, view):
-        return is_in_group(request.user, "SUPER_ADMIN")
-
-
-class IsAdminOrSuperAdmin(BasePermission):
-    """
-    Доступ для администратора или суперадминистратора
-    """
-    def has_permission(self, request, view):
-        return (
-            is_in_group(request.user, "ADMIN")
-            or is_in_group(request.user, "SUPER_ADMIN")
-        )
-
-
-
-class HasPermissionCodename(BasePermission):
-    """
-    Проверяет наличие конкретного permission codename у пользователя.
-    Использование:
-      permission_classes = [HasPermissionCodename]
-      required_permission = "reports_review"
-    """
-    required_permission = None
 
     def has_permission(self, request, view):
-        code = getattr(view, "required_permission", None) or self.required_permission
-        if not code:
+        # Пользователь должен быть авторизован
+        user = request.user
+        if not user or not user.is_authenticated:
             return False
-        return request.user.is_authenticated and request.user.has_perm(f"accounts.{code}")
+
+        # Проверяем, что View указал required_permission
+        required = getattr(view, "required_permission", None)
+        if not required:
+            return False
+
+        # Проверяем наличие permission через модель User
+        return user.has_permission(required)

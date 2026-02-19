@@ -9,13 +9,12 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status as drf_status
 
+from accounts.permissions import HasPermission
+
 
 
 from reports.models import OnboardingReport
 
-
-
-from accounts.permissions import IsAdminOrSuperAdmin
 
 
 from .models import (
@@ -279,40 +278,31 @@ class OnboardingOverviewView(APIView):
 # =====================================================
 # ADMIN API
 # =====================================================
-
 class AdminOnboardingDayViewSet(ModelViewSet):
-    """
-    Админ: CRUD онбординг-дней
-    """
     queryset = (
         OnboardingDay.objects
         .all()
         .order_by("position", "day_number")
     )
     serializer_class = AdminOnboardingDaySerializer
-    permission_classes = [IsAdminOrSuperAdmin]
+    permission_classes = [IsAuthenticated, HasPermission]
+    required_permission = "onboarding_manage"
+
     filterset_fields = ["is_active"]
     ordering_fields = ["position", "day_number"]
-
-
 class AdminOnboardingMaterialViewSet(ModelViewSet):
-    """
-    Админ: управление материалами онбординга
-    """
     queryset = (
         OnboardingMaterial.objects
         .all()
         .order_by("position")
     )
     serializer_class = AdminOnboardingMaterialSerializer
-    permission_classes = [IsAdminOrSuperAdmin]
-
+    permission_classes = [IsAuthenticated, HasPermission]
+    required_permission = "onboarding_manage"
 
 class AdminOnboardingProgressViewSet(ModelViewSet):
-    """
-    Админ: просмотр прогресса стажёров (READ ONLY)
-    """
-    permission_classes = [IsAdminOrSuperAdmin]
+    permission_classes = [IsAuthenticated, HasPermission]
+    required_permission = "reports_review"
     serializer_class = AdminOnboardingProgressSerializer
     http_method_names = ["get"]
 

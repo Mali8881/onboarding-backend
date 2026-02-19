@@ -1,25 +1,70 @@
 from rest_framework import serializers
-from .models import User, Department, Position
+from .models import User, Role, Department, Position
 
+
+# =========================
+# USER SERIALIZER (READ)
+# =========================
+
+class UserSerializer(serializers.ModelSerializer):
+    role = serializers.CharField(source="role.name", read_only=True)
+    department = serializers.CharField(source="department.name", read_only=True)
+    position = serializers.CharField(source="position.name", read_only=True)
+    full_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = (
+            "id",
+            "username",
+            "first_name",
+            "last_name",
+            "full_name",
+            "role",
+            "department",
+            "position",
+            "custom_position",
+            "telegram",
+            "phone",
+            "photo",
+        )
+
+    def get_full_name(self, obj):
+        return f"{obj.first_name} {obj.last_name}".strip()
+
+
+# =========================
+# LOGIN
+# =========================
+
+class LoginSerializer(serializers.Serializer):
+    username = serializers.CharField()
+    password = serializers.CharField()
+
+
+# =========================
+# ROLE
+# =========================
+
+class RoleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Role
+        fields = ("id", "name")
+
+
+# =========================
+# DEPARTMENT
+# =========================
 
 class DepartmentSerializer(serializers.ModelSerializer):
-    id = serializers.IntegerField(
-        read_only=True,
-        help_text="Уникальный идентификатор подразделения."
-    )
-
-    name = serializers.CharField(
-        read_only=True,
-        help_text=(
-            "Название подразделения компании. "
-            "Используется для отображения в списках и выпадающих селектах."
-        )
-    )
-
     class Meta:
         model = Department
         fields = ("id", "name")
 
+
+# =========================
+# POSITION
+# =========================
 
 class PositionSerializer(serializers.ModelSerializer):
     class Meta:
@@ -27,35 +72,24 @@ class PositionSerializer(serializers.ModelSerializer):
         fields = ("id", "name")
 
 
-class UserProfileSerializer(serializers.ModelSerializer):
-    department = DepartmentSerializer(read_only=True)
-    position = PositionSerializer(read_only=True)
+# =========================
+# NOTIFICATION
+# =========================
 
-    department_id = serializers.PrimaryKeyRelatedField(
-        queryset=Department.objects.filter(is_active=True),
-        source="department",
-        write_only=True,
-        required=False
-    )
 
-    position_id = serializers.PrimaryKeyRelatedField(
-        queryset=Position.objects.filter(is_active=True),
-        source="position",
-        write_only=True,
-        required=False
-    )
+# =========================
+# USER PROFILE UPDATE
+# =========================
 
+class UserProfileUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = (
-            "id",
             "first_name",
             "last_name",
-            "avatar",
+            "photo",
             "department",
-            "department_id",
             "position",
-            "position_id",
             "custom_position",
             "telegram",
             "phone",
@@ -65,7 +99,6 @@ class UserProfileSerializer(serializers.ModelSerializer):
         position = attrs.get("position")
         custom_position = attrs.get("custom_position")
 
-        # если PATCH — учитываем текущие значения
         if self.instance:
             position = position if "position" in attrs else self.instance.position
             custom_position = (

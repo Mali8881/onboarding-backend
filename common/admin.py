@@ -1,9 +1,5 @@
 from django.contrib import admin
-from .models import Notification
+from common.models import Notification, NotificationTemplate
 
-
-@admin.register(Notification)
-class NotificationAdmin(admin.ModelAdmin):
-    list_display = ("title", "user", "is_read", "created_at")
-    list_filter = ("is_read",)
-    search_fields = ("title", "user__username")
+admin.site.register(Notification)
+admin.site.register(NotificationTemplate)

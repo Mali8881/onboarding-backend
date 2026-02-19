@@ -2,12 +2,10 @@ from django.urls import path
 from .views import (
     NewsListAPIView,
     NewsDetailAPIView,
-    WelcomeBlockAPIView,
-    FeedbackCreateAPIView,
     EmployeeListAPIView,
     InstructionAPIView,
     EnabledLanguagesAPIView,
-    NewsSliderSettingsAPIView,
+    NewsSliderSettingsAPIView, WelcomeBlockAPIView
 )
 
 urlpatterns = [
@@ -19,13 +17,12 @@ urlpatterns = [
     # Приветственный блок
     path("welcome/", WelcomeBlockAPIView.as_view(), name='welcome'),
 
-    # Обратная связь
-    path("feedback/", FeedbackCreateAPIView.as_view(), name='feedback-create'),
-
     # Сотрудники
     path("employees/", EmployeeListAPIView.as_view(), name='employee-list'),
 
     # Инструкции и языки
     path("instruction/", InstructionAPIView.as_view(), name='instruction'),
     path("languages/", EnabledLanguagesAPIView.as_view(), name='languages'),
+
+
 ]

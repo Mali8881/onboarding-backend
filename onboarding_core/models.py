@@ -1,5 +1,3 @@
-import uuid
-from django.db import models
 from django.conf import settings
 from django.utils import timezone
 
@@ -7,7 +5,7 @@ from django.utils import timezone
 import uuid
 from django.db import models
 
-from accounts.models import User
+
 
 
 class OnboardingDay(models.Model):
@@ -150,6 +148,7 @@ class OnboardingProgress(models.Model):
     def mark_done(self):
         self.status = self.Status.DONE
         self.completed_at = timezone.now()
+        self.save(update_fields=["status", "completed_at"])
 
     def __str__(self):
         return f"{self.user} - Day {self.day.day_number}: {self.status}"

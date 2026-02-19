@@ -6,11 +6,16 @@ def is_deadline_passed(day):
         return False
 
     now = timezone.localtime()
-    deadline_dt = now.replace(
-        hour=day.deadline_time.hour,
-        minute=day.deadline_time.minute,
-        second=0,
-        microsecond=0,
+
+    deadline_dt = timezone.make_aware(
+        timezone.datetime(
+            year=now.year,
+            month=now.month,
+            day=now.day,
+            hour=day.deadline_time.hour,
+            minute=day.deadline_time.minute,
+        )
     )
 
     return now > deadline_dt
+

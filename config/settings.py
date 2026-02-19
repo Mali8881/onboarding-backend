@@ -11,16 +11,19 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # ======================
 # SECURITY
 # ======================
-SECRET_KEY = os.environ.get("SECRET_KEY")
+SECRET_KEY = "*0u4%0xl)j45n9d+hglu6$69cx-=%iy+w!dh15w-dzd3zita6f"
 
-DEBUG = os.environ.get("DEBUG") == "True"
+
+
+DEBUG = True
+
 
 ALLOWED_HOSTS = os.environ.get(
     "ALLOWED_HOSTS", "*"
 ).split(",")
 
 # ======================
-# APPLICATIONS
+# APPLICATIONS$env:SECRET_KEY="dev-secret"
 # ======================
 INSTALLED_APPS = [
     # Admin UI
@@ -77,10 +80,14 @@ WSGI_APPLICATION = "config.wsgi.application"
 # DATABASE
 # ======================
 DATABASES = {
-    "default": dj_database_url.config(
-        default="postgresql://postgres:postgres@127.0.0.1:5432/onboarding",
-        conn_max_age=600,
-    )
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": "onboarding",
+        "USER": "postgres",
+        "PASSWORD": "malika2005",
+        "HOST": "127.0.0.1",
+        "PORT": "5433",
+    }
 }
 
 # ======================
@@ -133,12 +140,29 @@ CKEDITOR_CONFIGS = {
 # ======================
 # DRF
 # ======================
+# ======================
+# DRF
+# ======================
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
+
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+
+    "DEFAULT_THROTTLE_CLASSES": (
+        "rest_framework.throttling.UserRateThrottle",
+        "rest_framework.throttling.AnonRateThrottle",
+    ),
+
+    "DEFAULT_THROTTLE_RATES": {
+        "user": "1000/day",
+        "anon": "20/minute",
+        "login": "5/minute",
+    },
 }
+
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "Onboarding API",
@@ -156,15 +180,18 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
 
 CORS_ALLOW_CREDENTIALS = True
 
-CORS_ALLOWED_ORIGINS = os.environ.get(
-    "CORS_ALLOWED_ORIGINS", ""
-).split(",")
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+]
 
-CSRF_TRUSTED_ORIGINS = os.environ.get(
-    "CSRF_TRUSTED_ORIGINS", ""
-).split(",")
+CSRF_TRUSTED_ORIGINS = [
+    origin for origin in os.environ.get(
+        "CSRF_TRUSTED_ORIGINS", ""
+    ).split(",") if origin
+]
+
 
 CSRF_COOKIE_SECURE = not DEBUG
 SESSION_COOKIE_SECURE = not DEBUG
-CSRF_COOKIE_SAMESITE = "None"
-SESSION_COOKIE_SAMESITE = "None"
+CSRF_COOKIE_SAMESITE = "Lax"
+SESSION_COOKIE_SAMESITE = "Lax"

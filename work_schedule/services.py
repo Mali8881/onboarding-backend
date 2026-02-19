@@ -6,18 +6,23 @@ from .models import WorkSchedule, ProductionCalendar, UserWorkSchedule
 
 def get_user_work_schedule(user):
     """
-    Возвращает график пользователя или базовый график компании
+    Возвращает утверждённый график пользователя
+    или базовый график компании
     """
     try:
-        return user.userworkschedule.schedule
-    except Exception:
-        return WorkSchedule.objects.filter(is_default=True, is_active=True).first()
+        uws = user.work_schedule
+        if uws.approved:
+            return uws.schedule
+    except UserWorkSchedule.DoesNotExist:
+        pass
+
+    return WorkSchedule.objects.filter(
+        is_default=True,
+        is_active=True
+    ).first()
 
 
 def get_month_calendar(user, year: int, month: int):
-    """
-    Возвращает календарь работы пользователя на месяц
-    """
     schedule = get_user_work_schedule(user)
     if not schedule:
         raise ValueError("Не задан базовый график работы")
@@ -31,17 +36,23 @@ def get_month_calendar(user, year: int, month: int):
         if day.month != month:
             continue
 
-        # день недели: 0 = Пн, 6 = Вс
         weekday = day.weekday()
 
         prod_day = ProductionCalendar.objects.filter(date=day).first()
 
-        is_holiday = bool(prod_day and prod_day.is_holiday)
-        holiday_name = prod_day.holiday_name if prod_day else ""
-
+        is_holiday = False
         is_working_day = False
+        holiday_name = ""
 
-        if not is_holiday:
+        if prod_day:
+            is_holiday = prod_day.is_holiday
+            holiday_name = prod_day.holiday_name or ""
+
+            if prod_day.is_working_day:
+                is_working_day = True
+            elif not prod_day.is_holiday and weekday in schedule.work_days:
+                is_working_day = True
+        else:
             if weekday in schedule.work_days:
                 is_working_day = True
 

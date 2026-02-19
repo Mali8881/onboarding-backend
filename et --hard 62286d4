@@ -1,0 +1,15 @@
+[33mc407ce1[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfeature/backend-malika[m[33m, [m[1;31morigin/feature/backend-malika[m[33m)[m Backup before integration
+[33m62286d4[m fix settings for prod
+[33m2042447[m[33m ([m[1;31morigin/main[m[33m, [m[1;32mmain[m[33m)[m Исправлены миграции отчетов и админка
+[33m2741bab[m Finalize onboarding API and Swagger contract
+[33m7f70c1a[m Merge feature/her-part into main
+[33m08a70b8[m[33m ([m[1;31morigin/feature/onboarding-days[m[33m, [m[1;31morigin/feature/her-part[m[33m, [m[1;32mfeature/her-part[m[33m)[m Backend: reports, schedules, security modules
+[33ma6f9c76[m[33m ([m[1;31morigin/feature/onboarding-reports[m[33m, [m[1;32mfeature/onboarding-reports[m[33m)[m перед соединением
+[33mf4f9e35[m Add content blocks: news, welcome, feedback, employees
+[33m8c2a101[m Add backend support for header: profile, language, notifications , reglament , work schedue
+[33m47cd1a8[m Backend: onboarding reports, reviews, admin logic (WIP)
+[33macff24c[m fix onboarding models/views and add materials relation
+[33m8b65cb1[m add onboarding days API (list & detail)
+[33m7dddeae[m fix requirements.txt
+[33m91431f1[m[33m ([m[1;31morigin/feature/next-task[m[33m)[m Initial backend setup
+[33mec85653[m malikafirst commit

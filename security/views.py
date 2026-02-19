@@ -1,7 +1,7 @@
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
 
-from accounts.permissions import IsSuperAdmin
+from accounts.permissions import HasPermission
 
 from .models import SystemLog
 from .serializers import SystemLogSerializer
@@ -10,32 +10,29 @@ from .serializers import SystemLogSerializer
 class SystemLogViewSet(ModelViewSet):
     """
     Просмотр системных логов.
-    Доступ ТОЛЬКО для superadmin.
+    Доступ ТОЛЬКО для пользователей с permission logs_read.
     """
 
-    permission_classes = [IsAuthenticated, IsSuperAdmin]
+    permission_classes = [IsAuthenticated, HasPermission]
+    required_permission = "logs_read"
     serializer_class = SystemLogSerializer
-    http_method_names = ["get"]  # только чтение
+    http_method_names = ["get"]
 
     def get_queryset(self):
         qs = SystemLog.objects.all().order_by("-created_at")
 
-        # фильтр по уровню (INFO / WARNING / ERROR)
         level = self.request.query_params.get("level")
         if level:
             qs = qs.filter(level=level)
 
-        # фильтр по типу действия
         action = self.request.query_params.get("action")
         if action:
             qs = qs.filter(action=action)
 
-        # фильтр по пользователю
         actor_id = self.request.query_params.get("actor_id")
         if actor_id:
             qs = qs.filter(actor_id=actor_id)
 
-        # фильтр по дате (from / to)
         date_from = self.request.query_params.get("date_from")
         if date_from:
             qs = qs.filter(created_at__gte=date_from)

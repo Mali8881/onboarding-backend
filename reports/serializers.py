@@ -1,13 +1,16 @@
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
-from .models import OnboardingReport
 from .models import (
     OnboardingReport,
     OnboardingReportLog,
     ReportNotification,
 )
 
+
+# =====================================================
+# USER SERIALIZER
+# =====================================================
 
 class OnboardingReportSerializer(serializers.ModelSerializer):
     user_email = serializers.EmailField(
@@ -35,31 +38,33 @@ class OnboardingReportSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = [
+        read_only_fields = (
             "status",
             "reviewer_comment",
             "created_at",
             "updated_at",
-        ]
-
-class OnboardingReportCreateSerializer(serializers.ModelSerializer):
-    day_id = serializers.UUIDField(write_only=True)
-
-    class Meta:
-        model = OnboardingReport
-        fields = (
-            "day_id",
-            "did",
-            "will_do",
-            "problems",
         )
 
+
+# =====================================================
+# CREATE SERIALIZER
+# =====================================================
+
+class OnboardingReportCreateSerializer(serializers.Serializer):
+    day_id = serializers.UUIDField()
+    did = serializers.CharField(allow_blank=True)
+    will_do = serializers.CharField(allow_blank=True)
+    problems = serializers.CharField(allow_blank=True, required=False)
+
     def validate(self, data):
-        if not data.get("did") or not data.get("will_do"):
-            raise serializers.ValidationError(
-                "Fields 'did' and 'will_do' are required"
-            )
+        # НИЧЕГО не запрещаем.
+        # Логика пустого отчёта обрабатывается в модели.
         return data
+
+
+# =====================================================
+# ADMIN SERIALIZER
+# =====================================================
 
 class AdminOnboardingReportSerializer(serializers.ModelSerializer):
     user = serializers.SerializerMethodField()
@@ -73,6 +78,9 @@ class AdminOnboardingReportSerializer(serializers.ModelSerializer):
             "day",
             "status",
             "reviewer_comment",
+            "created_at",
+        )
+        read_only_fields = (
             "created_at",
         )
 
@@ -108,6 +116,22 @@ class AdminOnboardingReportSerializer(serializers.ModelSerializer):
             "title": obj.day.title,
         }
 
+    def validate(self, attrs):
+        new_status = attrs.get("status")
+
+        if new_status in [OnboardingReport.Status.REVISION, OnboardingReport.Status.REJECTED]:
+            if not attrs.get("reviewer_comment"):
+                raise serializers.ValidationError(
+                    {"reviewer_comment": "Комментарий обязателен"}
+                )
+
+        return attrs
+
+
+# =====================================================
+# LOG SERIALIZER
+# =====================================================
+
 class OnboardingReportLogSerializer(serializers.ModelSerializer):
     author_username = serializers.CharField(
         source="author.username",
@@ -124,11 +148,12 @@ class OnboardingReportLogSerializer(serializers.ModelSerializer):
             "author_username",
             "created_at",
         )
-        read_only_fields = (
-            "id",
-            "created_at",
-        )
 
+
+
+# =====================================================
+# NOTIFICATION SERIALIZER
+# =====================================================
 
 class ReportNotificationSerializer(serializers.ModelSerializer):
     class Meta:
@@ -139,8 +164,3 @@ class ReportNotificationSerializer(serializers.ModelSerializer):
             "text",
             "created_at",
         )
-        read_only_fields = (
-            "id",
-            "created_at",
-        )
-

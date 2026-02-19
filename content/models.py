@@ -4,7 +4,9 @@ from django.db import models
 from django.conf import settings
 from django.utils.html import strip_tags
 from ckeditor_uploader.fields import RichTextUploadingField
+from jsonschema.exceptions import ValidationError
 
+from django.utils import timezone
 
 # 🔹 НАСТРОЙКИ СЛАЙДЕРА (вынесено вверх для логики)
 class NewsSliderSettings(models.Model):
@@ -128,53 +130,97 @@ class Instruction(models.Model):
 
 # 🔹 ПРИВЕТСТВЕННЫЙ БЛОК
 class WelcomeBlock(models.Model):
-    title = models.CharField("Заголовок", max_length=255)
-    text = models.TextField("Текст")
-
-    instruction = models.ForeignKey(
-        "Instruction",  # Строковая ссылка на модель ниже или выше
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        verbose_name="Инструкция"
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    title = models.CharField(max_length=255)
+    text = models.TextField()
+    language = models.CharField(
+        max_length=10,
+        default="ru"
     )
-    link_url = models.URLField("Ссылка", blank=True, null=True)
-    is_active = models.BooleanField("Активен", default=True)
-    position = models.PositiveIntegerField("Порядок отображения", default=0)
+
+    instruction = models.OneToOneField(
+        Instruction,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True
+    )
+
+    order = models.PositiveIntegerField()
+    is_active = models.BooleanField(default=True)
 
     class Meta:
-        ordering = ["position"]
-        verbose_name = "Приветственный блок"
-        verbose_name_plural = "Приветственные блоки"
+        ordering = ['order']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['order', 'language'],
+                name='unique_order_per_language'
+            )
+        ]
 
-    def __str__(self):
-        return self.title
+    def clean(self):
+        existing = WelcomeBlock.objects.filter(
+            language=self.language,
+            is_active=True
+        ).exclude(pk=self.pk).first()
+
+        if existing and existing.is_active:
+            raise ValidationError("Активный блок уже существует для этого языка")
 
 
 # 🔹 ОБРАТНАЯ СВЯЗЬ
 class Feedback(models.Model):
-    TYPE_CHOICES = [
-        ("complaint", "Жалоба"),
-        ("proposal", "Предложение"),
-        ("review", "Отзыв"),
-    ]
 
-    type = models.CharField("Тип", max_length=20, choices=TYPE_CHOICES)
-    text = models.TextField("Текст обращения")
-    full_name = models.CharField("ФИО", max_length=255, null=True, blank=True)
-    contact = models.CharField("Контакт", max_length=255, null=True, blank=True)
-    is_read = models.BooleanField("Прочитано", default=False)
-    created_at = models.DateTimeField("Создано", auto_now_add=True)
+    TYPE_CHOICES = (
+        ('complaint', 'Жалоба'),
+        ('suggestion', 'Предложение'),
+        ('review', 'Отзыв'),
+    )
+
+    STATUS_CHOICES = (
+        ('new', 'Новое'),
+        ('in_progress', 'В работе'),
+        ('closed', 'Закрыто'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    is_anonymous = models.BooleanField(default=True)
+
+    full_name = models.CharField(max_length=255, blank=True, null=True)
+    contact = models.CharField(max_length=100, blank=True, null=True)
+
+    type = models.CharField(max_length=20, choices=TYPE_CHOICES)
+    text = models.TextField()
+
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='new'
+    )
+
+    is_read = models.BooleanField(default=False)
+
+    created_at = models.DateTimeField(default=timezone.now)
+
+    def clean(self):
+        # текст обязателен всегда
+        if not self.text or not self.text.strip():
+            raise ValidationError("Текст обращения обязателен")
+
+        # если НЕ анонимное → обязательны ФИО и контакт
+        if not self.is_anonymous:
+            if not self.full_name:
+                raise ValidationError("ФИО обязательно для неанонимного обращения")
+            if not self.contact:
+                raise ValidationError("Контакт обязателен для неанонимного обращения")
+
+        # если анонимное → запрещаем ФИО и контакт
+        if self.is_anonymous:
+            self.full_name = None
+            self.contact = None
 
     class Meta:
-        verbose_name = "Обращение"
-        verbose_name_plural = "Обращения"
-        ordering = ["-created_at"]
-
-    def __str__(self):
-        return f"{self.get_type_display()} — {self.created_at.strftime('%d.%m.%Y %H:%M')}"
-
-
+        ordering = ['-created_at']
 # 🔹 СОТРУДНИКИ
 class Employee(models.Model):
     full_name = models.CharField("ФИО", max_length=255)
