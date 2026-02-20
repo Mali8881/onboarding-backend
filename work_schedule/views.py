@@ -15,6 +15,8 @@ from rest_framework.exceptions import ValidationError
 
 from .services import get_month_calendar
 from .serializers import CalendarDaySerializer
+from .audit import WorkScheduleAuditService
+
 
 class CalendarView(APIView):
     permission_classes = [IsAuthenticated]
@@ -30,7 +32,7 @@ class CalendarView(APIView):
         except (TypeError, ValueError):
             return Response(
                 {"detail": "year и month должны быть корректными числами"},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         calendar_data = get_month_calendar(
@@ -41,6 +43,8 @@ class CalendarView(APIView):
 
         serializer = CalendarDaySerializer(calendar_data, many=True)
         return Response(serializer.data)
+
+
 class MyScheduleAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -50,13 +54,13 @@ class MyScheduleAPIView(APIView):
         if not uws:
             return Response(
                 {"detail": "График не выбран"},
-                status=status.HTTP_404_NOT_FOUND
+                status=status.HTTP_404_NOT_FOUND,
             )
 
         if not uws.approved:
             return Response({
                 "status": "pending",
-                "schedule": uws.schedule.name
+                "schedule": uws.schedule.name,
             })
 
         schedule = uws.schedule
@@ -70,6 +74,8 @@ class MyScheduleAPIView(APIView):
             "break_start": schedule.break_start,
             "break_end": schedule.break_end,
         })
+
+
 class ChooseScheduleAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -77,33 +83,48 @@ class ChooseScheduleAPIView(APIView):
         schedule_id = request.data.get("schedule_id")
 
         if not schedule_id:
+            WorkScheduleAuditService.log_schedule_selection_invalid_payload(request)
             return Response(
                 {"detail": "schedule_id обязателен"},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         try:
             schedule = WorkSchedule.objects.get(
                 id=schedule_id,
-                is_active=True
+                is_active=True,
             )
         except WorkSchedule.DoesNotExist:
+            WorkScheduleAuditService.log_schedule_selection_not_found(request, schedule_id)
             return Response(
                 {"detail": "График не найден"},
-                status=status.HTTP_404_NOT_FOUND
+                status=status.HTTP_404_NOT_FOUND,
             )
 
-        uws, _ = UserWorkSchedule.objects.get_or_create(
-            user=request.user
+        uws, created = UserWorkSchedule.objects.get_or_create(
+            user=request.user,
+            defaults={
+                "schedule": schedule,
+                "approved": False,
+            },
         )
 
-        uws.schedule = schedule
-        uws.approved = False
-        uws.save()
+        if not created:
+            uws.schedule = schedule
+            uws.approved = False
+            uws.save(update_fields=["schedule", "approved"])
+
+        WorkScheduleAuditService.log_schedule_selected_for_approval(
+            request,
+            schedule,
+            was_created=created,
+        )
 
         return Response({
-            "detail": "График отправлен на согласование"
+            "detail": "График отправлен на согласование",
         })
+
+
 class CalendarMonthAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -118,7 +139,7 @@ class CalendarMonthAPIView(APIView):
         except (KeyError, ValueError):
             return Response(
                 {"detail": "Некорректные параметры"},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         days_in_month = calendar.monthrange(year, month)[1]
@@ -128,7 +149,7 @@ class CalendarMonthAPIView(APIView):
             current_date = date(year, month, day)
 
             pc = ProductionCalendar.objects.filter(
-                date=current_date
+                date=current_date,
             ).first()
 
             if pc:

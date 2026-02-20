@@ -4,6 +4,7 @@ from rest_framework.views import APIView
 
 from common.models import Notification
 from common.serializers import NotificationSerializer
+from common.audit import CommonAuditService
 
 
 class NotificationsAPIView(APIView):
@@ -39,6 +40,7 @@ class MarkNotificationReadAPIView(APIView):
 
         notification.is_read = True
         notification.save()
+        CommonAuditService.log_notification_marked_read(request, notification)
 
         return Response({"status": "marked as read"})
 
@@ -47,9 +49,10 @@ class MarkAllNotificationsReadAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def patch(self, request):
-        Notification.objects.filter(
+        updated_count = Notification.objects.filter(
             user=request.user,
             is_read=False
         ).update(is_read=True)
+        CommonAuditService.log_notifications_marked_read_all(request, updated_count)
 
         return Response({"status": "all marked as read"})

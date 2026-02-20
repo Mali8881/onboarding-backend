@@ -58,7 +58,7 @@ class FeedbackSerializer(serializers.ModelSerializer):
     class Meta:
         model = Feedback
         fields = '__all__'
-        read_only_fields = ('status', 'is_read', 'created_at')
+        read_only_fields = ('created_at',)
 
     def validate_text(self, value):
         if not value.strip():

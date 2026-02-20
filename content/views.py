@@ -23,6 +23,7 @@ from .serializers import (
     FeedbackCreateSerializer,
     FeedbackResponseSerializer
 )
+from .audit import ContentAuditService
 
 
 # ---------------- NEWS ----------------
@@ -54,11 +55,33 @@ class FeedbackAdminView(ModelViewSet):
     permission_classes = [IsAuthenticated, HasPermission]
     required_permission = "feedback_manage"
 
+    def perform_update(self, serializer):
+        instance = serializer.instance
+        old_status = instance.status
+        feedback = serializer.save()
+        changed_fields = sorted(serializer.validated_data.keys())
+        ContentAuditService.log_feedback_updated_admin(
+            self.request,
+            feedback,
+            changed_fields=changed_fields,
+        )
+        if old_status != feedback.status:
+            ContentAuditService.log_feedback_status_changed_admin(
+                self.request,
+                feedback,
+                from_status=old_status,
+                to_status=feedback.status,
+            )
+
 
 class FeedbackCreateView(CreateAPIView):
     queryset = Feedback.objects.all()
     serializer_class = FeedbackCreateSerializer
     permission_classes = [AllowAny]
+
+    def perform_create(self, serializer):
+        feedback = serializer.save()
+        ContentAuditService.log_feedback_created(self.request, feedback)
 
 
 # ---------------- EMPLOYEES ----------------

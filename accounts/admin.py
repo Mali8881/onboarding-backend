@@ -1,44 +1,32 @@
 from django.contrib import admin
+
+from .access_policy import AccessPolicy
 from .models import (
-    User,
-    Role,
-    Permission,
-    Department,
-    Position,
     AuditLog,
+    Department,
     LoginHistory,
+    Permission,
+    Position,
+    Role,
+    User,
 )
 
 
-# ================= SAFE HELPERS =================
-
 def is_super_admin(user):
-    return (
-        user.is_authenticated
-        and hasattr(user, "role")
-        and user.role
-        and user.role.name == "SUPER_ADMIN"
-    )
+    return AccessPolicy.is_super_admin(user)
 
 
 def is_admin(user):
-    return (
-        user.is_authenticated
-        and hasattr(user, "role")
-        and user.role
-        and user.role.name == "ADMIN"
-    )
+    return AccessPolicy.is_admin(user)
 
-
-# ================= USER =================
 
 @admin.register(User)
 class UserAdmin(admin.ModelAdmin):
-    list_display = ("username", "role", "is_blocked")
-    list_filter = ("role", "is_blocked")
+    list_display = ("username", "role", "manager", "is_blocked")
+    list_filter = ("role", "is_blocked", "department")
 
     def has_module_permission(self, request):
-        return request.user.is_authenticated and request.user.is_staff
+        return AccessPolicy.can_access_admin_panel(request.user)
 
     def get_queryset(self, request):
         qs = super().get_queryset(request)
@@ -46,9 +34,8 @@ class UserAdmin(admin.ModelAdmin):
         if not request.user.is_authenticated:
             return qs.none()
 
-        # ADMIN видит только стажёров
         if is_admin(request.user):
-            return qs.filter(role__name="INTERN")
+            return qs.filter(role__name__in=[Role.Name.INTERN, Role.Name.EMPLOYEE])
 
         return qs
 
@@ -57,9 +44,7 @@ class UserAdmin(admin.ModelAdmin):
             return False
 
         if obj and is_admin(request.user):
-            # ADMIN не может менять админов и супер-админов
-            if obj.role.name != "INTERN":
-                return False
+            return AccessPolicy.can_manage_user(request.user, obj)
 
         return super().has_change_permission(request, obj)
 
@@ -68,58 +53,49 @@ class UserAdmin(admin.ModelAdmin):
             return False
 
         if obj and is_admin(request.user):
-            return False  # ADMIN не удаляет пользователей
+            return False
 
         return super().has_delete_permission(request, obj)
 
 
-# ================= ROLE =================
-
 @admin.register(Role)
 class RoleAdmin(admin.ModelAdmin):
+    list_display = ("name", "level")
 
     def has_module_permission(self, request):
         return is_super_admin(request.user)
 
-
-# ================= PERMISSION =================
 
 @admin.register(Permission)
 class PermissionAdmin(admin.ModelAdmin):
+    list_display = ("codename", "module")
+    search_fields = ("codename", "module")
 
     def has_module_permission(self, request):
         return is_super_admin(request.user)
 
 
-# ================= AUDIT LOG =================
-
 @admin.register(AuditLog)
 class AuditLogAdmin(admin.ModelAdmin):
-
     def has_module_permission(self, request):
         if not request.user.is_authenticated:
             return False
-        return request.user.has_permission("logs_read")
+        return AccessPolicy.has_permission(request.user, "logs_read")
 
-
-# ================= OTHER MODELS =================
 
 @admin.register(Department)
 class DepartmentAdmin(admin.ModelAdmin):
-
     def has_module_permission(self, request):
         return request.user.is_authenticated
 
 
 @admin.register(Position)
 class PositionAdmin(admin.ModelAdmin):
-
     def has_module_permission(self, request):
         return request.user.is_authenticated
 
 
 @admin.register(LoginHistory)
 class LoginHistoryAdmin(admin.ModelAdmin):
-
     def has_module_permission(self, request):
         return is_super_admin(request.user)

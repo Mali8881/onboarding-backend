@@ -4,8 +4,7 @@ from django.conf import settings
 from django.utils import timezone
 import uuid
 
-from .managers import  UserManager
-from django.utils import timezone
+from .managers import UserManager
 from datetime import timedelta
 from django.core.exceptions import ValidationError
 from django.core.validators import FileExtensionValidator
@@ -18,15 +17,32 @@ def validate_photo_size(value):
 
 # ================= RBAC =================
 class Permission(models.Model):
-    code = models.CharField(max_length=100, unique=True)
+    codename = models.CharField(max_length=100, unique=True)
+    module = models.CharField(max_length=100, blank=True, default="")
     description = models.TextField(blank=True)
 
     def __str__(self):
-        return self.code
+        return self.codename
 
 
 class Role(models.Model):
+    class Name(models.TextChoices):
+        SUPER_ADMIN = "SUPER_ADMIN", "SuperAdmin"
+        ADMIN = "ADMIN", "Admin"
+        EMPLOYEE = "EMPLOYEE", "Employee"
+        INTERN = "INTERN", "Intern"
+
+    class Level(models.IntegerChoices):
+        INTERN = 10, "Intern"
+        EMPLOYEE = 20, "Employee"
+        ADMIN = 30, "Admin"
+        SUPER_ADMIN = 40, "SuperAdmin"
+
     name = models.CharField(max_length=50, unique=True)
+    level = models.PositiveSmallIntegerField(
+        choices=Level.choices,
+        default=Level.INTERN,
+    )
     description = models.TextField(blank=True)
     permissions = models.ManyToManyField(Permission, blank=True)
 
@@ -56,6 +72,13 @@ class User(AbstractUser):
     role = models.ForeignKey(Role, on_delete=models.PROTECT)
     department = models.ForeignKey(Department, on_delete=models.SET_NULL, null=True, blank=True)
     position = models.ForeignKey(Position, on_delete=models.SET_NULL, null=True, blank=True)
+    manager = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="team_members",
+    )
 
     custom_position = models.CharField(max_length=150, blank=True)
 
@@ -77,7 +100,7 @@ class User(AbstractUser):
     failed_login_attempts = models.PositiveIntegerField(default=0)
     lockout_until = models.DateTimeField(null=True, blank=True)
 
-    def has_permission(self, code: str) -> bool:
+    def has_permission(self, codename: str) -> bool:
         """
         Проверка наличия permission по коду.
         """
@@ -87,35 +110,26 @@ class User(AbstractUser):
         if not self.role:
             return False
 
-        return self.role.permissions.filter(code=code).exists()
+        return self.role.permissions.filter(codename=codename).exists()
 
-    def has_any_permission(self, codes: list[str]) -> bool:
+    def has_any_permission(self, codenames: list[str]) -> bool:
         """
         Проверка наличия хотя бы одного permission.
         """
         if not self.is_authenticated or not self.role:
             return False
 
-        return self.role.permissions.filter(code__in=codes).exists()
+        return self.role.permissions.filter(codename__in=codenames).exists()
 
-    def has_all_permissions(self, codes: list[str]) -> bool:
+    def has_all_permissions(self, codenames: list[str]) -> bool:
         """
         Проверка наличия всех permission.
         """
         if not self.is_authenticated or not self.role:
             return False
 
-        user_codes = set(self.role.permissions.values_list("code", flat=True))
-        return set(codes).issubset(user_codes)
-
-def has_permission(self, code: str) -> bool:
-    if not self.is_authenticated:
-        return False
-
-    if not self.role:
-        return False
-
-    return self.role.permissions.filter(code=code).exists()
+        user_codes = set(self.role.permissions.values_list("codename", flat=True))
+        return set(codenames).issubset(user_codes)
 
 
 
@@ -124,6 +138,10 @@ def has_permission(self, code: str) -> bool:
 # ================= Security =================
 
 class AuditLog(models.Model):
+    """
+    Primary audit storage backend.
+    Use apps.audit.log_event as unified entrypoint for new writes.
+    """
 
     class Level(models.TextChoices):
         INFO = "info", "Info"

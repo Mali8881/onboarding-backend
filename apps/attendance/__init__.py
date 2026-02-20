@@ -1,0 +1,2 @@
+"""Attendance domain app."""
+

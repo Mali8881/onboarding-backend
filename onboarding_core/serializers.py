@@ -1,18 +1,11 @@
-from rest_framework import serializers
-from django.utils import timezone
 from urllib.parse import urlparse
 
+from django.utils import timezone
 from drf_spectacular.utils import extend_schema_field
+from rest_framework import serializers
 
-from .models import (
-    OnboardingDay,
-    OnboardingMaterial,
-    OnboardingProgress,
-)
+from .models import OnboardingDay, OnboardingMaterial, OnboardingProgress
 
-# =====================================================
-# USER SERIALIZERS
-# =====================================================
 
 class OnboardingMaterialSerializer(serializers.ModelSerializer):
     priority = serializers.IntegerField(read_only=True)
@@ -61,9 +54,6 @@ class OnboardingDayDetailSerializer(serializers.ModelSerializer):
         )
 
     def _get_day_status(self, day, user):
-        """
-        DONE / IN_PROGRESS / LOCKED
-        """
         progress = OnboardingProgress.objects.filter(
             user=user,
             day=day,
@@ -72,29 +62,13 @@ class OnboardingDayDetailSerializer(serializers.ModelSerializer):
         if progress and progress.status == OnboardingProgress.Status.DONE:
             return "DONE"
 
-        previous_day = (
-            OnboardingDay.objects
-            .filter(day_number__lt=day.day_number, is_active=True)
-            .order_by("-day_number")
-            .first()
-        )
-
-        if not previous_day:
-            return "IN_PROGRESS"
-
-        prev_done = OnboardingProgress.objects.filter(
-            user=user,
-            day=previous_day,
-            status=OnboardingProgress.Status.DONE,
-        ).exists()
-
-        return "IN_PROGRESS" if prev_done else "LOCKED"
+        return "IN_PROGRESS"
 
     @extend_schema_field(
         {
             "type": "string",
-            "enum": ["DONE", "IN_PROGRESS", "LOCKED"],
-            "description": "Статус онбординг-дня для текущего пользователя"
+            "enum": ["DONE", "IN_PROGRESS"],
+            "description": "Onboarding day status for current user",
         }
     )
     def get_status(self, day):
@@ -117,16 +91,10 @@ class OnboardingDayDetailSerializer(serializers.ModelSerializer):
                     "priority": {"type": "integer"},
                 },
             },
-            "description": "Материалы дня. Пустой список, если день заблокирован."
+            "description": "Onboarding day materials",
         }
     )
     def get_materials(self, day):
-        user = self.context["request"].user
-        status = self._get_day_status(day, user)
-
-        if status == "LOCKED":
-            return []
-
         materials = list(day.materials.all())
         materials.sort(key=lambda m: (m.priority, m.position))
         return OnboardingMaterialSerializer(materials, many=True).data
@@ -150,25 +118,16 @@ class OnboardingProgressSerializer(serializers.ModelSerializer):
         )
 
 
-# =====================================================
-# ADMIN SERIALIZERS
-# =====================================================
-
 class AdminOnboardingMaterialSerializer(serializers.ModelSerializer):
     class Meta:
         model = OnboardingMaterial
         fields = "__all__"
 
     def validate(self, attrs):
-        """
-        1. Максимум 10 материалов на день
-        2. Валидация content по типу
-        """
         day = attrs.get("day") or getattr(self.instance, "day", None)
         material_type = attrs.get("type") or getattr(self.instance, "type", None)
         content = attrs.get("content") or getattr(self.instance, "content", None)
 
-        # ---------- лимит 10 ----------
         if day:
             qs = OnboardingMaterial.objects.filter(day=day)
             if self.instance:
@@ -179,18 +138,15 @@ class AdminOnboardingMaterialSerializer(serializers.ModelSerializer):
                     "Maximum 10 materials are allowed per onboarding day."
                 )
 
-        # ---------- валидация content ----------
         if material_type and content:
             self._validate_content(material_type, content)
 
         return attrs
 
     def _validate_content(self, material_type: str, content: str):
-        # TEXT — любой текст
         if material_type == OnboardingMaterial.MaterialType.TEXT:
             return
 
-        # остальные — должны быть URL
         self._validate_url(content)
 
         if material_type == OnboardingMaterial.MaterialType.VIDEO:
@@ -235,9 +191,6 @@ class AdminOnboardingDaySerializer(serializers.ModelSerializer):
         )
 
     def validate_deadline_time(self, value):
-        """
-        Проверяем только время (по ТЗ дедлайн — ЧЧ:ММ).
-        """
         if value is None:
             return value
 

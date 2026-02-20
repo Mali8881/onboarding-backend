@@ -71,7 +71,7 @@ class OnboardingReport(models.Model):
 
     def can_be_modified(self) -> bool:
         """Можно ли редактировать отчёт"""
-        return self.status in [self.Status.DRAFT, self.Status.REVISION]
+        return self.status in [self.Status.DRAFT, self.Status.REVISION, self.Status.REJECTED]
 
     def set_status(self, new_status, reviewer=None, comment=None):
         """Смена статуса администратором"""

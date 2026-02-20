@@ -5,7 +5,10 @@ from .views import (
     EmployeeListAPIView,
     InstructionAPIView,
     EnabledLanguagesAPIView,
-    NewsSliderSettingsAPIView, WelcomeBlockAPIView
+    NewsSliderSettingsAPIView,
+    WelcomeBlockAPIView,
+    FeedbackCreateView,
+    FeedbackAdminView,
 )
 
 urlpatterns = [
@@ -23,6 +26,19 @@ urlpatterns = [
     # Инструкции и языки
     path("instruction/", InstructionAPIView.as_view(), name='instruction'),
     path("languages/", EnabledLanguagesAPIView.as_view(), name='languages'),
+    path("feedback/", FeedbackCreateView.as_view(), name="feedback-create"),
+    path(
+        "admin/feedback/",
+        FeedbackAdminView.as_view({"get": "list", "post": "create"}),
+        name="feedback-admin-list",
+    ),
+    path(
+        "admin/feedback/<uuid:pk>/",
+        FeedbackAdminView.as_view(
+            {"get": "retrieve", "patch": "partial_update", "delete": "destroy"}
+        ),
+        name="feedback-admin-detail",
+    ),
 
 
 ]

@@ -9,8 +9,9 @@ from .serializers import SystemLogSerializer
 
 class SystemLogViewSet(ModelViewSet):
     """
-    Просмотр системных логов.
-    Доступ ТОЛЬКО для пользователей с permission logs_read.
+    Deprecated legacy read-model for system logs.
+    New audit writes must go through apps.audit.log_event(...).
+    This endpoint is read-only and kept for backward compatibility.
     """
 
     permission_classes = [IsAuthenticated, HasPermission]

@@ -8,8 +8,10 @@ from .models import User, Role, Department, Position
 
 class UserSerializer(serializers.ModelSerializer):
     role = serializers.CharField(source="role.name", read_only=True)
+    role_level = serializers.IntegerField(source="role.level", read_only=True)
     department = serializers.CharField(source="department.name", read_only=True)
     position = serializers.CharField(source="position.name", read_only=True)
+    manager = serializers.PrimaryKeyRelatedField(read_only=True)
     full_name = serializers.SerializerMethodField()
 
     class Meta:
@@ -21,8 +23,10 @@ class UserSerializer(serializers.ModelSerializer):
             "last_name",
             "full_name",
             "role",
+            "role_level",
             "department",
             "position",
+            "manager",
             "custom_position",
             "telegram",
             "phone",
@@ -42,6 +46,15 @@ class LoginSerializer(serializers.Serializer):
     password = serializers.CharField()
 
 
+class PasswordResetRequestSerializer(serializers.Serializer):
+    username_or_email = serializers.CharField()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    token = serializers.UUIDField()
+    new_password = serializers.CharField(write_only=True)
+
+
 # =========================
 # ROLE
 # =========================
@@ -49,7 +62,7 @@ class LoginSerializer(serializers.Serializer):
 class RoleSerializer(serializers.ModelSerializer):
     class Meta:
         model = Role
-        fields = ("id", "name")
+        fields = ("id", "name", "level")
 
 
 # =========================

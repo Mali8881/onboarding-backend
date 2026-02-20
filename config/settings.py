@@ -54,6 +54,8 @@ INSTALLED_APPS = [
     "work_schedule",
     "security",
     "onboarding_core",
+    "apps.audit.apps.AuditConfig",
+    "apps.attendance.apps.AttendanceConfig",
 ]
 
 # ======================
@@ -160,8 +162,20 @@ REST_FRAMEWORK = {
         "user": "1000/day",
         "anon": "20/minute",
         "login": "5/minute",
+        "password_reset_request": "5/hour",
+        "password_reset_confirm": "10/hour",
     },
 }
+
+SIMPLE_JWT = {
+    "TOKEN_OBTAIN_SERIALIZER": "accounts.tokens.CustomTokenSerializer",
+}
+
+# Unified audit facade settings.
+# No DB changes required; both backends use existing models.
+AUDIT_PRIMARY_BACKEND = os.environ.get("AUDIT_PRIMARY_BACKEND", "accounts")
+AUDIT_LEGACY_BACKEND = os.environ.get("AUDIT_LEGACY_BACKEND", "security")
+AUDIT_WRITE_MODE = os.environ.get("AUDIT_WRITE_MODE", "primary_only")
 
 
 SPECTACULAR_SETTINGS = {

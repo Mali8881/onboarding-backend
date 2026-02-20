@@ -4,6 +4,12 @@ from django.conf import settings
 
 
 class SystemLog(models.Model):
+    """
+    Deprecated write model for audit events.
+
+    New writes should go through apps.audit.log_event facade.
+    This model remains for backward-compatible reads.
+    """
     class Level(models.TextChoices):
         INFO = "info", "Info"
         WARNING = "warning", "Warning"

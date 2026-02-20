@@ -1,5 +1,6 @@
 from rest_framework.permissions import BasePermission
 
+from .access_policy import AccessPolicy
 
 class HasPermission(BasePermission):
     """
@@ -21,4 +22,4 @@ class HasPermission(BasePermission):
             return False
 
         # Проверяем наличие permission через модель User
-        return user.has_permission(required)
+        return AccessPolicy.has_permission(user, required)

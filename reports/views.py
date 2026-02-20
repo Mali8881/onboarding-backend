@@ -1,33 +1,40 @@
-
 from django.shortcuts import get_object_or_404
 
 from rest_framework import status as drf_status, viewsets
-from rest_framework.views import APIView
-from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
+from rest_framework.views import APIView
 
-from drf_spectacular.utils import extend_schema, OpenApiResponse
-
-from .models import OnboardingReport, ReportNotification, OnboardingReportLog
+from .models import OnboardingReport, OnboardingReportLog, ReportNotification
 from .serializers import (
-    OnboardingReportCreateSerializer,
     AdminOnboardingReportSerializer,
-    ReportNotificationSerializer,
+    OnboardingReportCreateSerializer,
     OnboardingReportLogSerializer,
+    ReportNotificationSerializer,
 )
 
 from accounts.permissions import HasPermission
 from onboarding_core.models import OnboardingDay
 from onboarding_core.utils import is_deadline_passed
+from .audit import ReportsAuditService
 
 
-# =====================================================
-# USER: Отправка отчёта
-# =====================================================
+SYSTEM_REJECT_COMMENT = "Report is empty. Fill in 'did' and 'will_do' before submit."
+
 
 class SubmitOnboardingReportView(APIView):
     permission_classes = [IsAuthenticated]
+
+    def _mark_rejected(self, report):
+        report.status = OnboardingReport.Status.REJECTED
+        report.reviewer_comment = SYSTEM_REJECT_COMMENT
+        report.save(update_fields=["status", "reviewer_comment", "updated_at"])
+        OnboardingReportLog.objects.create(
+            report=report,
+            action=OnboardingReportLog.Action.REJECTED,
+            author=None,
+        )
 
     def post(self, request):
         serializer = OnboardingReportCreateSerializer(data=request.data)
@@ -40,6 +47,7 @@ class SubmitOnboardingReportView(APIView):
         )
 
         if is_deadline_passed(day):
+            ReportsAuditService.log_report_deadline_blocked(request, day)
             return Response(
                 {"detail": "Report deadline has passed"},
                 status=drf_status.HTTP_403_FORBIDDEN,
@@ -55,6 +63,7 @@ class SubmitOnboardingReportView(APIView):
         ).first()
 
         if existing_report and not existing_report.can_be_modified():
+            ReportsAuditService.log_report_edit_conflict(request, existing_report)
             return Response(
                 {"detail": "Report cannot be modified"},
                 status=drf_status.HTTP_409_CONFLICT,
@@ -64,12 +73,14 @@ class SubmitOnboardingReportView(APIView):
             existing_report.did = did
             existing_report.will_do = will_do
             existing_report.problems = problems
+            existing_report.save(update_fields=["did", "will_do", "problems", "updated_at"])
 
-            if not existing_report.can_be_sent():
-                existing_report.status = OnboardingReport.Status.DRAFT
-                existing_report.save(update_fields=["status"])
-            else:
+            if existing_report.can_be_sent():
                 existing_report.send()
+                ReportsAuditService.log_report_submitted(request, existing_report)
+            else:
+                self._mark_rejected(existing_report)
+                ReportsAuditService.log_report_rejected_empty(request, existing_report)
 
             return Response(
                 {
@@ -78,8 +89,6 @@ class SubmitOnboardingReportView(APIView):
                 }
             )
 
-        # Новый отчёт
-        # Новый отчёт
         report = OnboardingReport.objects.create(
             user=request.user,
             day=day,
@@ -96,9 +105,10 @@ class SubmitOnboardingReportView(APIView):
 
         if report.can_be_sent():
             report.send()
+            ReportsAuditService.log_report_submitted(request, report)
         else:
-            report.status = OnboardingReport.Status.DRAFT
-            report.save(update_fields=["status"])
+            self._mark_rejected(report)
+            ReportsAuditService.log_report_rejected_empty(request, report)
 
         return Response(
             {
@@ -109,10 +119,6 @@ class SubmitOnboardingReportView(APIView):
         )
 
 
-# =====================================================
-# ADMIN: Работа с отчётами
-# =====================================================
-
 class AdminOnboardingReportViewSet(ModelViewSet):
     queryset = OnboardingReport.objects.all()
     serializer_class = AdminOnboardingReportSerializer
@@ -122,6 +128,7 @@ class AdminOnboardingReportViewSet(ModelViewSet):
 
     def partial_update(self, request, *args, **kwargs):
         instance = self.get_object()
+        old_status = instance.status
 
         new_status = request.data.get("status")
         comment = request.data.get("reviewer_comment")
@@ -131,14 +138,17 @@ class AdminOnboardingReportViewSet(ModelViewSet):
             reviewer=request.user,
             comment=comment,
         )
+        ReportsAuditService.log_review_status_changed(
+            request,
+            report=instance,
+            from_status=old_status,
+            to_status=instance.status,
+            has_comment=bool((comment or "").strip()),
+        )
 
         serializer = self.get_serializer(instance)
         return Response(serializer.data)
 
-
-# =====================================================
-# LOGS
-# =====================================================
 
 class OnboardingReportLogViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = OnboardingReportLogSerializer
@@ -150,10 +160,6 @@ class OnboardingReportLogViewSet(viewsets.ReadOnlyModelViewSet):
             "report", "author"
         )
 
-
-# =====================================================
-# NOTIFICATIONS
-# =====================================================
 
 class ReportNotificationViewSet(viewsets.ModelViewSet):
     serializer_class = ReportNotificationSerializer

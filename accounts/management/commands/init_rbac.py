@@ -4,38 +4,43 @@ from accounts.models import Role, Permission
 
 PERMISSIONS = [
     # Content
-    ("content_manage", "Manage content"),
-    ("view_content", "View content"),
+    ("content_manage", "content", "Manage content"),
+    ("view_content", "content", "View content"),
 
     # Onboarding / Reports
-    ("onboarding_manage", "Manage onboarding"),
-    ("reports_review", "Review reports"),
-    ("report_submit", "Submit report"),
+    ("onboarding_manage", "onboarding", "Manage onboarding"),
+    ("reports_review", "reports", "Review reports"),
+    ("report_submit", "reports", "Submit report"),
 
     # Users
-    ("users_manage", "Manage users"),
-    ("roles_manage", "Manage roles"),
+    ("users_manage", "accounts", "Manage users"),
+    ("roles_manage", "accounts", "Manage roles"),
 
     # Schedule
-    ("schedule_manage", "Manage schedules"),
+    ("schedule_manage", "schedule", "Manage schedules"),
 
     # Feedback
-    ("feedback_manage", "Manage feedback"),
+    ("feedback_manage", "content", "Manage feedback"),
 
     # Logs
-    ("logs_read", "Read audit logs"),
+    ("logs_read", "security", "Read audit logs"),
 
     # Reference
-    ("view_positions", "View positions"),
+    ("view_positions", "accounts", "View positions"),
 ]
 
 
 ROLES = {
-    "INTERN": [
+    Role.Name.INTERN: [
         "report_submit",
         "view_content",
     ],
-    "ADMIN": [
+    Role.Name.EMPLOYEE: [
+        "report_submit",
+        "view_content",
+        "view_positions",
+    ],
+    Role.Name.ADMIN: [
         "content_manage",
         "onboarding_manage",
         "reports_review",
@@ -43,8 +48,9 @@ ROLES = {
         "schedule_manage",
         "feedback_manage",
         "view_content",
+        "view_positions",
     ],
-    "SUPER_ADMIN": [
+    Role.Name.SUPER_ADMIN: [
         "content_manage",
         "onboarding_manage",
         "reports_review",
@@ -57,6 +63,13 @@ ROLES = {
     ],
 }
 
+ROLE_LEVELS = {
+    Role.Name.INTERN: Role.Level.INTERN,
+    Role.Name.EMPLOYEE: Role.Level.EMPLOYEE,
+    Role.Name.ADMIN: Role.Level.ADMIN,
+    Role.Name.SUPER_ADMIN: Role.Level.SUPER_ADMIN,
+}
+
 
 class Command(BaseCommand):
     help = "Initialize RBAC roles and permissions"
@@ -65,15 +78,25 @@ class Command(BaseCommand):
 
         perm_objs = {}
 
-        for code, description in PERMISSIONS:
+        for codename, module, description in PERMISSIONS:
             p, _ = Permission.objects.get_or_create(
-                code=code,
-                defaults={"description": description},
+                codename=codename,
+                defaults={"module": module, "description": description},
             )
-            perm_objs[code] = p
+            if p.module != module or p.description != description:
+                p.module = module
+                p.description = description
+                p.save(update_fields=["module", "description"])
+            perm_objs[codename] = p
 
         for role_name, perm_codes in ROLES.items():
-            role, _ = Role.objects.get_or_create(name=role_name)
+            role, _ = Role.objects.get_or_create(
+                name=role_name,
+                defaults={"level": ROLE_LEVELS[role_name]},
+            )
+            if role.level != ROLE_LEVELS[role_name]:
+                role.level = ROLE_LEVELS[role_name]
+                role.save(update_fields=["level"])
             role.permissions.clear()
 
             for code in perm_codes:

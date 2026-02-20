@@ -9,7 +9,13 @@ class UserManager(DjangoUserManager):
         extra_fields.setdefault("is_superuser", True)
 
         Role = apps.get_model("accounts", "Role")
-        superadmin_role = Role.objects.get(name="Суперадминистратор")
+        superadmin_role, _ = Role.objects.get_or_create(
+            name=Role.Name.SUPER_ADMIN,
+            defaults={
+                "level": Role.Level.SUPER_ADMIN,
+                "description": "System super administrator",
+            },
+        )
 
         extra_fields["role"] = superadmin_role
 
