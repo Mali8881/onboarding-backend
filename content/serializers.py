@@ -2,8 +2,9 @@ from rest_framework import serializers
 # Импортируем все модели из одного места
 from .models import (
     News, WelcomeBlock, Feedback, Employee,
-    Instruction, LanguageSetting, NewsSliderSettings
+    Instruction, LanguageSetting, NewsSliderSettings, Course, CourseEnrollment
 )
+from accounts.models import User
 
 # 1. СЕРИАЛИЗАТОРЫ ДЛЯ НОВОСТЕЙ
 class NewsSerializer(serializers.ModelSerializer):
@@ -140,5 +141,84 @@ class NewsSliderSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = NewsSliderSettings
         fields = ['autoplay', 'autoplay_delay']
+
+
+class CourseSerializer(serializers.ModelSerializer):
+    department_name = serializers.CharField(source="department.name", read_only=True)
+
+    class Meta:
+        model = Course
+        fields = (
+            "id",
+            "title",
+            "description",
+            "visibility",
+            "department",
+            "department_name",
+            "is_active",
+        )
+
+
+class CourseEnrollmentSerializer(serializers.ModelSerializer):
+    course = CourseSerializer(read_only=True)
+
+    class Meta:
+        model = CourseEnrollment
+        fields = (
+            "id",
+            "course",
+            "source",
+            "status",
+            "progress_percent",
+            "accepted_at",
+            "started_at",
+            "completed_at",
+            "updated_at",
+        )
+
+
+class CourseAssignSerializer(serializers.Serializer):
+    course_id = serializers.UUIDField()
+    user_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        required=False,
+        allow_empty=False,
+    )
+    assign_to_all = serializers.BooleanField(default=False)
+
+    def validate(self, attrs):
+        course_id = attrs["course_id"]
+        user_ids = attrs.get("user_ids")
+        assign_to_all = attrs.get("assign_to_all", False)
+
+        try:
+            course = Course.objects.get(id=course_id, is_active=True)
+        except Course.DoesNotExist as exc:
+            raise serializers.ValidationError({"course_id": "Course not found."}) from exc
+
+        if not assign_to_all and not user_ids:
+            raise serializers.ValidationError("Provide user_ids or set assign_to_all=true.")
+
+        attrs["course"] = course
+        return attrs
+
+
+class CourseAcceptSerializer(serializers.Serializer):
+    enrollment_id = serializers.UUIDField()
+
+
+class CourseProgressUpdateSerializer(serializers.Serializer):
+    enrollment_id = serializers.UUIDField()
+    progress_percent = serializers.IntegerField(min_value=0, max_value=100)
+
+
+class CourseSelfEnrollSerializer(serializers.Serializer):
+    course_id = serializers.UUIDField()
+
+
+class CourseUserShortSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ("id", "username")
 
 

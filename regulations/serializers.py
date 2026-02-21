@@ -1,6 +1,12 @@
 from rest_framework import serializers
 
-from .models import Regulation, RegulationAcknowledgement
+from .models import (
+    InternOnboardingRequest,
+    Regulation,
+    RegulationAcknowledgement,
+    RegulationFeedback,
+    RegulationReadProgress,
+)
 
 
 class RegulationSerializer(serializers.ModelSerializer):
@@ -112,4 +118,36 @@ class RegulationAcknowledgementSerializer(serializers.ModelSerializer):
             "regulation_title",
         )
         read_only_fields = fields
+
+
+class RegulationReadProgressSerializer(serializers.ModelSerializer):
+    regulation = RegulationSerializer(read_only=True)
+
+    class Meta:
+        model = RegulationReadProgress
+        fields = ("regulation", "is_read", "read_at")
+
+
+class RegulationFeedbackCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RegulationFeedback
+        fields = ("text",)
+
+
+class InternOnboardingRequestSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(source="user.username", read_only=True)
+
+    class Meta:
+        model = InternOnboardingRequest
+        fields = (
+            "id",
+            "user",
+            "username",
+            "status",
+            "note",
+            "requested_at",
+            "reviewed_at",
+            "reviewed_by",
+        )
+        read_only_fields = ("requested_at", "reviewed_at", "reviewed_by")
 

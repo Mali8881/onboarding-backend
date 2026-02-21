@@ -9,6 +9,7 @@ from .views import (
     WorkScheduleRequestDecisionAPIView,
     WorkScheduleTemplateUsersAPIView,
     MyScheduleAPIView,
+    ScheduleOptionsAPIView,
     CalendarView,
     ChooseScheduleAPIView,
     CalendarMonthAPIView,
@@ -30,6 +31,7 @@ urlpatterns = [
 
     # Legacy compatibility
     path("my-schedule/", MyScheduleAPIView.as_view()),
+    path("schedules/", ScheduleOptionsAPIView.as_view()),
     path("calendar/", CalendarView.as_view(), name="calendar"),
     path("calendar-month/", CalendarMonthAPIView.as_view()),
     path("choose-schedule/", ChooseScheduleAPIView.as_view()),

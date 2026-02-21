@@ -109,3 +109,45 @@ class OrgApiTests(TestCase):
         member = next(m for m in support["members"] if m["id"] == self.employee.id)
         self.assertIn("full_name", member)
         self.assertNotIn("telegram", member)
+
+
+class LoginLandingTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.intern_role, _ = Role.objects.get_or_create(
+            name=Role.Name.INTERN,
+            defaults={"level": Role.Level.INTERN},
+        )
+        self.admin_role, _ = Role.objects.get_or_create(
+            name=Role.Name.ADMIN,
+            defaults={"level": Role.Level.ADMIN},
+        )
+        self.intern = User.objects.create_user(
+            username="intern_landing",
+            password="StrongPass123!",
+            role=self.intern_role,
+        )
+        self.admin = User.objects.create_user(
+            username="admin_landing",
+            password="StrongPass123!",
+            role=self.admin_role,
+        )
+
+    def test_intern_login_returns_intern_landing(self):
+        response = self.client.post(
+            "/api/v1/accounts/login/",
+            {"username": "intern_landing", "password": "StrongPass123!"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["landing"], "intern_portal")
+        self.assertTrue(response.data["user"]["is_first_login"])
+
+    def test_admin_login_returns_admin_landing(self):
+        response = self.client.post(
+            "/api/v1/accounts/login/",
+            {"username": "admin_landing", "password": "StrongPass123!"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["landing"], "admin_panel")

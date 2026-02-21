@@ -145,6 +145,8 @@ class User(AbstractUser):
     is_blocked = models.BooleanField("Заблокирован", default=False)
     failed_login_attempts = models.PositiveIntegerField("Неудачных входов", default=0)
     lockout_until = models.DateTimeField("Блокировка до", null=True, blank=True)
+    intern_onboarding_started_at = models.DateTimeField(null=True, blank=True)
+    intern_onboarding_completed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         verbose_name = "Пользователь"

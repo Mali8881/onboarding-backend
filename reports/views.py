@@ -5,9 +5,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.views import APIView
+from django.utils import timezone
 
-from .models import OnboardingReport, OnboardingReportLog, ReportNotification
+from accounts.access_policy import AccessPolicy
+from .models import EmployeeDailyReport, OnboardingReport, OnboardingReportLog, ReportNotification
 from .serializers import (
+    EmployeeDailyReportSerializer,
     AdminOnboardingReportSerializer,
     OnboardingReportCreateSerializer,
     OnboardingReportLogSerializer,
@@ -169,3 +172,37 @@ class ReportNotificationViewSet(viewsets.ModelViewSet):
         return ReportNotification.objects.filter(
             report__user=self.request.user
         )
+
+
+class EmployeeDailyReportAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not (AccessPolicy.is_employee(request.user) or AccessPolicy.is_admin(request.user) or AccessPolicy.is_super_admin(request.user)):
+            return Response({"detail": "Access denied."}, status=drf_status.HTTP_403_FORBIDDEN)
+
+        report_date = request.query_params.get("date")
+        qs = EmployeeDailyReport.objects.select_related("user")
+        if AccessPolicy.is_employee(request.user):
+            qs = qs.filter(user=request.user)
+        if report_date:
+            qs = qs.filter(report_date=report_date)
+
+        serializer = EmployeeDailyReportSerializer(qs, many=True)
+        return Response(serializer.data)
+
+    def post(self, request):
+        if not AccessPolicy.is_employee(request.user):
+            return Response({"detail": "Only employee can submit report."}, status=drf_status.HTTP_403_FORBIDDEN)
+
+        report_date = request.data.get("report_date") or timezone.localdate()
+        summary = (request.data.get("summary") or "").strip()
+        if not summary:
+            return Response({"detail": "summary is required"}, status=drf_status.HTTP_400_BAD_REQUEST)
+
+        report, _ = EmployeeDailyReport.objects.update_or_create(
+            user=request.user,
+            report_date=report_date,
+            defaults={"summary": summary},
+        )
+        return Response(EmployeeDailyReportSerializer(report).data, status=drf_status.HTTP_201_CREATED)

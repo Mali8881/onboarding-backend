@@ -4,8 +4,13 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 from django.core.files.uploadedfile import SimpleUploadedFile
 
-from accounts.models import Role
-from regulations.models import Regulation, RegulationAcknowledgement
+from accounts.models import Department, Role, User
+from regulations.models import (
+    InternOnboardingRequest,
+    Regulation,
+    RegulationAcknowledgement,
+    RegulationReadProgress,
+)
 
 
 class RegulationsApiTests(APITestCase):
@@ -161,3 +166,76 @@ class RegulationsApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["required_count"], 1)
         self.assertEqual(response.data["acknowledged_count"], 0)
+
+
+class InternOnboardingFlowTests(APITestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.intern_role, _ = Role.objects.get_or_create(
+            name=Role.Name.INTERN,
+            defaults={"level": Role.Level.INTERN},
+        )
+        self.admin_role, _ = Role.objects.get_or_create(
+            name=Role.Name.ADMIN,
+            defaults={"level": Role.Level.ADMIN},
+        )
+        self.employee_role, _ = Role.objects.get_or_create(
+            name=Role.Name.EMPLOYEE,
+            defaults={"level": Role.Level.EMPLOYEE},
+        )
+        self.intern = User.objects.create_user(
+            username="intern_flow",
+            password="StrongPass123!",
+            role=self.intern_role,
+        )
+        self.admin = User.objects.create_user(
+            username="admin_flow",
+            password="StrongPass123!",
+            role=self.admin_role,
+        )
+        self.department = Department.objects.create(name="QA")
+        self.regulation = Regulation.objects.create(
+            title="Reg 1",
+            description="d",
+            type=Regulation.RegulationType.LINK,
+            external_url="https://example.com",
+            is_active=True,
+        )
+
+    def test_intern_can_mark_read_and_submit_completion(self):
+        self.client.force_authenticate(self.intern)
+        read_response = self.client.post(f"/api/v1/regulations/{self.regulation.id}/read/")
+        self.assertEqual(read_response.status_code, 200)
+        self.assertTrue(
+            RegulationReadProgress.objects.filter(
+                user=self.intern,
+                regulation=self.regulation,
+                is_read=True,
+            ).exists()
+        )
+
+        submit_response = self.client.post("/api/v1/regulations/intern/submit/")
+        self.assertEqual(submit_response.status_code, 201)
+        self.assertTrue(
+            InternOnboardingRequest.objects.filter(
+                user=self.intern,
+                status=InternOnboardingRequest.Status.PENDING,
+            ).exists()
+        )
+
+    def test_admin_can_approve_and_promote_to_employee(self):
+        request_obj = InternOnboardingRequest.objects.create(user=self.intern)
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(
+            f"/api/v1/regulations/admin/intern-requests/{request_obj.id}/approve/",
+            {"department_id": self.department.id},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+
+        self.intern.refresh_from_db()
+        request_obj.refresh_from_db()
+        self.assertEqual(self.intern.role.name, self.employee_role.name)
+        self.assertEqual(self.intern.department_id, self.department.id)
+        self.assertEqual(request_obj.status, InternOnboardingRequest.Status.APPROVED)

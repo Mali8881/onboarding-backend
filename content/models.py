@@ -2,6 +2,7 @@ import uuid
 import re
 from django.db import models
 from django.conf import settings
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils.html import strip_tags
 from ckeditor_uploader.fields import RichTextUploadingField
 from jsonschema.exceptions import ValidationError
@@ -275,3 +276,98 @@ class LanguageSetting(models.Model):
 
     def __str__(self):
         return f"{self.get_code_display()} ({'ON' if self.is_enabled else 'OFF'})"
+
+
+class Course(models.Model):
+    class Visibility(models.TextChoices):
+        PUBLIC = "public", "Public"
+        DEPARTMENT = "department", "Department"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    visibility = models.CharField(
+        max_length=20,
+        choices=Visibility.choices,
+        default=Visibility.PUBLIC,
+    )
+    department = models.ForeignKey(
+        "accounts.Department",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="courses",
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["title"]
+
+    def clean(self):
+        if self.visibility == self.Visibility.DEPARTMENT and not self.department_id:
+            raise DjangoValidationError("Department course must have a department.")
+        if self.visibility == self.Visibility.PUBLIC:
+            self.department = None
+
+    def __str__(self):
+        return self.title
+
+
+class CourseEnrollment(models.Model):
+    class Status(models.TextChoices):
+        ASSIGNED = "assigned", "Assigned"
+        ACCEPTED = "accepted", "Accepted"
+        IN_PROGRESS = "in_progress", "In progress"
+        COMPLETED = "completed", "Completed"
+
+    class Source(models.TextChoices):
+        ADMIN = "admin", "Assigned by admin"
+        SELF = "self", "Self enrolled"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    course = models.ForeignKey(
+        Course,
+        on_delete=models.CASCADE,
+        related_name="enrollments",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="course_enrollments",
+    )
+    source = models.CharField(
+        max_length=20,
+        choices=Source.choices,
+        default=Source.SELF,
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.ASSIGNED,
+    )
+    progress_percent = models.PositiveSmallIntegerField(default=0)
+    assigned_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="assigned_courses",
+    )
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("course", "user")
+        ordering = ["-updated_at"]
+
+    def clean(self):
+        if self.progress_percent > 100:
+            raise DjangoValidationError("Progress percent cannot be greater than 100.")
+
+    def __str__(self):
+        return f"{self.user} - {self.course}"

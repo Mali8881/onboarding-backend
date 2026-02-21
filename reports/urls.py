@@ -2,6 +2,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 
 from .views import (
+    EmployeeDailyReportAPIView,
     SubmitOnboardingReportView,
     AdminOnboardingReportViewSet,
     OnboardingReportLogViewSet,
@@ -27,5 +28,6 @@ router.register(
 
 urlpatterns = [
     path("submit/", SubmitOnboardingReportView.as_view(), name="submit-report"),
+    path("employee/daily/", EmployeeDailyReportAPIView.as_view(), name="employee-daily-report"),
     path("", include(router.urls)),
 ]

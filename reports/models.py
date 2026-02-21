@@ -170,3 +170,19 @@ class ReportNotification(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+
+
+class EmployeeDailyReport(models.Model):
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="employee_daily_reports",
+    )
+    report_date = models.DateField()
+    summary = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("user", "report_date")
+        ordering = ["-report_date", "-updated_at"]

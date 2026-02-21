@@ -1,7 +1,6 @@
 import os
 from pathlib import Path
 from corsheaders.defaults import default_headers
-import dj_database_url
 
 # ======================
 # BASE
@@ -11,11 +10,14 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # ======================
 # SECURITY
 # ======================
-SECRET_KEY = "*0u4%0xl)j45n9d+hglu6$69cx-=%iy+w!dh15w-dzd3zita6f"
+SECRET_KEY = os.environ.get(
+    "SECRET_KEY",
+    "dev-secret-key-change-me",
+)
 
 
 
-DEBUG = True
+DEBUG = os.environ.get("DEBUG", "true").lower() == "true"
 
 
 ALLOWED_HOSTS = os.environ.get(
@@ -23,7 +25,7 @@ ALLOWED_HOSTS = os.environ.get(
 ).split(",")
 
 # ======================
-# APPLICATIONS$env:SECRET_KEY="dev-secret"
+# APPLICATIONS
 # ======================
 INSTALLED_APPS = [
     # Admin UI
@@ -87,13 +89,14 @@ WSGI_APPLICATION = "config.wsgi.application"
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": "onboarding",
-        "USER": "postgres",
-        "PASSWORD": "malika2005",
-        "HOST": "127.0.0.1",
-        "PORT": "5433",
+        "NAME": os.environ.get("DB_NAME", "onboarding"),
+        "USER": os.environ.get("DB_USER", "postgres"),
+        "PASSWORD": os.environ.get("DB_PASSWORD", "baschytanka"),
+        "HOST": os.environ.get("DB_HOST", "127.0.0.1"),
+        "PORT": os.environ.get("DB_PORT", "5432"),
     }
 }
+
 
 # ======================
 # AUTH
@@ -167,9 +170,6 @@ CKEDITOR_CONFIGS = {
 # ======================
 # DRF
 # ======================
-# ======================
-# DRF
-# ======================
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
@@ -221,6 +221,8 @@ CORS_ALLOW_CREDENTIALS = True
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
 ]
 
 CSRF_TRUSTED_ORIGINS = [

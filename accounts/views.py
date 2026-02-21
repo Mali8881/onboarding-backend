@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.db.models import Count
+from django.db.models import Q
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -13,7 +14,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from datetime import timedelta
 from django.utils import timezone
 
-from .models import Department, LoginHistory, PasswordResetToken, Position, User
+from .models import Department, LoginHistory, PasswordResetToken, Position, Role, User
 from .serializers import (
     DepartmentSerializer,
     PasswordResetConfirmSerializer,
@@ -30,6 +31,8 @@ from .throttles import (
     PasswordResetRequestThrottle,
 )
 from apps.audit import AuditEvents, log_event
+from content.models import Course, CourseEnrollment
+from reports.models import EmployeeDailyReport
 
 
 # ================= LOGIN =================
@@ -537,3 +540,104 @@ class OrgStructureAPIView(APIView):
             )
 
         return Response({"departments": result})
+
+
+class EmployeeHomeAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not (
+            AccessPolicy.is_employee(request.user)
+            or AccessPolicy.is_admin(request.user)
+            or AccessPolicy.is_super_admin(request.user)
+        ):
+            return Response({"detail": "Access denied."}, status=403)
+
+        my_courses = CourseEnrollment.objects.filter(
+            user=request.user,
+            course__is_active=True,
+        ).count()
+        completed_courses = CourseEnrollment.objects.filter(
+            user=request.user,
+            course__is_active=True,
+            status=CourseEnrollment.Status.COMPLETED,
+        ).count()
+
+        available_courses_qs = Course.objects.filter(
+            is_active=True,
+            visibility=Course.Visibility.PUBLIC,
+        )
+        if request.user.department_id:
+            available_courses_qs = available_courses_qs | Course.objects.filter(
+                is_active=True,
+                visibility=Course.Visibility.DEPARTMENT,
+                department_id=request.user.department_id,
+            )
+
+        reports_count = EmployeeDailyReport.objects.filter(user=request.user).count()
+
+        return Response(
+            {
+                "greeting": f"Здравствуйте, {request.user.first_name or request.user.username}!",
+                "username": request.user.username,
+                "my_courses_count": my_courses,
+                "completed_courses_count": completed_courses,
+                "available_courses_count": available_courses_qs.distinct().count(),
+                "daily_reports_count": reports_count,
+            }
+        )
+
+
+class CompanyStructureAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        departments = []
+        for department in Department.objects.filter(is_active=True):
+            head = (
+                User.objects.filter(department=department, manager__isnull=True)
+                .exclude(role__name=Role.Name.INTERN)
+                .order_by("id")
+                .first()
+            )
+            departments.append(
+                {
+                    "id": department.id,
+                    "name": department.name,
+                    "head": (
+                        {
+                            "id": head.id,
+                            "username": head.username,
+                            "full_name": f"{head.first_name} {head.last_name}".strip(),
+                        }
+                        if head
+                        else None
+                    ),
+                }
+            )
+
+        owner = (
+            User.objects.filter(
+                Q(first_name__iexact="Николай")
+                | Q(username__iexact="nikolay")
+                | Q(username__iexact="nikolai")
+            )
+            .order_by("id")
+            .first()
+        )
+
+        return Response(
+            {
+                "owner": (
+                    {
+                        "id": owner.id,
+                        "username": owner.username,
+                        "full_name": f"{owner.first_name} {owner.last_name}".strip()
+                        or owner.username,
+                    }
+                    if owner
+                    else {"full_name": "Николай"}
+                ),
+                "departments": departments,
+            }
+        )

@@ -2,6 +2,7 @@ from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from .models import (
+    EmployeeDailyReport,
     OnboardingReport,
     OnboardingReportLog,
     ReportNotification,
@@ -164,3 +165,20 @@ class ReportNotificationSerializer(serializers.ModelSerializer):
             "text",
             "created_at",
         )
+
+
+class EmployeeDailyReportSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(source="user.username", read_only=True)
+
+    class Meta:
+        model = EmployeeDailyReport
+        fields = (
+            "id",
+            "user",
+            "username",
+            "report_date",
+            "summary",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("user", "username", "created_at", "updated_at")

@@ -4,6 +4,7 @@ from .models import Instruction, LanguageSetting
 
 from .models import News, WelcomeBlock, Feedback, Employee
 from .models import NewsSliderSettings
+from .models import Course, CourseEnrollment
 
 
 @admin.register(News)
@@ -80,5 +81,19 @@ class LanguageSettingAdmin(admin.ModelAdmin):
     list_display = ("code", "is_enabled")
     list_editable = ("is_enabled",)
     ordering = ("code",)
+
+
+@admin.register(Course)
+class CourseAdmin(admin.ModelAdmin):
+    list_display = ("title", "visibility", "department", "is_active", "updated_at")
+    list_filter = ("visibility", "is_active", "department")
+    search_fields = ("title",)
+
+
+@admin.register(CourseEnrollment)
+class CourseEnrollmentAdmin(admin.ModelAdmin):
+    list_display = ("user", "course", "status", "progress_percent", "source", "updated_at")
+    list_filter = ("status", "source")
+    search_fields = ("user__username", "course__title")
 
 

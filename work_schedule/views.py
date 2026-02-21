@@ -79,6 +79,28 @@ class MyScheduleAPIView(APIView):
         return Response(payload)
 
 
+class ScheduleOptionsAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        schedules = WorkSchedule.objects.filter(is_active=True).order_by("name")
+        return Response(
+            [
+                {
+                    "id": item.id,
+                    "name": item.name,
+                    "work_days": item.work_days,
+                    "start_time": item.start_time,
+                    "end_time": item.end_time,
+                    "break_start": item.break_start,
+                    "break_end": item.break_end,
+                    "is_default": item.is_default,
+                }
+                for item in schedules
+            ]
+        )
+
+
 class ChooseScheduleAPIView(APIView):
     permission_classes = [IsAuthenticated]
 

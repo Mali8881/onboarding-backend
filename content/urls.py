@@ -1,4 +1,5 @@
 from django.urls import path
+from rest_framework.routers import DefaultRouter
 from .views import (
     NewsListAPIView,
     NewsDetailAPIView,
@@ -9,7 +10,19 @@ from .views import (
     WelcomeBlockAPIView,
     FeedbackCreateView,
     FeedbackAdminView,
+    CoursesMenuAccessAPIView,
+    AdminCourseViewSet,
+    AdminCourseAssignAPIView,
+    AvailableCoursesListAPIView,
+    MyCoursesListAPIView,
+    CourseSelfEnrollAPIView,
+    AcceptAssignedCourseAPIView,
+    StartCourseAPIView,
+    UpdateCourseProgressAPIView,
 )
+
+router = DefaultRouter()
+router.register("admin/courses", AdminCourseViewSet, basename="admin-courses")
 
 urlpatterns = [
     # Новости
@@ -39,6 +52,15 @@ urlpatterns = [
         ),
         name="feedback-admin-detail",
     ),
-
+    path("courses/menu-access/", CoursesMenuAccessAPIView.as_view(), name="courses-menu-access"),
+    path("courses/available/", AvailableCoursesListAPIView.as_view(), name="courses-available"),
+    path("courses/my/", MyCoursesListAPIView.as_view(), name="courses-my"),
+    path("courses/self-enroll/", CourseSelfEnrollAPIView.as_view(), name="courses-self-enroll"),
+    path("courses/accept/", AcceptAssignedCourseAPIView.as_view(), name="courses-accept"),
+    path("courses/start/", StartCourseAPIView.as_view(), name="courses-start"),
+    path("courses/progress/", UpdateCourseProgressAPIView.as_view(), name="courses-progress"),
+    path("admin/courses/assign/", AdminCourseAssignAPIView.as_view(), name="admin-courses-assign"),
 
 ]
+
+urlpatterns += router.urls

@@ -179,3 +179,27 @@ class AdminReportReviewAuditTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         log_review_changed.assert_called_once()
+
+
+class EmployeeDailyReportApiTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.employee_role, _ = Role.objects.get_or_create(
+            name=Role.Name.EMPLOYEE,
+            defaults={"level": Role.Level.EMPLOYEE},
+        )
+        self.employee = User.objects.create_user(
+            username="employee_reports",
+            password="StrongPass123!",
+            role=self.employee_role,
+        )
+        self.client.force_authenticate(self.employee)
+
+    def test_employee_can_create_daily_report(self):
+        response = self.client.post(
+            "/api/v1/reports/employee/daily/",
+            {"report_date": "2026-02-20", "summary": "Done tasks"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["summary"], "Done tasks")
