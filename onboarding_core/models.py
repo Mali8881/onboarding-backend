@@ -100,6 +100,8 @@ class OnboardingMaterial(models.Model):
     class Meta:
         ordering = ["position"]
         unique_together = ("day", "position")
+        verbose_name = "Материал онбординга"
+        verbose_name_plural = "Материалы онбординга"
 
     def __str__(self):
         return f"{self.day} - {self.type}"
@@ -144,6 +146,8 @@ class OnboardingProgress(models.Model):
     class Meta:
         unique_together = ("user", "day")
         ordering = ["day__position", "day__day_number"]
+        verbose_name = "Прогресс онбординга"
+        verbose_name_plural = "Прогресс онбординга"
 
     def mark_done(self):
         self.status = self.Status.DONE

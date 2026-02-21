@@ -19,6 +19,20 @@ class AttendancePolicy:
         return actor.team_members.exists()
 
     @classmethod
+    def can_manage_work_calendar(cls, actor) -> bool:
+        if not actor or not actor.is_authenticated:
+            return False
+        return cls.is_admin_like(actor)
+
+    @classmethod
+    def can_delete_mark(cls, actor, target_user) -> bool:
+        if not actor or not actor.is_authenticated:
+            return False
+        if cls.is_admin_like(actor):
+            return True
+        return target_user.manager_id == actor.id
+
+    @classmethod
     def can_edit_mark(cls, actor, target_user, mark_date: date) -> bool:
         if not actor or not actor.is_authenticated:
             return False
@@ -39,4 +53,3 @@ class AttendancePolicy:
         if cls.is_admin_like(actor):
             return True
         return target_user.manager_id == actor.id
-

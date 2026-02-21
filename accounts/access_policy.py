@@ -46,6 +46,10 @@ class AccessPolicy:
         return cls._has_role(user) and user.role.name == Role.Name.ADMIN
 
     @classmethod
+    def is_admin_like(cls, user) -> bool:
+        return cls.is_admin(user) or cls.is_super_admin(user)
+
+    @classmethod
     def is_employee(cls, user) -> bool:
         return cls._has_role(user) and user.role.name == Role.Name.EMPLOYEE
 
@@ -76,6 +80,19 @@ class AccessPolicy:
         if cls.is_admin(actor):
             return target.role.name in {Role.Name.INTERN, Role.Name.EMPLOYEE}
         return False
+
+    @classmethod
+    def can_view_team(cls, actor) -> bool:
+        if not cls._has_role(actor):
+            return False
+        if cls.is_admin_like(actor):
+            return True
+        return actor.team_members.exists()
+
+    @classmethod
+    def can_manage_org_reference(cls, actor) -> bool:
+        """Department/Position CRUD."""
+        return cls.is_admin_like(actor)
 
     @classmethod
     def can_access_admin_panel(cls, user) -> bool:

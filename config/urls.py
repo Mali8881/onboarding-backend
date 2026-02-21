@@ -9,6 +9,10 @@ from drf_spectacular.views import (
     SpectacularSwaggerView,
 )
 
+admin.site.site_header = "HRM Администрирование"
+admin.site.site_title = "Админ-панель HRM"
+admin.site.index_title = "Управление системой"
+
 urlpatterns = [
     path("admin/", admin.site.urls),
 
@@ -32,5 +36,7 @@ urlpatterns = [
     path("api/v1/common/", include("common.urls")),
     path("api/v1/content/", include("content.urls")),
     path("api/v1/attendance/", include("apps.attendance.urls")),
+    path("api/v1/tasks/", include("apps.tasks.urls")),
+    path("api/v1/payroll/", include("apps.payroll.urls")),
     path("api/", include("work_schedule.urls")),
 ]

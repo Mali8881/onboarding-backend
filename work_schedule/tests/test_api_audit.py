@@ -54,3 +54,27 @@ class ChooseScheduleAuditTests(TestCase):
         self.assertTrue(UserWorkSchedule.objects.filter(user=self.user).exists())
         log_selected.assert_called_once()
 
+    @patch("work_schedule.views.WorkScheduleAuditService.log_schedule_request_decision")
+    def test_admin_request_decision_logs_event(self, log_decision):
+        admin_role, _ = Role.objects.get_or_create(
+            name=Role.Name.ADMIN,
+            defaults={"level": Role.Level.ADMIN},
+        )
+        admin = User.objects.create_user(
+            username="ws_admin",
+            password="StrongPass123!",
+            role=admin_role,
+        )
+        assignment = UserWorkSchedule.objects.create(
+            user=self.user,
+            schedule=self.schedule,
+            approved=False,
+        )
+        self.client.force_authenticate(user=admin)
+        response = self.client.post(
+            f"/api/v1/work-schedules/admin/requests/{assignment.id}/decision/",
+            {"approved": True},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        log_decision.assert_called_once()

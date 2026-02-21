@@ -46,16 +46,18 @@ INSTALLED_APPS = [
     "ckeditor_uploader",
 
     # Local apps
-    "accounts",
-    "regulations",
-    "reports",
+    "accounts.apps.AccountsConfig",
+    "regulations.apps.RegulationsConfig",
+    "reports.apps.ReportsConfig",
     "content.apps.ContentConfig",
-    "common",
-    "work_schedule",
-    "security",
-    "onboarding_core",
+    "common.apps.CommonConfig",
+    "work_schedule.apps.WorkScheduleConfig",
+    "security.apps.SecurityConfig",
+    "onboarding_core.apps.OnboardingCoreConfig",
     "apps.audit.apps.AuditConfig",
     "apps.attendance.apps.AttendanceConfig",
+    "apps.tasks.apps.TasksConfig",
+    "apps.payroll.apps.PayrollConfig",
 ]
 
 # ======================
@@ -65,6 +67,7 @@ MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.locale.LocaleMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -126,6 +129,28 @@ MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# ======================
+# I18N / L10N
+# ======================
+LANGUAGE_CODE = "ru"
+USE_I18N = True
+USE_TZ = True
+
+LANGUAGES = [
+    ("ru", "Русский"),
+    ("en", "English"),
+]
+
+# ======================
+# Admin UI
+# ======================
+JAZZMIN_SETTINGS = {
+    "site_title": "Админ-панель HRM",
+    "site_header": "HRM Администрирование",
+    "site_brand": "HRM Система",
+    "welcome_sign": "Добро пожаловать в админ-панель HRM",
+}
 
 # ======================
 # CKEDITOR

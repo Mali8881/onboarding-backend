@@ -1,0 +1,82 @@
+from django.conf import settings
+from django.db import models
+
+from accounts.models import Department
+
+
+class Board(models.Model):
+    name = models.CharField(max_length=150)
+    department = models.ForeignKey(
+        Department,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="boards",
+    )
+    is_personal = models.BooleanField(default=False)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="created_boards",
+    )
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["is_personal"]),
+            models.Index(fields=["department"]),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+class Column(models.Model):
+    board = models.ForeignKey(Board, on_delete=models.CASCADE, related_name="columns")
+    name = models.CharField(max_length=100)
+    order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["order", "id"]
+        unique_together = ("board", "order")
+
+    def __str__(self):
+        return f"{self.board_id}:{self.name}"
+
+
+class Task(models.Model):
+    class Priority(models.TextChoices):
+        LOW = "low", "Low"
+        MEDIUM = "medium", "Medium"
+        HIGH = "high", "High"
+
+    board = models.ForeignKey(Board, on_delete=models.CASCADE, related_name="tasks")
+    column = models.ForeignKey(Column, on_delete=models.PROTECT, related_name="tasks")
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    assignee = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="assigned_tasks",
+    )
+    reporter = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="reported_tasks",
+    )
+    due_date = models.DateField(null=True, blank=True)
+    priority = models.CharField(max_length=20, choices=Priority.choices, default=Priority.MEDIUM)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["assignee"]),
+            models.Index(fields=["reporter"]),
+            models.Index(fields=["column"]),
+            models.Index(fields=["due_date"]),
+        ]
+
+    def __str__(self):
+        return self.title
+

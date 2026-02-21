@@ -2,6 +2,7 @@ from datetime import date, timedelta
 from unittest.mock import patch
 
 from django.test import TestCase
+from django.core.management import call_command
 from rest_framework.test import APIClient
 
 from accounts.models import Role, User
@@ -208,3 +209,70 @@ class AttendanceApiTests(TestCase):
         response = self.client.get("/api/v1/attendance/team/?year=2026&month=2")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.data), 2)
+
+    def test_overview_endpoint_returns_table_shape(self):
+        self.client.force_authenticate(user=self.teamlead)
+        AttendanceMark.objects.create(
+            user=self.subordinate,
+            date=date(2026, 2, 4),
+            status=AttendanceMark.Status.PRESENT,
+            created_by=self.teamlead,
+        )
+        response = self.client.get("/api/v1/attendance/?year=2026&month=2")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("days", response.data)
+        self.assertIn("rows", response.data)
+        self.assertEqual(len(response.data["rows"]), 1)
+
+    @patch("apps.attendance.views.AttendanceAuditService.log_mark_deleted")
+    def test_admin_can_delete_mark(self, log_mark_deleted):
+        mark = AttendanceMark.objects.create(
+            user=self.subordinate,
+            date=date(2026, 2, 5),
+            status=AttendanceMark.Status.PRESENT,
+            created_by=self.subordinate,
+        )
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.delete(
+            "/api/v1/attendance/mark/",
+            {"user_id": self.subordinate.id, "date": "2026-02-05"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(AttendanceMark.objects.filter(id=mark.id).exists())
+        log_mark_deleted.assert_called_once()
+
+    def test_work_calendar_admin_crud_requires_admin(self):
+        self.client.force_authenticate(user=self.other_user)
+        response = self.client.post(
+            "/api/v1/attendance/work-calendar/",
+            {
+                "date": "2026-02-10",
+                "is_working_day": True,
+                "is_holiday": False,
+                "note": "",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.post(
+            "/api/v1/attendance/work-calendar/",
+            {
+                "date": "2026-02-10",
+                "is_working_day": True,
+                "is_holiday": False,
+                "note": "working day",
+            },
+            format="json",
+        )
+        self.assertIn(response.status_code, [200, 201])
+        self.assertTrue(WorkCalendarDay.objects.filter(date=date(2026, 2, 10)).exists())
+
+    def test_work_calendar_generate_command(self):
+        call_command("generate_work_calendar_month", year=2026, month=3)
+        self.assertEqual(
+            WorkCalendarDay.objects.filter(date__year=2026, date__month=3).count(),
+            31,
+        )

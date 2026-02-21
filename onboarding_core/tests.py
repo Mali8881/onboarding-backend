@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from accounts.models import Permission, Role, User
 from onboarding_core.models import OnboardingDay, OnboardingProgress
+from regulations.models import Regulation, RegulationAcknowledgement
 
 
 class OnboardingFlowTests(TestCase):
@@ -28,6 +29,38 @@ class OnboardingFlowTests(TestCase):
 
         progress = OnboardingProgress.objects.get(user=self.user, day=self.day2)
         self.assertEqual(progress.status, OnboardingProgress.Status.DONE)
+
+    def test_cannot_complete_first_day_without_mandatory_regulations_ack(self):
+        reg = Regulation.objects.create(
+            title="Mandatory Day 1",
+            type=Regulation.RegulationType.LINK,
+            external_url="https://example.com/day1",
+            language=Regulation.Language.RU,
+            is_active=True,
+            is_mandatory_on_day_one=True,
+        )
+        response = self.client.post(f"/api/v1/onboarding/days/{self.day1.id}/complete/")
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("missing_regulations", response.data)
+        self.assertEqual(str(reg.id), response.data["missing_regulations"][0]["id"])
+
+    def test_can_complete_first_day_after_mandatory_ack(self):
+        reg = Regulation.objects.create(
+            title="Mandatory Day 1",
+            type=Regulation.RegulationType.LINK,
+            external_url="https://example.com/day1",
+            language=Regulation.Language.RU,
+            is_active=True,
+            is_mandatory_on_day_one=True,
+        )
+        RegulationAcknowledgement.objects.create(
+            user=self.user,
+            regulation=reg,
+            user_full_name="intern",
+            regulation_title=reg.title,
+        )
+        response = self.client.post(f"/api/v1/onboarding/days/{self.day1.id}/complete/")
+        self.assertEqual(response.status_code, 200)
 
     def test_complete_day_is_idempotent(self):
         first = self.client.post(f"/api/v1/onboarding/days/{self.day1.id}/complete/")

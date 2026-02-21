@@ -70,9 +70,31 @@ class RoleSerializer(serializers.ModelSerializer):
 # =========================
 
 class DepartmentSerializer(serializers.ModelSerializer):
+    parent = serializers.PrimaryKeyRelatedField(
+        queryset=Department.objects.all(),
+        required=False,
+        allow_null=True,
+    )
+    users_count = serializers.IntegerField(read_only=True)
+
     class Meta:
         model = Department
-        fields = ("id", "name")
+        fields = ("id", "name", "parent", "is_active", "users_count")
+
+    def validate_parent(self, value):
+        instance = getattr(self, "instance", None)
+        if not instance or value is None:
+            return value
+        if value.id == instance.id:
+            raise serializers.ValidationError("Отдел не может быть родителем сам себе.")
+
+        # Simple cycle protection for parent chain.
+        cursor = value
+        while cursor is not None:
+            if cursor.id == instance.id:
+                raise serializers.ValidationError("Нельзя создать циклическую иерархию отделов.")
+            cursor = cursor.parent
+        return value
 
 
 # =========================
@@ -82,7 +104,33 @@ class DepartmentSerializer(serializers.ModelSerializer):
 class PositionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Position
-        fields = ("id", "name")
+        fields = ("id", "name", "is_active")
+
+
+class StructureUserSerializer(serializers.ModelSerializer):
+    full_name = serializers.SerializerMethodField()
+    role = serializers.CharField(source="role.name", read_only=True)
+    position = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = (
+            "id",
+            "full_name",
+            "role",
+            "position",
+            "username",
+            "telegram",
+            "phone",
+        )
+
+    def get_full_name(self, obj):
+        return f"{obj.first_name} {obj.last_name}".strip() or obj.username
+
+    def get_position(self, obj):
+        if obj.position_id:
+            return obj.position.name
+        return obj.custom_position or ""
 
 
 # =========================

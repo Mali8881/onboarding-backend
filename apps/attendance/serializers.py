@@ -15,6 +15,21 @@ class MonthQuerySerializer(serializers.Serializer):
     month = serializers.IntegerField(min_value=1, max_value=12)
 
 
+class AttendanceTeamFilterSerializer(MonthQuerySerializer):
+    user_id = serializers.IntegerField(required=False)
+    position_id = serializers.IntegerField(required=False)
+    status = serializers.ChoiceField(
+        choices=AttendanceMark.Status.choices,
+        required=False,
+    )
+
+
+class WorkCalendarGenerateSerializer(serializers.Serializer):
+    year = serializers.IntegerField(min_value=2000, max_value=2100)
+    month = serializers.IntegerField(min_value=1, max_value=12)
+    overwrite = serializers.BooleanField(required=False, default=False)
+
+
 class AttendanceMarkSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source="user.username", read_only=True)
 
@@ -66,3 +81,8 @@ class WorkCalendarDaySerializer(serializers.ModelSerializer):
         model = WorkCalendarDay
         fields = ("date", "is_working_day", "is_holiday", "note")
 
+
+class WorkCalendarDayUpsertSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = WorkCalendarDay
+        fields = ("date", "is_working_day", "is_holiday", "note")

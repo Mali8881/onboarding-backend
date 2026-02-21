@@ -9,6 +9,9 @@ from rest_framework.viewsets import ModelViewSet
 from rest_framework.views import APIView
 
 from accounts.permissions import HasPermission
+from accounts.models import Role
+from apps.audit import AuditEvents, log_event
+from regulations.models import Regulation, RegulationAcknowledgement
 
 from .models import OnboardingDay, OnboardingMaterial, OnboardingProgress
 from .audit import OnboardingAuditService
@@ -62,6 +65,52 @@ class CompleteOnboardingDayView(APIView):
     )
     def post(self, request, id):
         day = get_object_or_404(OnboardingDay, id=id, is_active=True)
+
+        if (
+            getattr(request.user, "role_id", None)
+            and request.user.role.name == Role.Name.INTERN
+            and day.day_number == 1
+        ):
+            mandatory = Regulation.objects.filter(
+                is_active=True,
+                is_mandatory_on_day_one=True,
+            )
+            if mandatory.exists():
+                acknowledged_ids = set(
+                    RegulationAcknowledgement.objects.filter(
+                        user=request.user,
+                        regulation__in=mandatory,
+                    ).values_list("regulation_id", flat=True)
+                )
+                missing = mandatory.exclude(id__in=acknowledged_ids)
+                if missing.exists():
+                    missing_docs = list(missing.values("id", "title"))
+                    log_event(
+                        action=AuditEvents.ONBOARDING_DAY1_BLOCKED_MISSING_REGULATIONS,
+                        actor=request.user,
+                        object_type="onboarding_day",
+                        object_id=str(day.id),
+                        category="content",
+                        level="warning",
+                        ip_address=request.META.get("REMOTE_ADDR"),
+                        metadata={
+                            "missing_count": len(missing_docs),
+                            "missing_docs": [
+                                {"id": str(item["id"]), "title": item["title"]}
+                                for item in missing_docs
+                            ],
+                        },
+                    )
+                    return Response(
+                        {
+                            "detail": "Нельзя завершить 1-й день: подтвердите ознакомление с обязательными регламентами.",
+                            "missing_regulations": [
+                                {"id": str(item["id"]), "title": item["title"]}
+                                for item in missing_docs
+                            ],
+                        },
+                        status=drf_status.HTTP_409_CONFLICT,
+                    )
 
         progress, created = OnboardingProgress.objects.get_or_create(
             user=request.user,

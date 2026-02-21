@@ -1,7 +1,11 @@
 from django.conf import settings
+from django.db.models import Count
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework import status
+from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView
+from rest_framework.exceptions import PermissionDenied
 from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -9,8 +13,9 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from datetime import timedelta
 from django.utils import timezone
 
-from .models import LoginHistory, PasswordResetToken, Position, User
+from .models import Department, LoginHistory, PasswordResetToken, Position, User
 from .serializers import (
+    DepartmentSerializer,
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
     UserSerializer,
@@ -18,6 +23,7 @@ from .serializers import (
     PositionSerializer,
 )
 from .permissions import HasPermission
+from .access_policy import AccessPolicy
 from .throttles import (
     LoginRateThrottle,
     PasswordResetConfirmThrottle,
@@ -260,3 +266,274 @@ class PasswordResetConfirmAPIView(APIView):
         )
 
         return Response({"detail": "Password has been reset successfully."})
+
+
+# ================= ORG =================
+
+class _OrgAdminMixin:
+    permission_classes = [IsAuthenticated]
+
+    @staticmethod
+    def _ensure_can_manage(request):
+        if not AccessPolicy.can_manage_org_reference(request.user):
+            raise PermissionDenied("Недостаточно прав для управления справочниками.")
+
+    @staticmethod
+    def _ip(request):
+        return LoginView._get_ip(request)
+
+
+class DepartmentListCreateAPIView(_OrgAdminMixin, ListCreateAPIView):
+    serializer_class = DepartmentSerializer
+
+    def get_queryset(self):
+        qs = Department.objects.select_related("parent").annotate(users_count=Count("user"))
+        is_active = self.request.query_params.get("is_active")
+        if is_active is not None:
+            qs = qs.filter(is_active=str(is_active).lower() in {"1", "true", "yes"})
+        return qs.order_by("name")
+
+    def list(self, request, *args, **kwargs):
+        if not request.user.is_authenticated:
+            raise PermissionDenied("Требуется авторизация.")
+        # Read access for any authenticated user to support org visibility.
+        return super().list(request, *args, **kwargs)
+
+    def create(self, request, *args, **kwargs):
+        self._ensure_can_manage(request)
+        return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        department = serializer.save()
+        log_event(
+            action=AuditEvents.DEPARTMENT_CREATED,
+            actor=self.request.user,
+            object_type="department",
+            object_id=str(department.id),
+            category="content",
+            ip_address=self._ip(self.request),
+        )
+
+
+class DepartmentDetailAPIView(_OrgAdminMixin, RetrieveUpdateDestroyAPIView):
+    queryset = Department.objects.select_related("parent").annotate(users_count=Count("user"))
+    serializer_class = DepartmentSerializer
+
+    def update(self, request, *args, **kwargs):
+        self._ensure_can_manage(request)
+        partial = kwargs.pop("partial", False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+
+        changed_fields = {
+            field
+            for field, value in serializer.validated_data.items()
+            if getattr(instance, field) != value
+        }
+        self.perform_update(serializer)
+        if changed_fields:
+            log_event(
+                action=AuditEvents.DEPARTMENT_UPDATED,
+                actor=request.user,
+                object_type="department",
+                object_id=str(instance.id),
+                category="content",
+                ip_address=self._ip(request),
+                metadata={"changed_fields": sorted(changed_fields)},
+            )
+        return Response(serializer.data)
+
+    def destroy(self, request, *args, **kwargs):
+        self._ensure_can_manage(request)
+        instance = self.get_object()
+        if User.objects.filter(department=instance).exists():
+            log_event(
+                action=AuditEvents.DEPARTMENT_DELETE_BLOCKED,
+                actor=request.user,
+                object_type="department",
+                object_id=str(instance.id),
+                category="content",
+                level="warning",
+                ip_address=self._ip(request),
+                metadata={"reason": "has_users"},
+            )
+            return Response(
+                {"detail": "Нельзя удалить отдел: к нему привязаны пользователи."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        dept_id = instance.id
+        self.perform_destroy(instance)
+        log_event(
+            action=AuditEvents.DEPARTMENT_DELETED,
+            actor=request.user,
+            object_type="department",
+            object_id=str(dept_id),
+            category="content",
+            ip_address=self._ip(request),
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class PositionListCreateAPIView(_OrgAdminMixin, ListCreateAPIView):
+    serializer_class = PositionSerializer
+
+    def get_queryset(self):
+        qs = Position.objects.all()
+        is_active = self.request.query_params.get("is_active")
+        if is_active is not None:
+            qs = qs.filter(is_active=str(is_active).lower() in {"1", "true", "yes"})
+        return qs.order_by("name")
+
+    def list(self, request, *args, **kwargs):
+        if not request.user.is_authenticated:
+            raise PermissionDenied("Требуется авторизация.")
+        return super().list(request, *args, **kwargs)
+
+    def create(self, request, *args, **kwargs):
+        self._ensure_can_manage(request)
+        return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        position = serializer.save()
+        log_event(
+            action=AuditEvents.POSITION_CREATED,
+            actor=self.request.user,
+            object_type="position",
+            object_id=str(position.id),
+            category="content",
+            ip_address=self._ip(self.request),
+        )
+
+
+class PositionDetailAPIView(_OrgAdminMixin, RetrieveUpdateDestroyAPIView):
+    queryset = Position.objects.all()
+    serializer_class = PositionSerializer
+
+    def update(self, request, *args, **kwargs):
+        self._ensure_can_manage(request)
+        partial = kwargs.pop("partial", False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+
+        changed_fields = {
+            field
+            for field, value in serializer.validated_data.items()
+            if getattr(instance, field) != value
+        }
+        self.perform_update(serializer)
+        if changed_fields:
+            log_event(
+                action=AuditEvents.POSITION_UPDATED,
+                actor=request.user,
+                object_type="position",
+                object_id=str(instance.id),
+                category="content",
+                ip_address=self._ip(request),
+                metadata={"changed_fields": sorted(changed_fields)},
+            )
+        return Response(serializer.data)
+
+    def destroy(self, request, *args, **kwargs):
+        self._ensure_can_manage(request)
+        instance = self.get_object()
+        if User.objects.filter(position=instance).exists():
+            return Response(
+                {"detail": "Нельзя удалить должность: она используется у пользователей."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        pos_id = instance.id
+        self.perform_destroy(instance)
+        log_event(
+            action=AuditEvents.POSITION_DELETED,
+            actor=request.user,
+            object_type="position",
+            object_id=str(pos_id),
+            category="content",
+            ip_address=self._ip(request),
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class OrgStructureAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _base_member_payload(self, user):
+        return {
+            "id": user.id,
+            "full_name": f"{user.first_name} {user.last_name}".strip() or user.username,
+            "position": user.position.name if user.position_id else (user.custom_position or ""),
+            "role": user.role.name if user.role_id else "",
+        }
+
+    def _detailed_member_payload(self, user):
+        data = self._base_member_payload(user)
+        data.update(
+            {
+                "username": user.username,
+                "telegram": user.telegram,
+                "phone": user.phone,
+            }
+        )
+        return data
+
+    def get(self, request):
+        actor = request.user
+        role_filter = request.query_params.get("role")
+        position_filter = request.query_params.get("position")
+
+        users_qs = User.objects.select_related("department", "position", "role", "manager")
+        if role_filter:
+            users_qs = users_qs.filter(role__name=role_filter)
+        if position_filter:
+            users_qs = users_qs.filter(position__name=position_filter)
+
+        users_by_department = {}
+        for user in users_qs:
+            users_by_department.setdefault(user.department_id, []).append(user)
+
+        departments = Department.objects.select_related("parent").order_by("name")
+        result = []
+
+        is_admin_like = AccessPolicy.is_admin_like(actor)
+        is_teamlead_like = actor.team_members.exists()
+        subordinate_ids = set(actor.team_members.values_list("id", flat=True))
+
+        for department in departments:
+            members = users_by_department.get(department.id, [])
+            payload_members = []
+            for member in members:
+                # Intern: only own department and only basic data.
+                if AccessPolicy.is_intern(actor) and member.department_id != actor.department_id:
+                    continue
+
+                if is_admin_like:
+                    payload_members.append(self._detailed_member_payload(member))
+                    continue
+
+                if is_teamlead_like:
+                    if member.id in subordinate_ids or member.id == actor.id:
+                        payload_members.append(self._detailed_member_payload(member))
+                    else:
+                        payload_members.append(self._base_member_payload(member))
+                    continue
+
+                # Employee/intern basic visibility.
+                payload_members.append(self._base_member_payload(member))
+
+            # Intern sees members only in own department.
+            if AccessPolicy.is_intern(actor) and department.id != actor.department_id:
+                payload_members = []
+
+            result.append(
+                {
+                    "id": department.id,
+                    "name": department.name,
+                    "parent_id": department.parent_id,
+                    "members": payload_members,
+                }
+            )
+
+        return Response({"departments": result})

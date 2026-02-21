@@ -1,13 +1,14 @@
-from django.db import models
-from django.contrib.auth.models import AbstractUser
-from django.conf import settings
-from django.utils import timezone
 import uuid
-
-from .managers import UserManager
 from datetime import timedelta
+
+from django.conf import settings
+from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
 from django.core.validators import FileExtensionValidator
+from django.db import models
+from django.utils import timezone
+
+from .managers import UserManager
 
 
 def validate_photo_size(value):
@@ -15,11 +16,16 @@ def validate_photo_size(value):
     if value.size > max_size:
         raise ValidationError("Максимальный размер фото — 2MB.")
 
+
 # ================= RBAC =================
 class Permission(models.Model):
-    codename = models.CharField(max_length=100, unique=True)
-    module = models.CharField(max_length=100, blank=True, default="")
-    description = models.TextField(blank=True)
+    codename = models.CharField("Код разрешения", max_length=100, unique=True)
+    module = models.CharField("Модуль", max_length=100, blank=True, default="")
+    description = models.TextField("Описание", blank=True)
+
+    class Meta:
+        verbose_name = "Разрешение"
+        verbose_name_plural = "Разрешения"
 
     def __str__(self):
         return self.codename
@@ -38,30 +44,56 @@ class Role(models.Model):
         ADMIN = 30, "Admin"
         SUPER_ADMIN = 40, "SuperAdmin"
 
-    name = models.CharField(max_length=50, unique=True)
+    name = models.CharField("Название", max_length=50, unique=True)
     level = models.PositiveSmallIntegerField(
+        "Уровень",
         choices=Level.choices,
         default=Level.INTERN,
     )
-    description = models.TextField(blank=True)
-    permissions = models.ManyToManyField(Permission, blank=True)
+    description = models.TextField("Описание", blank=True)
+    permissions = models.ManyToManyField(Permission, blank=True, verbose_name="Разрешения")
+
+    class Meta:
+        verbose_name = "Роль"
+        verbose_name_plural = "Роли"
 
     def __str__(self):
         return self.name
 
-# ================= Reference Tables =================
 
+# ================= Reference Tables =================
 class Department(models.Model):
-    name = models.CharField(max_length=150, unique=True)
-    is_active = models.BooleanField(default=True)
+    name = models.CharField("Название", max_length=150, unique=True)
+    parent = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="children",
+        verbose_name="Родительский отдел",
+    )
+    is_active = models.BooleanField("Активен", default=True)
+
+    class Meta:
+        verbose_name = "Отдел"
+        verbose_name_plural = "Отделы"
+
+    def clean(self):
+        super().clean()
+        if self.parent_id and self.parent_id == self.id:
+            raise ValidationError("Отдел не может быть родителем сам себе.")
 
     def __str__(self):
         return self.name
 
 
 class Position(models.Model):
-    name = models.CharField(max_length=150, unique=True)
-    is_active = models.BooleanField(default=True)
+    name = models.CharField("Название", max_length=150, unique=True)
+    is_active = models.BooleanField("Активен", default=True)
+
+    class Meta:
+        verbose_name = "Должность"
+        verbose_name_plural = "Должности"
 
     def __str__(self):
         return self.name
@@ -69,41 +101,56 @@ class Position(models.Model):
 
 # ================= User =================
 class User(AbstractUser):
-    role = models.ForeignKey(Role, on_delete=models.PROTECT)
-    department = models.ForeignKey(Department, on_delete=models.SET_NULL, null=True, blank=True)
-    position = models.ForeignKey(Position, on_delete=models.SET_NULL, null=True, blank=True)
+    role = models.ForeignKey(Role, on_delete=models.PROTECT, verbose_name="Системная роль")
+    department = models.ForeignKey(
+        Department,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        verbose_name="Отдел",
+    )
+    position = models.ForeignKey(
+        Position,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        verbose_name="Должность",
+    )
     manager = models.ForeignKey(
         "self",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name="team_members",
+        verbose_name="Руководитель",
     )
 
-    custom_position = models.CharField(max_length=150, blank=True)
+    custom_position = models.CharField("Своя должность", max_length=150, blank=True)
 
-    telegram = models.CharField(max_length=100, blank=True)
-    phone = models.CharField(max_length=50, blank=True)
+    telegram = models.CharField("Telegram", max_length=100, blank=True)
+    phone = models.CharField("Телефон", max_length=50, blank=True)
     photo = models.ImageField(
+        "Фото",
         upload_to="users/",
         null=True,
         blank=True,
         validators=[
             FileExtensionValidator(allowed_extensions=["jpg", "jpeg", "png", "webp"]),
-            validate_photo_size
-        ]
+            validate_photo_size,
+        ],
     )
 
     objects = UserManager()
 
-    is_blocked = models.BooleanField(default=False)
-    failed_login_attempts = models.PositiveIntegerField(default=0)
-    lockout_until = models.DateTimeField(null=True, blank=True)
+    is_blocked = models.BooleanField("Заблокирован", default=False)
+    failed_login_attempts = models.PositiveIntegerField("Неудачных входов", default=0)
+    lockout_until = models.DateTimeField("Блокировка до", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Пользователь"
+        verbose_name_plural = "Пользователи"
 
     def has_permission(self, codename: str) -> bool:
-        """
-        Проверка наличия permission по коду.
-        """
         if not self.is_authenticated:
             return False
 
@@ -113,30 +160,32 @@ class User(AbstractUser):
         return self.role.permissions.filter(codename=codename).exists()
 
     def has_any_permission(self, codenames: list[str]) -> bool:
-        """
-        Проверка наличия хотя бы одного permission.
-        """
         if not self.is_authenticated or not self.role:
             return False
 
         return self.role.permissions.filter(codename__in=codenames).exists()
 
     def has_all_permissions(self, codenames: list[str]) -> bool:
-        """
-        Проверка наличия всех permission.
-        """
         if not self.is_authenticated or not self.role:
             return False
 
         user_codes = set(self.role.permissions.values_list("codename", flat=True))
         return set(codenames).issubset(user_codes)
 
+    @property
+    def is_admin_like(self) -> bool:
+        if not self.role_id:
+            return False
+        return self.role.name in {Role.Name.ADMIN, Role.Name.SUPER_ADMIN}
 
-
+    @property
+    def can_manage_team(self) -> bool:
+        if self.is_admin_like:
+            return True
+        return self.team_members.exists()
 
 
 # ================= Security =================
-
 class AuditLog(models.Model):
     """
     Primary audit storage backend.
@@ -160,29 +209,34 @@ class AuditLog(models.Model):
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
-        blank=True
+        blank=True,
+        verbose_name="Пользователь",
     )
 
-    action = models.CharField(max_length=255)
-    object_type = models.CharField(max_length=100, blank=True)
-    object_id = models.CharField(max_length=100, blank=True)
+    action = models.CharField("Действие", max_length=255)
+    object_type = models.CharField("Тип объекта", max_length=100, blank=True)
+    object_id = models.CharField("ID объекта", max_length=100, blank=True)
 
     level = models.CharField(
+        "Уровень",
         max_length=20,
         choices=Level.choices,
-        default=Level.INFO
+        default=Level.INFO,
     )
 
     category = models.CharField(
+        "Категория",
         max_length=50,
         choices=Category.choices,
-        default=Category.SYSTEM
+        default=Category.SYSTEM,
     )
 
-    ip_address = models.GenericIPAddressField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+    ip_address = models.GenericIPAddressField("IP-адрес", null=True, blank=True)
+    created_at = models.DateTimeField("Создано", auto_now_add=True)
 
     class Meta:
+        verbose_name = "Журнал аудита"
+        verbose_name_plural = "Журнал аудита"
         ordering = ["-created_at"]
         indexes = [
             models.Index(fields=["level"]),
@@ -217,32 +271,68 @@ class AuditLog(models.Model):
 
 
 class LoginHistory(models.Model):
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
-    ip_address = models.GenericIPAddressField(null=True, blank=True)
-    user_agent = models.TextField(blank=True)
-    success = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        verbose_name="Пользователь",
+    )
+    ip_address = models.GenericIPAddressField("IP-адрес", null=True, blank=True)
+    user_agent = models.TextField("User Agent", blank=True)
+    success = models.BooleanField("Успешно", default=True)
+    created_at = models.DateTimeField("Создано", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "История входа"
+        verbose_name_plural = "История входов"
+
+
 class PasswordResetToken(models.Model):
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    token = models.UUIDField(default=uuid.uuid4, unique=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    is_used = models.BooleanField(default=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        verbose_name="Пользователь",
+    )
+    token = models.UUIDField("Токен", default=uuid.uuid4, unique=True)
+    created_at = models.DateTimeField("Создано", auto_now_add=True)
+    is_used = models.BooleanField("Использован", default=False)
+
+    class Meta:
+        verbose_name = "Токен сброса пароля"
+        verbose_name_plural = "Токены сброса пароля"
 
     def is_expired(self):
         return timezone.now() > self.created_at + timezone.timedelta(hours=24)
 
 
 class UserSession(models.Model):
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    session_key = models.CharField(max_length=255)
-    ip_address = models.GenericIPAddressField(null=True, blank=True)
-    expires_at = models.DateTimeField()
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        verbose_name="Пользователь",
+    )
+    session_key = models.CharField("Ключ сессии", max_length=255)
+    ip_address = models.GenericIPAddressField("IP-адрес", null=True, blank=True)
+    expires_at = models.DateTimeField("Истекает")
+
+    class Meta:
+        verbose_name = "Сессия пользователя"
+        verbose_name_plural = "Сессии пользователей"
+
+
 class TwoFactorCode(models.Model):
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    code = models.CharField(max_length=6)
-    created_at = models.DateTimeField(auto_now_add=True)
-    is_used = models.BooleanField(default=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        verbose_name="Пользователь",
+    )
+    code = models.CharField("Код", max_length=6)
+    created_at = models.DateTimeField("Создано", auto_now_add=True)
+    is_used = models.BooleanField("Использован", default=False)
+
+    class Meta:
+        verbose_name = "Код двухфакторной аутентификации"
+        verbose_name_plural = "Коды двухфакторной аутентификации"
 
     def is_expired(self):
-        from django.utils import timezone
         return timezone.now() > self.created_at + timedelta(minutes=5)

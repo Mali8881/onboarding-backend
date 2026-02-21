@@ -1,4 +1,5 @@
 from django.contrib import admin
+from django.contrib import messages
 
 from .access_policy import AccessPolicy
 from .models import (
@@ -85,8 +86,33 @@ class AuditLogAdmin(admin.ModelAdmin):
 
 @admin.register(Department)
 class DepartmentAdmin(admin.ModelAdmin):
+    list_display = ("name", "parent", "is_active")
+    list_filter = ("is_active", "parent")
+    search_fields = ("name",)
+
     def has_module_permission(self, request):
         return request.user.is_authenticated
+
+    def delete_model(self, request, obj):
+        if obj.user_set.exists():
+            self.message_user(
+                request,
+                "Нельзя удалить отдел: к нему привязаны пользователи.",
+                level=messages.ERROR,
+            )
+            return
+        super().delete_model(request, obj)
+
+    def delete_queryset(self, request, queryset):
+        blocked = queryset.filter(user__isnull=False).distinct()
+        if blocked.exists():
+            self.message_user(
+                request,
+                "Некоторые отделы не удалены: к ним привязаны пользователи.",
+                level=messages.ERROR,
+            )
+            queryset = queryset.exclude(pk__in=blocked.values_list("pk", flat=True))
+        super().delete_queryset(request, queryset)
 
 
 @admin.register(Position)

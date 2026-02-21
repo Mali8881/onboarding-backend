@@ -5,9 +5,9 @@ from django.conf import settings
 class Notification(models.Model):
 
     class Type(models.TextChoices):
-        SYSTEM = "system", "System"
-        LEARNING = "learning", "Learning"
-        INFO = "info", "Info"
+        SYSTEM = "system", "Системное"
+        LEARNING = "learning", "Обучение"
+        INFO = "info", "Инфо"
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -29,6 +29,8 @@ class Notification(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        verbose_name = "Уведомление"
+        verbose_name_plural = "Уведомления"
         indexes = [
             models.Index(fields=["user"]),
             models.Index(fields=["is_read"]),
@@ -53,6 +55,10 @@ class NotificationTemplate(models.Model):
     )
 
     is_active = models.BooleanField(default=True)
+
+    class Meta:
+        verbose_name = "Шаблон уведомления"
+        verbose_name_plural = "Шаблоны уведомлений"
 
     def __str__(self):
         return self.code

@@ -21,6 +21,8 @@ class WorkSchedule(models.Model):
     is_active = models.BooleanField(default=True)
 
     class Meta:
+        verbose_name = "График работы"
+        verbose_name_plural = "Графики работы"
         indexes = [
             models.Index(fields=["is_active"]),
         ]
@@ -82,6 +84,8 @@ class UserWorkSchedule(models.Model):
     requested_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        verbose_name = "График пользователя"
+        verbose_name_plural = "Графики пользователей"
         indexes = [
             models.Index(fields=["approved"]),
         ]

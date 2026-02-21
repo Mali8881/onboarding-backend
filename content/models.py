@@ -150,6 +150,8 @@ class WelcomeBlock(models.Model):
 
     class Meta:
         ordering = ['order']
+        verbose_name = "Приветственный блок"
+        verbose_name_plural = "Приветственные блоки"
         constraints = [
             models.UniqueConstraint(
                 fields=['order', 'language'],
@@ -221,6 +223,8 @@ class Feedback(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+        verbose_name = "Обращение"
+        verbose_name_plural = "Обращения"
 # 🔹 СОТРУДНИКИ
 class Employee(models.Model):
     full_name = models.CharField("ФИО", max_length=255)

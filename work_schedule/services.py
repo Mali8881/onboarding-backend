@@ -81,3 +81,38 @@ def get_month_calendar(user, year: int, month: int):
         result.append(day_data)
 
     return result
+
+
+def generate_production_calendar_month(year: int, month: int, overwrite: bool = False):
+    days_in_month = calendar.monthrange(year, month)[1]
+    created = 0
+    updated = 0
+
+    for day in range(1, days_in_month + 1):
+        current_date = date(year, month, day)
+        default_is_working = current_date.weekday() < 5
+        defaults = {
+            "is_working_day": default_is_working,
+            "is_holiday": False,
+            "holiday_name": "",
+        }
+
+        obj, was_created = ProductionCalendar.objects.get_or_create(
+            date=current_date,
+            defaults=defaults,
+        )
+        if was_created:
+            created += 1
+            continue
+
+        if overwrite:
+            changed = []
+            for field, value in defaults.items():
+                if getattr(obj, field) != value:
+                    setattr(obj, field, value)
+                    changed.append(field)
+            if changed:
+                obj.save(update_fields=changed)
+                updated += 1
+
+    return created, updated
