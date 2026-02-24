@@ -155,6 +155,69 @@ JAZZMIN_SETTINGS = {
     "welcome_sign": "Добро пожаловать в админ-панель HRM",
 }
 
+JAZZMIN_SETTINGS.update(
+    {
+        "custom_css": "common/admin_theme.css",
+        "show_ui_builder": False,
+        "hide_apps": ["authtoken"],
+        "icons": {
+            "accounts": "fas fa-users-cog",
+            "accounts.user": "fas fa-user",
+            "accounts.role": "fas fa-user-shield",
+            "accounts.permission": "fas fa-key",
+            "accounts.department": "fas fa-sitemap",
+            "accounts.position": "fas fa-id-badge",
+            "accounts.auditlog": "fas fa-clipboard-list",
+            "onboarding_core": "fas fa-graduation-cap",
+            "reports": "fas fa-file-alt",
+            "regulations": "fas fa-book",
+            "work_schedule": "fas fa-calendar-alt",
+            "attendance": "fas fa-calendar-check",
+            "tasks": "fas fa-tasks",
+            "payroll": "fas fa-wallet",
+            "common": "fas fa-bell",
+            "content": "fas fa-newspaper",
+            "security": "fas fa-shield-alt"
+        },
+        "order_with_respect_to": [
+            "accounts",
+            "onboarding_core",
+            "reports",
+            "regulations",
+            "work_schedule",
+            "attendance",
+            "tasks",
+            "payroll",
+            "common",
+            "content",
+            "security"
+        ]
+    }
+)
+
+JAZZMIN_UI_TWEAKS = {
+    "theme": "flatly",
+    "dark_mode_theme": None,
+    "navbar": "navbar-white navbar-light",
+    "accent": "accent-primary",
+    "navbar_small_text": False,
+    "sidebar": "sidebar-dark-primary",
+    "sidebar_nav_small_text": False,
+    "sidebar_disable_expand": False,
+    "sidebar_nav_child_indent": True,
+    "sidebar_nav_compact_style": True,
+    "sidebar_nav_legacy_style": False,
+    "sidebar_nav_flat_style": True,
+    "theme_color": "primary",
+    "button_classes": {
+        "primary": "btn btn-primary",
+        "secondary": "btn btn-outline-secondary",
+        "info": "btn btn-info",
+        "warning": "btn btn-warning",
+        "danger": "btn btn-danger",
+        "success": "btn btn-success"
+    }
+}
 # ======================
 # CKEDITOR
 # ======================

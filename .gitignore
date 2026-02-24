@@ -20,3 +20,8 @@ build/
 Thumbs.db
 
 .venv/
+# Local artifacts
+*.zip
+/tz.docx
+/tz_extracted.txt
+/et --hard 62286d4
