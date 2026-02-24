@@ -13,11 +13,38 @@ const API = {
 const STORAGE_TOKEN = 'onboarding_access_token'
 const STORAGE_LANDING = 'onboarding_landing'
 const STORAGE_ROLE = 'onboarding_role'
+const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
 function getErrorMessage(data, fallback) {
   if (!data) return fallback
   if (typeof data === 'string') return data
+  if (Array.isArray(data)) return data[0] || fallback
+  if (typeof data === 'object') {
+    const firstKey = Object.keys(data)[0]
+    if (firstKey) {
+      const firstValue = data[firstKey]
+      if (Array.isArray(firstValue)) return `${firstKey}: ${firstValue[0]}`
+      if (typeof firstValue === 'string') return `${firstKey}: ${firstValue}`
+    }
+  }
   return data.detail || data.error || fallback
+}
+
+function parseISODate(isoDate) {
+  if (!isoDate || typeof isoDate !== 'string') return null
+  const [yearStr, monthStr, dayStr] = isoDate.split('-')
+  const year = Number(yearStr)
+  const month = Number(monthStr)
+  const day = Number(dayStr)
+  if (!year || !month || !day) return null
+  return new Date(year, month - 1, day)
+}
+
+function formatLocalISO(date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
 function landingFromRole(role) {
@@ -32,6 +59,135 @@ async function toJson(res) {
   } catch {
     return null
   }
+}
+
+function getMondayISO(baseDate = new Date()) {
+  const current = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate())
+  const day = current.getDay()
+  const diffToMonday = (day + 6) % 7
+  current.setDate(current.getDate() - diffToMonday)
+  return formatLocalISO(current)
+}
+
+function addDaysISO(isoDate, daysToAdd) {
+  const value = parseISODate(isoDate)
+  if (!value) return isoDate
+  value.setDate(value.getDate() + daysToAdd)
+  return formatLocalISO(value)
+}
+
+function normalizeWeekStartISO(isoDate) {
+  const parsed = parseISODate(isoDate)
+  if (!parsed) return getCurrentPlanningMondayISO()
+  const day = parsed.getDay()
+  const diffToMonday = (day + 6) % 7
+  parsed.setDate(parsed.getDate() - diffToMonday)
+  return formatLocalISO(parsed)
+}
+
+function getCurrentPlanningMondayISO(baseDate = new Date()) {
+  const currentMonday = getMondayISO(baseDate)
+  const day = baseDate.getDay()
+  if (day === 6 || day === 0) return addDaysISO(currentMonday, 7)
+  return currentMonday
+}
+
+function getDayHourLimits(isoDate) {
+  const parsed = parseISODate(isoDate)
+  if (!parsed) return { min: '09:00', max: '21:00' }
+  const weekday = parsed.getDay()
+  if (weekday >= 1 && weekday <= 5) {
+    return { min: '09:00', max: '21:00' }
+  }
+  return { min: '11:00', max: '19:00' }
+}
+
+function makeEmptyShift(date = '', dayIndex = 0) {
+  const limits = getDayHourLimits(date)
+  const defaultEndHour = dayIndex < 5 ? '17:00' : '19:00'
+  return {
+    date,
+    start_time: limits.min,
+    end_time: defaultEndHour,
+    mode: 'office',
+    comment: '',
+  }
+}
+
+function createFixedWeekShifts(weekStart, sourceDays = []) {
+  const byDate = new Map(
+    (Array.isArray(sourceDays) ? sourceDays : [])
+      .filter((item) => item && item.date)
+      .map((item) => [item.date, item]),
+  )
+  return weekDates(weekStart).map((weekDay, index) => {
+    const source = byDate.get(weekDay.date)
+    if (!source) return makeEmptyShift(weekDay.date, index)
+    const limits = getDayHourLimits(weekDay.date)
+    return {
+      date: weekDay.date,
+      start_time: source.mode === 'day_off' ? '' : (source.start_time || limits.min),
+      end_time: source.mode === 'day_off' ? '' : (source.end_time || (index < 5 ? '17:00' : '19:00')),
+      mode: source.mode === 'online' || source.mode === 'day_off' ? source.mode : 'office',
+      comment: source.comment || '',
+    }
+  })
+}
+
+function getShiftHours(shift) {
+  if (shift?.mode === 'day_off') return 0
+  if (!shift?.start_time || !shift?.end_time) return 0
+  const [startHour] = shift.start_time.split(':').map(Number)
+  const [endHour] = shift.end_time.split(':').map(Number)
+  if (Number.isNaN(startHour) || Number.isNaN(endHour)) return 0
+  const diff = endHour - startHour
+  if (diff <= 0) return 0
+  return diff
+}
+
+function sumShiftHours(shifts, mode) {
+  return (shifts || []).reduce((acc, shift) => {
+    if (shift.mode !== mode) return acc
+    return acc + getShiftHours(shift)
+  }, 0)
+}
+
+function formatShiftWeekday(isoDate) {
+  if (!isoDate) return ''
+  const parsed = parseISODate(isoDate)
+  if (!parsed) return ''
+  const weekday = (parsed.getDay() + 6) % 7
+  return WEEKDAY_LABELS[weekday] || ''
+}
+
+function isShiftInsideWeek(isoDate, weekStart) {
+  if (!isoDate || !weekStart) return false
+  const shiftDate = parseISODate(isoDate)
+  const monday = parseISODate(weekStart)
+  if (!shiftDate || !monday) return false
+  const sunday = new Date(monday)
+  sunday.setDate(monday.getDate() + 6)
+  return shiftDate >= monday && shiftDate <= sunday
+}
+
+function weekDates(weekStart) {
+  const mondayISO = normalizeWeekStartISO(weekStart)
+  if (!mondayISO) return []
+  return Array.from({ length: 7 }, (_, i) => {
+    return {
+      dayLabel: WEEKDAY_LABELS[i],
+      date: addDaysISO(mondayISO, i),
+    }
+  })
+}
+
+function pickPlannableWeekStart(plans, baseDate = new Date()) {
+  const approvedWeeks = new Set((plans || []).filter((x) => x.status === 'approved').map((x) => x.week_start))
+  let candidate = getCurrentPlanningMondayISO(baseDate)
+  while (approvedWeeks.has(candidate)) {
+    candidate = addDaysISO(candidate, 7)
+  }
+  return candidate
 }
 
 function App() {
@@ -58,6 +214,11 @@ function App() {
   const [employeeSchedule, setEmployeeSchedule] = useState(null)
   const [employeeScheduleOptions, setEmployeeScheduleOptions] = useState([])
   const [employeeScheduleChoice, setEmployeeScheduleChoice] = useState('')
+  const [employeeWeeklyPlans, setEmployeeWeeklyPlans] = useState([])
+  const [employeeWeekStart, setEmployeeWeekStart] = useState(getCurrentPlanningMondayISO())
+  const [employeeWeekDays, setEmployeeWeekDays] = useState(() => createFixedWeekShifts(getCurrentPlanningMondayISO()))
+  const [employeeOnlineReason, setEmployeeOnlineReason] = useState('')
+  const [employeeWeekComment, setEmployeeWeekComment] = useState('')
   const [companyStructure, setCompanyStructure] = useState(null)
   const [employeeError, setEmployeeError] = useState('')
   const [employeeTab, setEmployeeTab] = useState('home')
@@ -66,9 +227,13 @@ function App() {
 
   const [adminRequests, setAdminRequests] = useState([])
   const [adminDepartments, setAdminDepartments] = useState([])
+  const [adminWeeklyPlans, setAdminWeeklyPlans] = useState([])
+  const [adminWeeklyStatusFilter, setAdminWeeklyStatusFilter] = useState('pending')
+  const [adminWeeklyDecisionById, setAdminWeeklyDecisionById] = useState({})
   const [adminLoading, setAdminLoading] = useState(false)
   const [adminError, setAdminError] = useState('')
   const [employeeActionLoading, setEmployeeActionLoading] = useState(false)
+  const [adminActionLoading, setAdminActionLoading] = useState(false)
 
   const authHeaders = useMemo(
     () => ({
@@ -82,6 +247,9 @@ function App() {
     () => new Set((employeeCoursesMy || []).map((item) => item.course?.id)),
     [employeeCoursesMy],
   )
+  const employeeOfficeHoursTotal = useMemo(() => sumShiftHours(employeeWeekDays, 'office'), [employeeWeekDays])
+  const employeeOnlineHoursTotal = useMemo(() => sumShiftHours(employeeWeekDays, 'online'), [employeeWeekDays])
+  const employeeNeedsReason = employeeOfficeHoursTotal < 24 || employeeOnlineHoursTotal > 16
 
   useEffect(() => {
     if (!token) {
@@ -250,7 +418,7 @@ function App() {
     setEmployeeLoading(true)
     setEmployeeError('')
     try {
-      const [homeRes, myRes, catalogRes, reportsRes, scheduleRes, scheduleOptionsRes, structureRes] = await Promise.all([
+      const [homeRes, myRes, catalogRes, reportsRes, scheduleRes, scheduleOptionsRes, structureRes, weeklyPlansRes] = await Promise.all([
         fetch(`${API.accounts}/employee/home/`, { headers: authHeaders }),
         fetch(`${API.content}/courses/my/`, { headers: authHeaders }),
         fetch(`${API.content}/courses/available/`, { headers: authHeaders }),
@@ -258,6 +426,7 @@ function App() {
         fetch(`${API.schedule}/my-schedule/`, { headers: authHeaders }),
         fetch(`${API.schedule}/schedules/`, { headers: authHeaders }),
         fetch(`${API.accounts}/company/structure/`, { headers: authHeaders }),
+        fetch(`${API.schedule}/v1/work-schedules/weekly-plans/my/`, { headers: authHeaders }),
       ])
 
       const [
@@ -268,6 +437,7 @@ function App() {
         scheduleData,
         scheduleOptionsData,
         structureData,
+        weeklyPlansData,
       ] = await Promise.all([
         toJson(homeRes),
         toJson(myRes),
@@ -276,6 +446,7 @@ function App() {
         toJson(scheduleRes),
         toJson(scheduleOptionsRes),
         toJson(structureRes),
+        toJson(weeklyPlansRes),
       ])
 
       if (!homeRes.ok) throw new Error(getErrorMessage(homeData, 'Не удалось загрузить страницу работника'))
@@ -286,6 +457,14 @@ function App() {
       setEmployeeSchedule(scheduleRes.ok ? scheduleData : null)
       setEmployeeScheduleOptions(scheduleOptionsRes.ok && Array.isArray(scheduleOptionsData) ? scheduleOptionsData : [])
       setCompanyStructure(structureRes.ok ? structureData : null)
+      const plans = weeklyPlansRes.ok && Array.isArray(weeklyPlansData) ? weeklyPlansData : []
+      setEmployeeWeeklyPlans(plans)
+      const selectedWeekStart = pickPlannableWeekStart(plans)
+      const selectedWeekPlan = plans.find((item) => item.week_start === selectedWeekStart) || null
+      setEmployeeWeekStart(selectedWeekStart)
+      setEmployeeWeekDays(createFixedWeekShifts(selectedWeekStart, selectedWeekPlan?.days || []))
+      setEmployeeOnlineReason(selectedWeekPlan?.online_reason || '')
+      setEmployeeWeekComment(selectedWeekPlan?.employee_comment || '')
     } catch (error) {
       setEmployeeError(error.message || 'Ошибка страницы работника')
     } finally {
@@ -347,25 +526,90 @@ function App() {
     loadEmployeeData()
   }
 
+  async function submitEmployeeWeeklyPlan(event) {
+    event.preventDefault()
+    setEmployeeError('')
+    const normalizedWeekStart = normalizeWeekStartISO(employeeWeekStart)
+    const sanitizedDays = employeeWeekDays
+      .map((item) => ({
+        date: item.date,
+        start_time: item.mode === 'day_off' ? null : item.start_time,
+        end_time: item.mode === 'day_off' ? null : item.end_time,
+        mode: item.mode,
+        comment: item.comment || '',
+      }))
+      .filter((item) => item.date && item.mode)
+
+    if (sanitizedDays.length !== 7) {
+      setEmployeeError('Need 7 day entries (Monday through Sunday).')
+      return
+    }
+
+    const outsideWeek = sanitizedDays.some((item) => !isShiftInsideWeek(item.date, normalizedWeekStart))
+    if (outsideWeek) {
+      setEmployeeError('All shifts must be inside the selected week (Monday-Sunday).')
+      return
+    }
+
+    const hasInvalidHours = sanitizedDays.some((shift) => {
+      if (shift.mode === 'day_off') return false
+      const limits = getDayHourLimits(shift.date)
+      if (!shift.start_time || !shift.end_time) return true
+      return shift.start_time < limits.min || shift.end_time > limits.max || shift.end_time <= shift.start_time
+    })
+    if (hasInvalidHours) {
+      setEmployeeError('Invalid time range. Mon-Fri: 09:00-21:00, Sat-Sun: 11:00-19:00, and end must be after start.')
+      return
+    }
+
+    if (employeeNeedsReason && !employeeOnlineReason.trim()) {
+      setEmployeeError('Explanation is required when offline < 24h and/or online > 16h.')
+      return
+    }
+
+    setEmployeeActionLoading(true)
+    const res = await fetch(`${API.schedule}/v1/work-schedules/weekly-plans/my/`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({
+        week_start: normalizedWeekStart,
+        days: sanitizedDays,
+        online_reason: employeeOnlineReason,
+        employee_comment: employeeWeekComment,
+      }),
+    })
+    const data = await toJson(res)
+    if (!res.ok) {
+      setEmployeeError(getErrorMessage(data, 'Failed to submit weekly work plan'))
+      setEmployeeActionLoading(false)
+      return
+    }
+    setEmployeeActionLoading(false)
+    await loadEmployeeData()
+  }
+
   async function loadAdminData() {
     setAdminLoading(true)
     setAdminError('')
     try {
-      const [requestsRes, profileRes, notificationsRes] = await Promise.all([
+      const [requestsRes, profileRes, notificationsRes, weeklyPlansRes] = await Promise.all([
         fetch(`${API.regulations}/admin/intern-requests/?status=pending`, { headers: authHeaders }),
         fetch(`${API.accounts}/me/profile/`, { headers: authHeaders }),
         fetch(`${API.common}/notifications/`, { headers: authHeaders }),
+        fetch(`${API.schedule}/v1/work-schedules/admin/weekly-plans/?status=${adminWeeklyStatusFilter}`, { headers: authHeaders }),
       ])
-      const [requestsData, profileData, notificationsData] = await Promise.all([
+      const [requestsData, profileData, notificationsData, weeklyPlansData] = await Promise.all([
         toJson(requestsRes),
         toJson(profileRes),
         toJson(notificationsRes),
+        toJson(weeklyPlansRes),
       ])
       if (!requestsRes.ok) throw new Error(getErrorMessage(requestsData, 'Не удалось загрузить заявки стажеров'))
       setAdminRequests(Array.isArray(requestsData) ? requestsData : [])
 
       const departments = profileData?.department ? [{ id: profileData.department_id, name: profileData.department }] : []
       setAdminDepartments(departments)
+      setAdminWeeklyPlans(weeklyPlansRes.ok && Array.isArray(weeklyPlansData) ? weeklyPlansData : [])
 
       if (!notificationsRes.ok) {
         setAdminError('Заявки загружены, но уведомления недоступны.')
@@ -377,6 +621,41 @@ function App() {
     } finally {
       setAdminLoading(false)
     }
+  }
+
+  async function refreshAdminWeeklyPlans() {
+    setAdminActionLoading(true)
+    const res = await fetch(`${API.schedule}/v1/work-schedules/admin/weekly-plans/?status=${adminWeeklyStatusFilter}`, {
+      headers: authHeaders,
+    })
+    const data = await toJson(res)
+    if (!res.ok) {
+      setAdminError(getErrorMessage(data, 'Failed to load weekly plans'))
+      setAdminActionLoading(false)
+      return
+    }
+    setAdminWeeklyPlans(Array.isArray(data) ? data : [])
+    setAdminActionLoading(false)
+  }
+
+  async function decideAdminWeeklyPlan(planId) {
+    const draft = adminWeeklyDecisionById[planId] || {}
+    const action = draft.action || 'approve'
+    const admin_comment = draft.admin_comment || ''
+    setAdminActionLoading(true)
+    const res = await fetch(`${API.schedule}/v1/work-schedules/admin/weekly-plans/${planId}/decision/`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({ action, admin_comment }),
+    })
+    const data = await toJson(res)
+    if (!res.ok) {
+      setAdminError(getErrorMessage(data, 'Failed to process weekly plan'))
+      setAdminActionLoading(false)
+      return
+    }
+    setAdminActionLoading(false)
+    await refreshAdminWeeklyPlans()
   }
 
   async function approveInternRequest(requestId, departmentId) {
@@ -572,34 +851,160 @@ function App() {
         )}
 
         {employeeTab === 'schedule' && (
-          <article className="card">
-            <form className="inline-form" onSubmit={chooseEmployeeSchedule}>
-              <label>
-                Выберите график на неделю
-                <select value={employeeScheduleChoice} onChange={(event) => setEmployeeScheduleChoice(event.target.value)}>
-                  <option value="">-- выберите график --</option>
-                  {employeeScheduleOptions.map((item) => (
-                    <option value={item.id} key={item.id}>
-                      {item.name}
-                    </option>
+          <div>
+            <article className="card">
+              <h3>Weekly plan calendar</h3>
+              <form className="inline-form" onSubmit={submitEmployeeWeeklyPlan}>
+                <label>
+                  Week start (Monday)
+                  <input
+                    type="date"
+                    value={employeeWeekStart}
+                    onChange={(event) => {
+                      const nextWeekStart = normalizeWeekStartISO(event.target.value)
+                      setEmployeeWeekStart(nextWeekStart)
+                      const existingPlan = employeeWeeklyPlans.find((item) => item.week_start === nextWeekStart)
+                      setEmployeeWeekDays(createFixedWeekShifts(nextWeekStart, existingPlan?.days || []))
+                      setEmployeeOnlineReason(existingPlan?.online_reason || '')
+                      setEmployeeWeekComment(existingPlan?.employee_comment || '')
+                    }}
+                  />
+                </label>
+                <div className="stats">
+                  <span>Offline total: {employeeOfficeHoursTotal}h</span>
+                  <span>Online total: {employeeOnlineHoursTotal}h</span>
+                </div>
+                <div className="week-grid">
+                  {employeeWeekDays.map((shift, index) => (
+                    <div className="inline-block" key={`${shift.date}-${index}-${shift.mode}`}>
+                      <strong>{WEEKDAY_LABELS[index]}</strong>
+                      <p className="notice">{shift.date}</p>
+                      <label>
+                        From
+                        <input
+                          type="time"
+                          step="3600"
+                          min={getDayHourLimits(shift.date).min}
+                          max={getDayHourLimits(shift.date).max}
+                          value={shift.start_time || ''}
+                          disabled={shift.mode === 'day_off'}
+                          onChange={(event) =>
+                            setEmployeeWeekDays((prev) =>
+                              prev.map((x, i) =>
+                                i === index ? { ...x, start_time: event.target.value } : x,
+                              ),
+                            )
+                          }
+                        />
+                      </label>
+                      <label>
+                        To
+                        <input
+                          type="time"
+                          step="3600"
+                          min={getDayHourLimits(shift.date).min}
+                          max={getDayHourLimits(shift.date).max}
+                          value={shift.end_time || ''}
+                          disabled={shift.mode === 'day_off'}
+                          onChange={(event) =>
+                            setEmployeeWeekDays((prev) =>
+                              prev.map((x, i) =>
+                                i === index ? { ...x, end_time: event.target.value } : x,
+                              ),
+                            )
+                          }
+                        />
+                      </label>
+                      <label>
+                        Mode
+                        <select
+                          value={shift.mode}
+                          onChange={(event) =>
+                            setEmployeeWeekDays((prev) =>
+                              prev.map((x, i) =>
+                                i === index
+                                  ? (() => {
+                                      const nextMode = event.target.value
+                                      if (nextMode === 'day_off') {
+                                        return { ...x, mode: nextMode, start_time: '', end_time: '' }
+                                      }
+                                      const limits = getDayHourLimits(x.date)
+                                      return {
+                                        ...x,
+                                        mode: nextMode,
+                                        start_time: x.start_time || limits.min,
+                                        end_time: x.end_time || (index < 5 ? '17:00' : '19:00'),
+                                      }
+                                    })()
+                                  : x,
+                              ),
+                            )
+                          }
+                        >
+                          <option value="office">Offline (office)</option>
+                          <option value="online">Online</option>
+                          <option value="day_off">Day off</option>
+                        </select>
+                      </label>
+                      <label>
+                        Shift comment
+                        <input
+                          value={shift.comment}
+                          onChange={(event) =>
+                            setEmployeeWeekDays((prev) =>
+                              prev.map((x, i) => (i === index ? { ...x, comment: event.target.value } : x)),
+                            )
+                          }
+                        />
+                      </label>
+                      <p>Hours: {shift.mode === 'day_off' ? '-' : `${getShiftHours(shift)}h`}</p>
+                    </div>
                   ))}
-                </select>
-              </label>
-              <button type="submit" disabled={employeeActionLoading || !employeeScheduleChoice}>
-                {employeeActionLoading ? 'Отправка...' : 'Сохранить график'}
-              </button>
-            </form>
-            {employeeSchedule ? (
-              <>
-                <p>Статус: {employeeSchedule.status || 'неизвестно'}</p>
-                <p>График: {employeeSchedule.name || employeeSchedule.schedule || 'не выбран'}</p>
-              </>
-            ) : (
-              <p>График пока не выбран.</p>
-            )}
-          </article>
-        )}
+                </div>
+                <label>
+                  Explanation (required when offline {'<'} 24h and/or online {'>'} 16h)
+                  <textarea
+                    value={employeeOnlineReason}
+                    required={employeeNeedsReason}
+                    onChange={(event) => setEmployeeOnlineReason(event.target.value)}
+                  />
+                </label>
+                <label>
+                  Employee comment
+                  <textarea value={employeeWeekComment} onChange={(event) => setEmployeeWeekComment(event.target.value)} />
+                </label>
+                <button type="submit" disabled={employeeActionLoading}>
+                  {employeeActionLoading ? 'Submitting...' : 'Send for admin approval'}
+                </button>
+              </form>
+            </article>
 
+            <article className="card">
+              <h3>My weekly plans</h3>
+              {employeeWeeklyPlans.length === 0 && <p>No weekly plans yet.</p>}
+              {employeeWeeklyPlans.map((plan) => (
+                <div key={plan.id} className="inline-block">
+                  <p>Week: {plan.week_start}</p>
+                  <p>Status: {plan.status}</p>
+                  <p>Office: {plan.office_hours}h, Online: {plan.online_hours}h</p>
+                  {Array.isArray(plan.days) && (
+                    <div className="week-grid">
+                      {plan.days.map((shift, idx) => (
+                        <div className="inline-block" key={`${plan.id}-shift-${idx}`}>
+                          <p>{shift.date} ({formatShiftWeekday(shift.date)})</p>
+                          <p>{shift.mode === 'day_off' ? 'Day off' : `${shift.start_time} - ${shift.end_time}`}</p>
+                          <p>Mode: {shift.mode}</p>
+                          {shift.comment ? <p>Comment: {shift.comment}</p> : null}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {plan.admin_comment ? <p>Admin comment: {plan.admin_comment}</p> : null}
+                </div>
+              ))}
+            </article>
+          </div>
+        )}
         {employeeTab === 'structure' && (
           <div>
             <article className="card">
@@ -652,10 +1057,79 @@ function App() {
             </div>
           </article>
         ))}
+
+        <h3>Weekly plans from employees</h3>
+        <article className="card">
+          <div className="actions-row">
+            <label>
+              Status filter
+              <select
+                value={adminWeeklyStatusFilter}
+                onChange={(event) => setAdminWeeklyStatusFilter(event.target.value)}
+              >
+                <option value="pending">pending</option>
+                <option value="clarification_requested">clarification_requested</option>
+                <option value="approved">approved</option>
+                <option value="rejected">rejected</option>
+              </select>
+            </label>
+            <button onClick={refreshAdminWeeklyPlans} disabled={adminActionLoading}>
+              {adminActionLoading ? 'Loading...' : 'Refresh'}
+            </button>
+          </div>
+        </article>
+        {adminWeeklyPlans.length === 0 && <p>No weekly plans for selected status.</p>}
+        {adminWeeklyPlans.map((plan) => (
+          <article className="card" key={plan.id}>
+            <p>User: {plan.username}</p>
+            <p>Week: {plan.week_start}</p>
+            <p>Office: {plan.office_hours}h, Online: {plan.online_hours}h</p>
+            {Array.isArray(plan.days) && (
+              <div className="week-grid">
+                {plan.days.map((shift, idx) => (
+                  <div className="inline-block" key={`${plan.id}-${idx}`}>
+                    <p>{shift.date} ({formatShiftWeekday(shift.date)})</p>
+                    <p>{shift.mode === 'day_off' ? 'Day off' : `${shift.start_time} - ${shift.end_time}`}</p>
+                    <p>Mode: {shift.mode}</p>
+                    {shift.comment ? <p>Comment: {shift.comment}</p> : null}
+                  </div>
+                ))}
+              </div>
+            )}
+            {plan.online_reason ? <p>Online reason: {plan.online_reason}</p> : null}
+            <div className="actions-row">
+              <select
+                value={adminWeeklyDecisionById[plan.id]?.action || 'approve'}
+                onChange={(event) =>
+                  setAdminWeeklyDecisionById((prev) => ({
+                    ...prev,
+                    [plan.id]: { ...(prev[plan.id] || {}), action: event.target.value },
+                  }))
+                }
+              >
+                <option value="approve">approve</option>
+                <option value="request_clarification">request_clarification</option>
+                <option value="reject">reject</option>
+              </select>
+              <input
+                placeholder="Admin comment"
+                value={adminWeeklyDecisionById[plan.id]?.admin_comment || ''}
+                onChange={(event) =>
+                  setAdminWeeklyDecisionById((prev) => ({
+                    ...prev,
+                    [plan.id]: { ...(prev[plan.id] || {}), admin_comment: event.target.value },
+                  }))
+                }
+              />
+              <button disabled={adminActionLoading} onClick={() => decideAdminWeeklyPlan(plan.id)}>
+                Submit decision
+              </button>
+            </div>
+          </article>
+        ))}
       </section>
     )
   }
-
   return (
     <main className="layout">
       <header className="topbar">
@@ -681,3 +1155,9 @@ function App() {
 }
 
 export default App
+
+
+
+
+
+

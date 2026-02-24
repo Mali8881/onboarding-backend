@@ -131,3 +131,46 @@ class WorkScheduleAuditService:
                 "overwrite": overwrite,
             },
         )
+
+    @classmethod
+    def log_weekly_plan_submitted(cls, request, plan, was_created: bool) -> None:
+        log_event(
+            action=AuditEvents.WEEKLY_PLAN_SUBMITTED,
+            actor=request.user,
+            object_type="weekly_work_plan",
+            object_id=str(plan.id),
+            level="info",
+            category="content",
+            ip_address=cls._ip(request),
+            metadata={
+                "actor_id": request.user.id,
+                "user_id": plan.user_id,
+                "week_start": str(plan.week_start),
+                "office_hours": plan.office_hours,
+                "online_hours": plan.online_hours,
+                "was_created": was_created,
+            },
+        )
+
+    @classmethod
+    def log_weekly_plan_decision(cls, request, plan, action: str) -> None:
+        action_map = {
+            "approve": AuditEvents.WEEKLY_PLAN_APPROVED,
+            "request_clarification": AuditEvents.WEEKLY_PLAN_CLARIFICATION_REQUESTED,
+            "reject": AuditEvents.WEEKLY_PLAN_REJECTED,
+        }
+        log_event(
+            action=action_map[action],
+            actor=request.user,
+            object_type="weekly_work_plan",
+            object_id=str(plan.id),
+            level="info",
+            category="content",
+            ip_address=cls._ip(request),
+            metadata={
+                "actor_id": request.user.id,
+                "user_id": plan.user_id,
+                "week_start": str(plan.week_start),
+                "status": plan.status,
+            },
+        )

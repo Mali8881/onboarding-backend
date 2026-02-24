@@ -1,6 +1,7 @@
 from datetime import date
 
 from django.db.models import Count
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
@@ -8,11 +9,14 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .audit import WorkScheduleAuditService
-from .models import ProductionCalendar, UserWorkSchedule, WorkSchedule
+from .models import ProductionCalendar, UserWorkSchedule, WeeklyWorkPlan, WorkSchedule
 from .policies import WorkSchedulePolicy
 from .serializers import (
     CalendarDaySerializer,
     ScheduleRequestDecisionSerializer,
+    WeeklyWorkPlanDecisionSerializer,
+    WeeklyWorkPlanSerializer,
+    WeeklyWorkPlanUpsertSerializer,
     UserWorkScheduleSerializer,
     WorkScheduleMonthGenerateSerializer,
     WorkScheduleSelectSerializer,
@@ -272,3 +276,88 @@ class ProductionCalendarMonthGenerateAPIView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class WeeklyWorkPlanMyAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        qs = WeeklyWorkPlan.objects.filter(user=request.user).order_by("-week_start")
+        return Response(WeeklyWorkPlanSerializer(qs, many=True).data)
+
+    def post(self, request):
+        if not WorkSchedulePolicy.can_submit_weekly_plan(request.user):
+            raise PermissionDenied("Insufficient permissions.")
+
+        serializer = WeeklyWorkPlanUpsertSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        week_start = serializer.validated_data["week_start"]
+        defaults = {
+            "days": serializer.validated_data["days"],
+            "office_hours": serializer.validated_data["office_hours"],
+            "online_hours": serializer.validated_data["online_hours"],
+            "online_reason": serializer.validated_data.get("online_reason", ""),
+            "employee_comment": serializer.validated_data.get("employee_comment", ""),
+            "status": WeeklyWorkPlan.Status.PENDING,
+            "admin_comment": "",
+            "reviewed_by": None,
+            "reviewed_at": None,
+        }
+
+        plan, created = WeeklyWorkPlan.objects.update_or_create(
+            user=request.user,
+            week_start=week_start,
+            defaults=defaults,
+        )
+        WorkScheduleAuditService.log_weekly_plan_submitted(request, plan, was_created=created)
+        return Response(
+            WeeklyWorkPlanSerializer(plan).data,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+class WeeklyWorkPlanAdminListAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not WorkSchedulePolicy.can_view_weekly_plan_requests(request.user):
+            raise PermissionDenied("Insufficient permissions.")
+
+        qs = WeeklyWorkPlan.objects.select_related("user", "reviewed_by").order_by("-week_start", "-updated_at")
+        status_filter = request.query_params.get("status")
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        return Response(WeeklyWorkPlanSerializer(qs, many=True).data)
+
+
+class WeeklyWorkPlanAdminDecisionAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, plan_id: int):
+        if not WorkSchedulePolicy.can_view_weekly_plan_requests(request.user):
+            raise PermissionDenied("Insufficient permissions.")
+
+        plan = WeeklyWorkPlan.objects.select_related("user", "reviewed_by").filter(id=plan_id).first()
+        if not plan:
+            return Response({"detail": "Plan not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = WeeklyWorkPlanDecisionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        action = serializer.validated_data["action"]
+        admin_comment = serializer.validated_data.get("admin_comment", "")
+
+        if action == "approve":
+            plan.status = WeeklyWorkPlan.Status.APPROVED
+        elif action == "request_clarification":
+            plan.status = WeeklyWorkPlan.Status.CLARIFICATION_REQUESTED
+        else:
+            plan.status = WeeklyWorkPlan.Status.REJECTED
+
+        plan.admin_comment = admin_comment
+        plan.reviewed_by = request.user
+        plan.reviewed_at = timezone.now()
+        plan.save(update_fields=["status", "admin_comment", "reviewed_by", "reviewed_at", "updated_at"])
+
+        WorkScheduleAuditService.log_weekly_plan_decision(request, plan, action=action)
+        return Response(WeeklyWorkPlanSerializer(plan).data, status=status.HTTP_200_OK)

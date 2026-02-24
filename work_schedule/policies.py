@@ -24,3 +24,11 @@ class WorkSchedulePolicy:
     def can_select_schedule(user) -> bool:
         return bool(user and user.is_authenticated)
 
+    @staticmethod
+    def can_submit_weekly_plan(user) -> bool:
+        return bool(user and user.is_authenticated)
+
+    @classmethod
+    def can_view_weekly_plan_requests(cls, user) -> bool:
+        return cls.can_manage_templates(user)
+

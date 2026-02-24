@@ -13,6 +13,9 @@ from .views import (
     CalendarView,
     ChooseScheduleAPIView,
     CalendarMonthAPIView,
+    WeeklyWorkPlanAdminDecisionAPIView,
+    WeeklyWorkPlanAdminListAPIView,
+    WeeklyWorkPlanMyAPIView,
 )
 
 urlpatterns = [
@@ -21,6 +24,9 @@ urlpatterns = [
     path("v1/work-schedules/my/", MyScheduleAPIView.as_view()),
     path("v1/work-schedules/select/", ChooseScheduleAPIView.as_view()),
     path("v1/work-schedules/calendar/", CalendarView.as_view()),
+    path("v1/work-schedules/weekly-plans/my/", WeeklyWorkPlanMyAPIView.as_view()),
+    path("v1/work-schedules/admin/weekly-plans/", WeeklyWorkPlanAdminListAPIView.as_view()),
+    path("v1/work-schedules/admin/weekly-plans/<int:plan_id>/decision/", WeeklyWorkPlanAdminDecisionAPIView.as_view()),
     path("v1/work-schedules/admin/templates/", WorkScheduleAdminListCreateAPIView.as_view()),
     path("v1/work-schedules/admin/templates/<int:schedule_id>/", WorkScheduleAdminDetailAPIView.as_view()),
     path("v1/work-schedules/admin/templates/<int:schedule_id>/users/", WorkScheduleTemplateUsersAPIView.as_view()),

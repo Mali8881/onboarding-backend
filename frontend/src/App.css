@@ -131,6 +131,12 @@ label {
   background: #f3fbff;
 }
 
+.week-grid {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
 .notice {
   color: #734b03;
 }

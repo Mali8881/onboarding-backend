@@ -37,6 +37,10 @@ class AuditEvents:
     SCHEDULE_REQUEST_APPROVED = "schedule_request_approved"
     SCHEDULE_REQUEST_REJECTED = "schedule_request_rejected"
     WORK_SCHEDULE_CALENDAR_MONTH_GENERATED = "work_schedule_calendar_month_generated"
+    WEEKLY_PLAN_SUBMITTED = "weekly_plan_submitted"
+    WEEKLY_PLAN_APPROVED = "weekly_plan_approved"
+    WEEKLY_PLAN_CLARIFICATION_REQUESTED = "weekly_plan_clarification_requested"
+    WEEKLY_PLAN_REJECTED = "weekly_plan_rejected"
 
     # Content
     FEEDBACK_CREATED = "feedback_created"
