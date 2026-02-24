@@ -132,3 +132,37 @@ class AttendanceAuditService:
             ip_address=cls._ip(request),
             metadata={"created": created, "updated": updated},
         )
+
+    @classmethod
+    def log_office_checkin_in_office(cls, request, session) -> None:
+        log_event(
+            action=AuditEvents.ATTENDANCE_OFFICE_CHECKIN_IN_OFFICE,
+            actor=request.user,
+            object_type="attendance_session",
+            object_id=str(session.id),
+            level="info",
+            category="content",
+            ip_address=cls._ip(request),
+            metadata={
+                "actor_id": request.user.id,
+                "distance_m": round(float(session.distance_m), 2),
+                "radius_m": session.radius_m,
+            },
+        )
+
+    @classmethod
+    def log_office_checkin_outside(cls, request, session) -> None:
+        log_event(
+            action=AuditEvents.ATTENDANCE_OFFICE_CHECKIN_OUTSIDE,
+            actor=request.user,
+            object_type="attendance_session",
+            object_id=str(session.id),
+            level="warning",
+            category="content",
+            ip_address=cls._ip(request),
+            metadata={
+                "actor_id": request.user.id,
+                "distance_m": round(float(session.distance_m), 2),
+                "radius_m": session.radius_m,
+            },
+        )

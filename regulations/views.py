@@ -39,10 +39,8 @@ class RegulationListAPIView(ListAPIView):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        language = self.request.query_params.get("language", "ru")
         queryset = Regulation.objects.filter(
             is_active=True,
-            language=language,
         )
         regulation_type = self.request.query_params.get("type")
         query = self.request.query_params.get("q")
@@ -75,10 +73,8 @@ class RegulationDetailAPIView(RetrieveAPIView):
     lookup_field = "id"
 
     def get_queryset(self):
-        language = self.request.query_params.get("language", "ru")
         return Regulation.objects.filter(
             is_active=True,
-            language=language,
         )
 
     def get_serializer_context(self):
@@ -99,11 +95,8 @@ class RegulationAdminListCreateAPIView(ListCreateAPIView):
 
     def get_queryset(self):
         queryset = Regulation.objects.all().order_by("position", "created_at")
-        language = self.request.query_params.get("language")
         is_active = self.request.query_params.get("is_active")
 
-        if language:
-            queryset = queryset.filter(language=language)
         if is_active is not None:
             value = str(is_active).lower() in {"1", "true", "yes"}
             queryset = queryset.filter(is_active=value)
@@ -191,11 +184,9 @@ class FirstDayMandatoryRegulationsAPIView(ListAPIView):
     serializer_class = RegulationSerializer
 
     def get_queryset(self):
-        language = self.request.query_params.get("language", "ru")
         return Regulation.objects.filter(
             is_active=True,
             is_mandatory_on_day_one=True,
-            language=language,
         ).order_by("position", "-created_at")
 
     def list(self, request, *args, **kwargs):

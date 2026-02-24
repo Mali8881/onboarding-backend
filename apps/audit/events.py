@@ -52,6 +52,8 @@ class AuditEvents:
     ATTENDANCE_MARK_UPDATED = "attendance_mark_updated"
     ATTENDANCE_MARK_CHANGE_DENIED = "attendance_mark_change_denied"
     ATTENDANCE_MARK_DELETED = "attendance_mark_deleted"
+    ATTENDANCE_OFFICE_CHECKIN_IN_OFFICE = "attendance_office_checkin_in_office"
+    ATTENDANCE_OFFICE_CHECKIN_OUTSIDE = "attendance_office_checkin_outside"
     WORK_CALENDAR_DAY_CREATED = "work_calendar_day_created"
     WORK_CALENDAR_DAY_UPDATED = "work_calendar_day_updated"
     WORK_CALENDAR_DAY_DELETED = "work_calendar_day_deleted"

@@ -1,0 +1,112 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block content %}
+<div style="max-width: 760px; margin: 16px auto;">
+  <h1 style="margin-bottom: 8px;">Отметка в офисе</h1>
+  <p style="margin-bottom: 16px; color: #6b7280;">
+    Нажмите кнопку, разрешите геолокацию в браузере, и система отметит факт присутствия в офисе.
+  </p>
+
+  <div style="border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; background: #fff;">
+    <button id="checkin-btn" type="button" class="button default" style="min-width: 180px;">
+      Я в офисе
+    </button>
+    <div id="checkin-status" style="margin-top: 12px; font-weight: 600;">⚪ Не отмечен</div>
+    <div id="checkin-meta" style="margin-top: 6px; color: #6b7280;"></div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    const btn = document.getElementById("checkin-btn");
+    const statusEl = document.getElementById("checkin-status");
+    const metaEl = document.getElementById("checkin-meta");
+    const apiUrl = "{{ checkin_api_url }}";
+
+    function getCookie(name) {
+      const value = `; ${document.cookie}`;
+      const parts = value.split(`; ${name}=`);
+      if (parts.length === 2) return parts.pop().split(';').shift();
+      return "";
+    }
+
+    function setLoading(isLoading) {
+      btn.disabled = isLoading;
+      btn.textContent = isLoading ? "Проверяем..." : "Я в офисе";
+    }
+
+    async function sendCheckIn(lat, lon, accuracy) {
+      const csrf = getCookie("csrftoken");
+      const response = await fetch(apiUrl, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": csrf,
+        },
+        body: JSON.stringify({
+          latitude: lat,
+          longitude: lon,
+          accuracy_m: accuracy,
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.detail || "Ошибка check-in");
+      }
+      return data;
+    }
+
+    btn.addEventListener("click", function () {
+      if (!navigator.geolocation) {
+        statusEl.textContent = "⚪ Геолокация не поддерживается браузером";
+        return;
+      }
+
+      setLoading(true);
+      statusEl.textContent = "⚪ Получаем координаты...";
+      metaEl.textContent = "";
+
+      navigator.geolocation.getCurrentPosition(
+        async function (position) {
+          try {
+            const lat = position.coords.latitude;
+            const lon = position.coords.longitude;
+            const accuracy = position.coords.accuracy || null;
+            const result = await sendCheckIn(lat, lon, accuracy);
+
+            if (result.in_office) {
+              statusEl.textContent = "🟢 В офисе";
+            } else {
+              statusEl.textContent = "⚪ Вне офиса";
+            }
+
+            metaEl.textContent = `Статус: ${result.status}. Дистанция: ${Math.round(result.distance_m || 0)} м`;
+          } catch (err) {
+            statusEl.textContent = "⚪ Не отмечен";
+            metaEl.textContent = err.message || "Ошибка проверки";
+          } finally {
+            setLoading(false);
+          }
+        },
+        function (err) {
+          setLoading(false);
+          statusEl.textContent = "⚪ Не отмечен";
+          if (err.code === 1) {
+            metaEl.textContent = "Доступ к геолокации запрещён пользователем.";
+          } else {
+            metaEl.textContent = "Не удалось получить геолокацию.";
+          }
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 15000,
+          maximumAge: 0,
+        }
+      );
+    });
+  })();
+</script>
+{% endblock %}

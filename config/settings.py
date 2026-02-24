@@ -1,11 +1,32 @@
-import os
+﻿import os
+import ipaddress
+from importlib.util import find_spec
 from pathlib import Path
+
 from corsheaders.defaults import default_headers
+from django.templatetags.static import static
+from django.urls import reverse_lazy
 
 # ======================
 # BASE
 # ======================
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def _load_dotenv(path: Path) -> None:
+    if not path.exists():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        os.environ.setdefault(key, value)
+
+
+_load_dotenv(BASE_DIR / ".env")
 
 # ======================
 # SECURITY
@@ -15,10 +36,7 @@ SECRET_KEY = os.environ.get(
     "dev-secret-key-change-me",
 )
 
-
-
 DEBUG = os.environ.get("DEBUG", "true").lower() == "true"
-
 
 ALLOWED_HOSTS = os.environ.get(
     "ALLOWED_HOSTS", "*"
@@ -27,10 +45,9 @@ ALLOWED_HOSTS = os.environ.get(
 # ======================
 # APPLICATIONS
 # ======================
-INSTALLED_APPS = [
-    # Admin UI
-    "jazzmin",
+HAS_UNFOLD = find_spec("unfold") is not None
 
+INSTALLED_APPS = [
     # Django
     "django.contrib.admin",
     "django.contrib.auth",
@@ -42,10 +59,8 @@ INSTALLED_APPS = [
     # Third-party
     "corsheaders",
     "rest_framework",
-    "rest_framework.authtoken",
     "drf_spectacular",
-    "ckeditor",
-    "ckeditor_uploader",
+    "django_ckeditor_5",
 
     # Local apps
     "accounts.apps.AccountsConfig",
@@ -61,6 +76,13 @@ INSTALLED_APPS = [
     "apps.tasks.apps.TasksConfig",
     "apps.payroll.apps.PayrollConfig",
 ]
+
+if HAS_UNFOLD:
+    INSTALLED_APPS = [
+        "unfold",
+        "unfold.contrib.filters",
+        *INSTALLED_APPS,
+    ]
 
 # ======================
 # MIDDLEWARE
@@ -97,7 +119,6 @@ DATABASES = {
     }
 }
 
-
 # ======================
 # AUTH
 # ======================
@@ -109,7 +130,7 @@ AUTH_USER_MODEL = "accounts.User"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [],
+        "DIRS": [BASE_DIR / "templates"],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
@@ -127,6 +148,7 @@ TEMPLATES = [
 # ======================
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+STATICFILES_DIRS = [BASE_DIR / "static"]
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
@@ -146,14 +168,143 @@ LANGUAGES = [
 ]
 
 # ======================
-# Admin UI
+# Admin UI (Unfold)
 # ======================
-JAZZMIN_SETTINGS = {
-    "site_title": "Админ-панель HRM",
-    "site_header": "HRM Администрирование",
-    "site_brand": "HRM Система",
-    "welcome_sign": "Добро пожаловать в админ-панель HRM",
-}
+if HAS_UNFOLD:
+    def _is_admin_like(request):
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated:
+            return False
+        if getattr(user, "is_superuser", False):
+            return True
+        role = getattr(user, "role", None)
+        role_name = getattr(role, "name", "")
+        return role_name in {"SUPER_ADMIN", "ADMIN"}
+
+    def _is_employee(request):
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated:
+            return False
+        role = getattr(user, "role", None)
+        role_name = getattr(role, "name", "")
+        return role_name == "EMPLOYEE"
+
+    UNFOLD = {
+        "SITE_TITLE": "HRM Админ-панель",
+        "SITE_HEADER": "HRM Администрирование",
+        "SITE_SUBHEADER": "Корпоративная система",
+        "SITE_BRAND": "HRM",
+        "SITE_ICON": None,
+        "SITE_SYMBOL": None,
+        "SHOW_HISTORY": True,
+        "SHOW_VIEW_ON_SITE": False,
+        "THEME": "light",
+        "SIDEBAR": {
+            "show_search": True,
+            "show_all_applications": False,
+            "navigation": [
+                {
+                    "title": "Мои разделы",
+                    "separator": True,
+                    "items": [
+                        {
+                            "title": "Главная",
+                            "icon": "home",
+                            "link": reverse_lazy("admin:index"),
+                            "permission": lambda request: _is_admin_like(request) or _is_employee(request),
+                        },
+                        {
+                            "title": "Регламенты",
+                            "icon": "description",
+                            "link": "/admin/regulations/regulation/",
+                            "permission": lambda request: _is_admin_like(request) or _is_employee(request),
+                        },
+                        {
+                            "title": "График работы",
+                            "icon": "calendar_month",
+                            "link": "/admin/work_schedule/workschedule/",
+                            "permission": _is_employee,
+                        },
+                        {
+                            "title": "Отметка",
+                            "icon": "fact_check",
+                            "link": "/admin/attendance/check-in/",
+                            "permission": _is_employee,
+                        },
+                        {
+                            "title": "Профиль",
+                            "icon": "person",
+                            "link": "/admin/accounts/user/",
+                            "permission": lambda request: _is_admin_like(request) or _is_employee(request),
+                        },
+                        {
+                            "title": "Инструкция",
+                            "icon": "menu_book",
+                            "link": "/admin/content/instruction/",
+                            "permission": _is_employee,
+                        },
+                    ],
+                },
+                {
+                    "title": "Управление",
+                    "separator": True,
+                    "items": [
+                        {
+                            "title": "Обзор",
+                            "icon": "dashboard",
+                            "link": reverse_lazy("admin:index"),
+                            "permission": _is_admin_like,
+                        },
+                        {
+                            "title": "Пользователи",
+                            "icon": "group",
+                            "link": "/admin/accounts/user/",
+                            "permission": _is_admin_like,
+                        },
+                        {
+                            "title": "Контент",
+                            "icon": "article",
+                            "link": "/admin/content/",
+                            "permission": _is_admin_like,
+                        },
+                        {
+                            "title": "Онбординг / Отчёты",
+                            "icon": "school",
+                            "link": "/admin/onboarding/",
+                            "permission": _is_admin_like,
+                        },
+                        {
+                            "title": "Графики работы",
+                            "icon": "calendar_month",
+                            "link": "/admin/work_schedule/workschedule/",
+                            "permission": _is_admin_like,
+                        },
+                        {
+                            "title": "Посещаемость",
+                            "icon": "fact_check",
+                            "link": "/admin/attendance/attendancemark/",
+                            "permission": _is_admin_like,
+                        },
+                        {
+                            "title": "Check-in сессии",
+                            "icon": "pin_drop",
+                            "link": "/admin/attendance/attendancesession/",
+                            "permission": _is_admin_like,
+                        },
+                        {
+                            "title": "Обратная связь",
+                            "icon": "feedback",
+                            "link": "/admin/content/feedback/",
+                            "permission": _is_admin_like,
+                        },
+                    ],
+                },
+            ],
+        },
+        "STYLES": [
+            lambda request: static("admin/css/global-admin.css"),
+        ],
+    }
 
 JAZZMIN_SETTINGS.update(
     {
@@ -219,33 +370,39 @@ JAZZMIN_UI_TWEAKS = {
     }
 }
 # ======================
-# CKEDITOR
+# CKEDITOR 5
 # ======================
-CKEDITOR_UPLOAD_PATH = "uploads/ckeditor/"
-CKEDITOR_CONFIGS = {
+CKEDITOR_5_CONFIGS = {
     "default": {
-        "toolbar": "Full",
-        "height": 300,
-        "width": "100%",
+        "toolbar": [
+            "heading",
+            "|",
+            "bold",
+            "italic",
+            "link",
+            "bulletedList",
+            "numberedList",
+            "blockQuote",
+            "insertImage",
+            "undo",
+            "redo",
+        ],
     }
 }
+CKEDITOR_5_UPLOAD_PATH = "uploads/ckeditor5/"
 
 # ======================
 # DRF
 # ======================
-
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
-
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
-
     "DEFAULT_THROTTLE_CLASSES": (
         "rest_framework.throttling.UserRateThrottle",
         "rest_framework.throttling.AnonRateThrottle",
     ),
-
     "DEFAULT_THROTTLE_RATES": {
         "user": "1000/day",
         "anon": "20/minute",
@@ -265,6 +422,26 @@ AUDIT_PRIMARY_BACKEND = os.environ.get("AUDIT_PRIMARY_BACKEND", "accounts")
 AUDIT_LEGACY_BACKEND = os.environ.get("AUDIT_LEGACY_BACKEND", "security")
 AUDIT_WRITE_MODE = os.environ.get("AUDIT_WRITE_MODE", "primary_only")
 
+# Office geofence for one-time attendance check-in.
+OFFICE_GEOFENCE_LATITUDE = (
+    float(os.environ["OFFICE_GEOFENCE_LATITUDE"])
+    if os.environ.get("OFFICE_GEOFENCE_LATITUDE")
+    else None
+)
+OFFICE_GEOFENCE_LONGITUDE = (
+    float(os.environ["OFFICE_GEOFENCE_LONGITUDE"])
+    if os.environ.get("OFFICE_GEOFENCE_LONGITUDE")
+    else None
+)
+OFFICE_GEOFENCE_RADIUS_M = int(os.environ.get("OFFICE_GEOFENCE_RADIUS_M", "150"))
+OFFICE_IP_NETWORKS = [
+    ipaddress.ip_network(value.strip())
+    for value in os.environ.get(
+        "OFFICE_IP_NETWORKS",
+        "192.168.10.0/24,10.0.0.0/16",
+    ).split(",")
+    if value.strip()
+]
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "Onboarding API",
@@ -289,11 +466,10 @@ CORS_ALLOWED_ORIGINS = [
 ]
 
 CSRF_TRUSTED_ORIGINS = [
-    origin for origin in os.environ.get(
-        "CSRF_TRUSTED_ORIGINS", ""
-    ).split(",") if origin
+    origin
+    for origin in os.environ.get("CSRF_TRUSTED_ORIGINS", "").split(",")
+    if origin
 ]
-
 
 CSRF_COOKIE_SECURE = not DEBUG
 SESSION_COOKIE_SECURE = not DEBUG

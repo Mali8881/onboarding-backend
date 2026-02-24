@@ -1,12 +1,19 @@
-from rest_framework import serializers
-# Импортируем все модели из одного места
-from .models import (
-    News, WelcomeBlock, Feedback, Employee,
-    Instruction, LanguageSetting, NewsSliderSettings, Course, CourseEnrollment
-)
-from accounts.models import User
+﻿from rest_framework import serializers
 
-# 1. СЕРИАЛИЗАТОРЫ ДЛЯ НОВОСТЕЙ
+from accounts.models import User
+from .models import (
+    Course,
+    CourseEnrollment,
+    Employee,
+    Feedback,
+    Instruction,
+    LanguageSetting,
+    News,
+    NewsSliderSettings,
+    WelcomeBlock,
+)
+
+
 class NewsSerializer(serializers.ModelSerializer):
     short_text = serializers.SerializerMethodField()
 
@@ -22,11 +29,10 @@ class NewsSerializer(serializers.ModelSerializer):
         )
 
     def get_short_text(self, obj):
-        # Вызываем метод из модели, если он там есть
-        return obj.get_short_text() if hasattr(obj, 'get_short_text') else ""
+        return obj.get_short_text() if hasattr(obj, "get_short_text") else ""
+
 
 class NewsListSerializer(serializers.ModelSerializer):
-    """Специальный легкий сериализатор для списка (без тяжелого поля full_text)"""
     short_text = serializers.SerializerMethodField()
 
     class Meta:
@@ -34,37 +40,66 @@ class NewsListSerializer(serializers.ModelSerializer):
         fields = ("id", "title", "short_text", "image", "published_at")
 
     def get_short_text(self, obj):
-        return obj.get_short_text() if hasattr(obj, 'get_short_text') else ""
+        return obj.get_short_text() if hasattr(obj, "get_short_text") else ""
+
 
 class NewsDetailSerializer(serializers.ModelSerializer):
-    """Сериализатор для полной новости"""
     class Meta:
         model = News
         fields = ("id", "title", "full_text", "image", "published_at")
 
 
-# 2. ПРИВЕТСТВЕННЫЙ БЛОК
 class WelcomeBlockSerializer(serializers.ModelSerializer):
     class Meta:
         model = WelcomeBlock
         fields = "__all__"
 
 
-# 3. ОБРАТНАЯ СВЯЗЬ
-from rest_framework import serializers
-
-
 class FeedbackSerializer(serializers.ModelSerializer):
-
     class Meta:
         model = Feedback
-        fields = '__all__'
-        read_only_fields = ('created_at',)
+        fields = "__all__"
+        read_only_fields = ("created_at",)
 
     def validate_text(self, value):
         if not value.strip():
-            raise serializers.ValidationError("Текст не может быть пустым")
+            raise serializers.ValidationError("Text must not be empty")
         return value
+
+
+class FeedbackAdminListSerializer(serializers.ModelSerializer):
+    type_label = serializers.CharField(source="get_type_display", read_only=True)
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+    employee = serializers.SerializerMethodField()
+    short_text = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Feedback
+        fields = (
+            "id",
+            "type",
+            "type_label",
+            "status",
+            "status_label",
+            "is_read",
+            "is_anonymous",
+            "full_name",
+            "contact",
+            "employee",
+            "text",
+            "short_text",
+            "created_at",
+        )
+
+    def get_employee(self, obj):
+        if obj.is_anonymous:
+            return "Анонимно"
+        return obj.full_name or "Без имени"
+
+    def get_short_text(self, obj):
+        text = (obj.text or "").strip()
+        return text if len(text) <= 90 else f"{text[:87]}..."
+
 
 class FeedbackCreateSerializer(serializers.ModelSerializer):
     class Meta:
@@ -75,6 +110,7 @@ class FeedbackCreateSerializer(serializers.ModelSerializer):
             "full_name",
             "contact",
         )
+
 
 class FeedbackResponseSerializer(serializers.ModelSerializer):
     class Meta:
@@ -90,7 +126,10 @@ class FeedbackResponseSerializer(serializers.ModelSerializer):
         )
 
 
-# 4. СОТРУДНИКИ
+class FeedbackStatusUpdateSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=Feedback.STATUS_CHOICES)
+
+
 class EmployeeSerializer(serializers.ModelSerializer):
     class Meta:
         model = Employee
@@ -104,7 +143,6 @@ class EmployeeSerializer(serializers.ModelSerializer):
         )
 
 
-# 5. ИНСТРУКЦИИ
 class InstructionSerializer(serializers.ModelSerializer):
     content = serializers.SerializerMethodField()
 
@@ -124,23 +162,20 @@ class InstructionSerializer(serializers.ModelSerializer):
         if obj.type == "link":
             return obj.external_url
         if obj.type == "file" and obj.file:
-            # Возвращает полный URL файла (удобно для фронта)
             return obj.file.url
         return None
 
 
-# 6. ЯЗЫКИ
 class LanguageSettingSerializer(serializers.ModelSerializer):
     class Meta:
         model = LanguageSetting
         fields = ("code", "is_enabled")
 
 
-# 7. НАСТРОЙКИ СЛАЙДЕРА
 class NewsSliderSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = NewsSliderSettings
-        fields = ['autoplay', 'autoplay_delay']
+        fields = ["autoplay", "autoplay_delay"]
 
 
 class CourseSerializer(serializers.ModelSerializer):
@@ -220,5 +255,3 @@ class CourseUserShortSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ("id", "username")
-
-

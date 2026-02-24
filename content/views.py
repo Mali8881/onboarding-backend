@@ -4,10 +4,11 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework import status
 from rest_framework.viewsets import ModelViewSet
+from rest_framework.decorators import action
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
-from accounts.permissions import HasPermission
 from accounts.access_policy import AccessPolicy
 from accounts.models import Role, User
 
@@ -25,8 +26,10 @@ from .serializers import (
     InstructionSerializer,
     LanguageSettingSerializer,
     FeedbackSerializer,
+    FeedbackAdminListSerializer,
     FeedbackCreateSerializer,
     FeedbackResponseSerializer,
+    FeedbackStatusUpdateSerializer,
     CourseSerializer,
     CourseEnrollmentSerializer,
     CourseAssignSerializer,
@@ -83,10 +86,100 @@ class NewsDetailAPIView(RetrieveAPIView):
 # ---------------- FEEDBACK ----------------
 
 class FeedbackAdminView(ModelViewSet):
-    queryset = Feedback.objects.all()
+    queryset = Feedback.objects.all().order_by("-created_at")
     serializer_class = FeedbackSerializer
-    permission_classes = [IsAuthenticated, HasPermission]
-    required_permission = "feedback_manage"
+    permission_classes = [IsAuthenticated]
+
+    def _ensure_super_admin(self):
+        user = self.request.user
+        if not (user and user.is_authenticated and AccessPolicy.is_super_admin(user)):
+            self.permission_denied(self.request, message="Only super admin can manage feedback dashboard.")
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        self._ensure_super_admin()
+
+    def get_serializer_class(self):
+        if self.action in {"list", "retrieve"}:
+            return FeedbackAdminListSerializer
+        if self.action == "set_status":
+            return FeedbackStatusUpdateSerializer
+        return FeedbackSerializer
+
+    def get_queryset(self):
+        qs = Feedback.objects.all().order_by("-created_at")
+        status_filter = self.request.query_params.get("status")
+        type_filter = self.request.query_params.get("type")
+        search = self.request.query_params.get("search")
+        is_read = self.request.query_params.get("is_read")
+
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        if type_filter:
+            qs = qs.filter(type=type_filter)
+        if is_read in {"true", "false"}:
+            qs = qs.filter(is_read=(is_read == "true"))
+        if search:
+            qs = qs.filter(
+                Q(text__icontains=search)
+                | Q(full_name__icontains=search)
+                | Q(contact__icontains=search)
+            )
+        return qs
+
+    @action(detail=False, methods=["get"], url_path="stats")
+    def stats(self, request):
+        qs = Feedback.objects.all()
+        payload = {
+            "total": qs.count(),
+            "new": qs.filter(status="new").count(),
+            "in_progress": qs.filter(status="in_progress").count(),
+            "closed": qs.filter(status="closed").count(),
+            "unread": qs.filter(is_read=False).count(),
+        }
+        return Response(payload)
+
+    @action(detail=False, methods=["get"], url_path="meta")
+    def meta(self, request):
+        return Response(
+            {
+                "status_choices": [
+                    {"value": value, "label": label}
+                    for value, label in Feedback.STATUS_CHOICES
+                ],
+                "type_choices": [
+                    {"value": value, "label": label}
+                    for value, label in Feedback.TYPE_CHOICES
+                ],
+            }
+        )
+
+    @action(detail=True, methods=["post"], url_path="set-status")
+    def set_status(self, request, pk=None):
+        feedback = self.get_object()
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        old_status = feedback.status
+        feedback.status = serializer.validated_data["status"]
+        feedback.is_read = True
+        feedback.save(update_fields=["status", "is_read"])
+
+        changed_fields = ["status", "is_read"]
+        ContentAuditService.log_feedback_updated_admin(
+            request,
+            feedback,
+            changed_fields=changed_fields,
+        )
+        if old_status != feedback.status:
+            ContentAuditService.log_feedback_status_changed_admin(
+                request,
+                feedback,
+                from_status=old_status,
+                to_status=feedback.status,
+            )
+
+        return Response(FeedbackAdminListSerializer(feedback).data)
 
     def perform_update(self, serializer):
         instance = serializer.instance

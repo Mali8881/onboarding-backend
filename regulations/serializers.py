@@ -28,7 +28,6 @@ class RegulationSerializer(serializers.ModelSerializer):
             "is_acknowledged",
             "acknowledged_at",
             "position",
-            "language",
         )
 
     def get_content(self, obj):
@@ -78,7 +77,6 @@ class RegulationAdminSerializer(serializers.ModelSerializer):
             "position",
             "is_active",
             "is_mandatory_on_day_one",
-            "language",
             "created_at",
             "updated_at",
         )

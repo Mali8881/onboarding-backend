@@ -46,11 +46,26 @@ urlpatterns = [
         name="feedback-admin-list",
     ),
     path(
+        "admin/feedback/stats/",
+        FeedbackAdminView.as_view({"get": "stats"}),
+        name="feedback-admin-stats",
+    ),
+    path(
+        "admin/feedback/meta/",
+        FeedbackAdminView.as_view({"get": "meta"}),
+        name="feedback-admin-meta",
+    ),
+    path(
         "admin/feedback/<uuid:pk>/",
         FeedbackAdminView.as_view(
             {"get": "retrieve", "patch": "partial_update", "delete": "destroy"}
         ),
         name="feedback-admin-detail",
+    ),
+    path(
+        "admin/feedback/<uuid:pk>/set-status/",
+        FeedbackAdminView.as_view({"post": "set_status"}),
+        name="feedback-admin-set-status",
     ),
     path("courses/menu-access/", CoursesMenuAccessAPIView.as_view(), name="courses-menu-access"),
     path("courses/available/", AvailableCoursesListAPIView.as_view(), name="courses-available"),

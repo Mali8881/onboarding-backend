@@ -1,34 +1,28 @@
-from django.contrib import admin
-from django.urls import path, include
-from rest_framework_simplejwt.views import (
-    TokenObtainPairView,
-    TokenRefreshView,
-)
-from drf_spectacular.views import (
-    SpectacularAPIView,
-    SpectacularSwaggerView,
-)
+﻿from django.contrib import admin
+from django.urls import include, path
+from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+
+from .admin_views import attendance_checkin_page, content_dashboard, onboarding_dashboard
 
 admin.site.site_header = "HRM Администрирование"
 admin.site.site_title = "Админ-панель HRM"
 admin.site.index_title = "Управление системой"
 
 urlpatterns = [
+    path("ckeditor5/", include("django_ckeditor_5.urls")),
+    path("admin/onboarding/", onboarding_dashboard, name="admin-onboarding-dashboard"),
+    path("admin/content/", content_dashboard, name="admin-content-dashboard"),
+    path("admin/attendance/check-in/", attendance_checkin_page, name="admin-attendance-checkin-page"),
     path("admin/", admin.site.urls),
 
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
-    path(
-        "api/docs/",
-        SpectacularSwaggerView.as_view(url_name="schema"),
-        name="swagger-ui",
-    ),
-    # AUTH
+    path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
+
     path("api/v1/auth/login/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("api/v1/auth/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
 
-    # API v1
     path("api/v1/accounts/", include("accounts.urls")),
-
     path("api/v1/onboarding/", include("onboarding_core.urls")),
     path("api/v1/reports/", include("reports.urls")),
     path("api/v1/security/", include("security.urls")),

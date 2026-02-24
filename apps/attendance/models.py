@@ -64,3 +64,42 @@ class AttendanceMark(models.Model):
     def __str__(self):
         return f"{self.user_id} {self.date} {self.status}"
 
+
+class AttendanceSession(models.Model):
+    class Result(models.TextChoices):
+        IN_OFFICE = "IN_OFFICE", "In office"
+        OUTSIDE_GEOFENCE = "OUTSIDE_GEOFENCE", "Outside geofence"
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="attendance_sessions",
+    )
+    checked_at = models.DateTimeField(auto_now_add=True)
+    latitude = models.DecimalField(max_digits=9, decimal_places=6)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6)
+    accuracy_m = models.FloatField(null=True, blank=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    distance_m = models.FloatField()
+    office_latitude = models.DecimalField(max_digits=9, decimal_places=6)
+    office_longitude = models.DecimalField(max_digits=9, decimal_places=6)
+    radius_m = models.PositiveIntegerField()
+    result = models.CharField(max_length=32, choices=Result.choices)
+    attendance_mark = models.ForeignKey(
+        "AttendanceMark",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="sessions",
+    )
+
+    class Meta:
+        ordering = ["-checked_at"]
+        indexes = [
+            models.Index(fields=["user", "checked_at"]),
+            models.Index(fields=["result"]),
+            models.Index(fields=["checked_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.user_id} {self.checked_at} {self.result}"

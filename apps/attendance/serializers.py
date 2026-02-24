@@ -3,7 +3,7 @@ from datetime import date
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
-from .models import AttendanceMark, WorkCalendarDay
+from .models import AttendanceMark, AttendanceSession, WorkCalendarDay
 from .policies import AttendancePolicy
 
 
@@ -86,3 +86,29 @@ class WorkCalendarDayUpsertSerializer(serializers.ModelSerializer):
     class Meta:
         model = WorkCalendarDay
         fields = ("date", "is_working_day", "is_holiday", "note")
+
+
+class OfficeCheckInSerializer(serializers.Serializer):
+    latitude = serializers.FloatField(min_value=-90, max_value=90)
+    longitude = serializers.FloatField(min_value=-180, max_value=180)
+    accuracy_m = serializers.FloatField(required=False, min_value=0)
+
+
+class AttendanceSessionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AttendanceSession
+        fields = (
+            "id",
+            "user",
+            "checked_at",
+            "latitude",
+            "longitude",
+            "accuracy_m",
+            "ip_address",
+            "distance_m",
+            "office_latitude",
+            "office_longitude",
+            "radius_m",
+            "result",
+            "attendance_mark",
+        )

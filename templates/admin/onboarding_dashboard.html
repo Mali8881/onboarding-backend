@@ -1,0 +1,112 @@
+﻿{% extends "admin/base_site.html" %}
+
+{% block content %}
+<div class="onb-page">
+  <div class="onb-head">
+    <h1>Онбординг / Отчёты</h1>
+    <p>Управление программой онбординга и проверка отчётов стажёров</p>
+  </div>
+
+  <div class="onb-cards">
+    <div class="onb-card"><b>{{ stats.total }}</b><span>Всего</span></div>
+    <div class="onb-card"><b>{{ stats.sent }}</b><span>Отправлены</span></div>
+    <div class="onb-card"><b>{{ stats.draft }}</b><span>Черновики</span></div>
+    <div class="onb-card"><b>{{ stats.accepted }}</b><span>Принято</span></div>
+  </div>
+
+  <div class="onb-tabs">
+    <button class="onb-tab active" data-tab="reports">Отчёты стажёров</button>
+    <button class="onb-tab" data-tab="days">Дни онбординга</button>
+    <button class="onb-tab" data-tab="materials">Материалы</button>
+  </div>
+
+  <section id="tab-reports" class="onb-panel active">
+    <table class="onb-table">
+      <thead>
+        <tr><th>Стажёр</th><th>День</th><th>Дата</th><th>Статус</th><th>Действия</th></tr>
+      </thead>
+      <tbody>
+      {% for r in reports %}
+        <tr>
+          <td>{{ r.user.get_full_name|default:r.user.username }}</td>
+          <td>День {{ r.day.day_number }}</td>
+          <td>{{ r.created_at|date:"d M Y" }}</td>
+          <td><span class="onb-badge" style="--c: {{ r.status_meta.color }};">{{ r.status_meta.label }}</span></td>
+          <td>
+            <a href="/admin/reports/onboardingreport/{{ r.id }}/change/" title="Открыть">👁</a>
+          </td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="5" class="onb-empty">Нет отчётов</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section id="tab-days" class="onb-panel">
+    <table class="onb-table">
+      <thead>
+        <tr><th>№</th><th>Название</th><th>Материалов</th><th>Статус</th><th>Действия</th></tr>
+      </thead>
+      <tbody>
+      {% for d in days %}
+        <tr>
+          <td>{{ d.day_number }}</td>
+          <td>{{ d.title }}</td>
+          <td>{{ d.materials_count }}</td>
+          <td>{% if d.is_active %}<span style="color:#16a34a">● Активен</span>{% else %}<span style="color:#64748b">● Неактивен</span>{% endif %}</td>
+          <td><a href="/admin/onboarding_core/onboardingday/{{ d.id }}/change/">👁</a></td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="5" class="onb-empty">Нет дней</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section id="tab-materials" class="onb-panel">
+    <table class="onb-table">
+      <thead>
+        <tr><th>День</th><th>Тип</th><th>Контент</th><th>Действия</th></tr>
+      </thead>
+      <tbody>
+      {% for m in materials %}
+        <tr>
+          <td>{{ m.day.title }}</td>
+          <td>{{ m.get_type_display }}</td>
+          <td>{{ m.content|truncatechars:70 }}</td>
+          <td><a href="/admin/onboarding_core/onboardingmaterial/{{ m.id }}/change/">👁</a></td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="4" class="onb-empty">Нет материалов</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </section>
+</div>
+
+<style>
+.onb-page{max-width:1400px;margin:0 auto}
+.onb-head h1{margin:0}.onb-head p{color:#64748b;margin:6px 0 16px}
+.onb-cards{display:grid;grid-template-columns:repeat(4,minmax(140px,1fr));gap:10px;margin-bottom:14px}
+.onb-card{border:1.5px solid #111;border-radius:10px;padding:12px}.onb-card b{display:block;font-size:28px}.onb-card span{color:#64748b}
+.onb-tabs{display:flex;gap:8px;margin-bottom:10px}.onb-tab{border:1.5px solid #111;border-radius:999px;padding:7px 12px;background:#fff;cursor:pointer}.onb-tab.active{background:#111;color:#fff}
+.onb-panel{display:none}.onb-panel.active{display:block}
+.onb-table{width:100%;border-collapse:collapse;border:1.5px solid #111;border-radius:10px;overflow:hidden}
+.onb-table th,.onb-table td{padding:10px;border-bottom:1px solid #11111122;text-align:left}
+.onb-table thead th{background:#f8fafc;font-weight:700}
+.onb-badge{display:inline-block;padding:3px 9px;border-radius:999px;background:color-mix(in srgb, var(--c) 15%, white);color:var(--c);font-weight:600}
+.onb-empty{color:#64748b;text-align:center}
+</style>
+
+<script>
+(function(){
+  const tabs=document.querySelectorAll('.onb-tab');
+  tabs.forEach(btn=>btn.addEventListener('click',()=>{
+    tabs.forEach(x=>x.classList.remove('active'));btn.classList.add('active');
+    document.querySelectorAll('.onb-panel').forEach(p=>p.classList.remove('active'));
+    document.getElementById('tab-'+btn.dataset.tab).classList.add('active');
+  }));
+})();
+</script>
+{% endblock %}

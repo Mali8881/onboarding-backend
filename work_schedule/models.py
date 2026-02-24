@@ -1,7 +1,6 @@
-from django.db import models
-from django.core.exceptions import ValidationError
 from django.conf import settings
-from django.utils import timezone
+from django.core.exceptions import ValidationError
+from django.db import models
 
 
 class WorkSchedule(models.Model):
@@ -36,7 +35,8 @@ class WorkSchedule(models.Model):
                 raise ValidationError("work_days может содержать только числа от 0 до 6")
 
         if self.is_default:
-            if WorkSchedule.objects.exclude(pk=self.pk).filter(is_default=True).exists():
+            exists_default = WorkSchedule.objects.exclude(pk=self.pk).filter(is_default=True).exists()
+            if exists_default:
                 raise ValidationError("Может быть только один график по умолчанию")
 
     def save(self, *args, **kwargs):
@@ -45,6 +45,7 @@ class WorkSchedule(models.Model):
 
     def __str__(self):
         return self.name
+
 
 class ProductionCalendar(models.Model):
     date = models.DateField(unique=True)
@@ -67,17 +68,18 @@ class ProductionCalendar(models.Model):
     def __str__(self):
         return f"{self.date}"
 
+
 class UserWorkSchedule(models.Model):
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name="work_schedule"
+        related_name="work_schedule",
     )
 
     schedule = models.ForeignKey(
         WorkSchedule,
         on_delete=models.CASCADE,
-        related_name="users"
+        related_name="users",
     )
 
     approved = models.BooleanField(default=True)

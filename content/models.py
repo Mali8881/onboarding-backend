@@ -4,7 +4,7 @@ from django.db import models
 from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils.html import strip_tags
-from ckeditor_uploader.fields import RichTextUploadingField
+from django_ckeditor_5.fields import CKEditor5Field
 from jsonschema.exceptions import ValidationError
 
 from django.utils import timezone
@@ -42,7 +42,7 @@ class News(models.Model):
 
     title = models.CharField("Заголовок", max_length=255)
     short_text = models.CharField("Краткое описание", max_length=255, blank=True)
-    full_text = RichTextUploadingField("Полный текст")
+    full_text = CKEditor5Field("Полный текст", config_name="default")
 
     image = models.ImageField(
         "Изображение",

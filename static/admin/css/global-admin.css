@@ -1,0 +1,87 @@
+﻿/* Global admin polishing: black-bordered fields and clearer sections */
+
+:root {
+  --admin-border: #111111;
+  --admin-border-soft: #11111126;
+}
+
+/* Form sections */
+#content-main fieldset.module,
+#content-main .module {
+  border: 1.5px solid var(--admin-border) !important;
+  border-radius: 12px;
+}
+
+#content-main fieldset.module h2,
+#content-main .module h2 {
+  border-bottom: 1px solid var(--admin-border-soft) !important;
+  font-weight: 700;
+}
+
+/* Inputs */
+#content-main input[type="text"],
+#content-main input[type="email"],
+#content-main input[type="password"],
+#content-main input[type="number"],
+#content-main input[type="search"],
+#content-main input[type="url"],
+#content-main input[type="tel"],
+#content-main input[type="date"],
+#content-main input[type="time"],
+#content-main textarea,
+#content-main select:not(.select2-hidden-accessible) {
+  border: 1.5px solid var(--admin-border) !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+  background-color: #fff !important;
+  color: #111 !important;
+}
+
+/* Select2/autocomplete */
+#content-main .select2-container--default .select2-selection--single,
+#content-main .select2-container--default .select2-selection--multiple {
+  border: 1.5px solid var(--admin-border) !important;
+  border-radius: 8px !important;
+  min-height: 38px;
+  box-shadow: none !important;
+}
+
+/* Focus state */
+#content-main input:focus,
+#content-main textarea:focus,
+#content-main select:not(.select2-hidden-accessible):focus,
+#content-main .select2-container--default.select2-container--focus .select2-selection--multiple,
+#content-main .select2-container--default.select2-container--open .select2-selection--single {
+  border-color: #000 !important;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.12) !important;
+  outline: none !important;
+}
+
+/* Keep hidden select2 source input truly invisible */
+#content-main select.select2-hidden-accessible {
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+/* Admin tables */
+#changelist table,
+#result_list {
+  border: 1.5px solid var(--admin-border) !important;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+#changelist table th,
+#changelist table td,
+#result_list th,
+#result_list td {
+  border-bottom: 1px solid var(--admin-border-soft) !important;
+}
+
+/* Action bars / filter boxes */
+.actions,
+#changelist-filter,
+#toolbar {
+  border: 1.2px solid var(--admin-border) !important;
+  border-radius: 10px;
+}

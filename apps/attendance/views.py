@@ -2,27 +2,42 @@ import calendar
 from datetime import date
 
 from django.contrib.auth import get_user_model
+from rest_framework.authentication import SessionAuthentication
 from rest_framework import status
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from work_schedule.models import ProductionCalendar
+from accounts.models import Role
+from accounts.access_policy import AccessPolicy
 
 from .audit import AttendanceAuditService
-from .models import AttendanceMark, WorkCalendarDay
+from .models import AttendanceMark, AttendanceSession, WorkCalendarDay
 from .policies import AttendancePolicy
 from .serializers import (
     AttendanceTeamFilterSerializer,
     AttendanceMarkSerializer,
     AttendanceMarkUpsertSerializer,
+    AttendanceSessionSerializer,
     MonthQuerySerializer,
+    OfficeCheckInSerializer,
     WorkCalendarDaySerializer,
     WorkCalendarDayUpsertSerializer,
     WorkCalendarGenerateSerializer,
 )
-from .services import build_attendance_table, generate_work_calendar_month, month_bounds, attendance_table_queryset
+from .services import (
+    attendance_table_queryset,
+    build_attendance_table,
+    get_client_ip,
+    generate_work_calendar_month,
+    haversine_distance_m,
+    is_office_ip,
+    month_bounds,
+    office_geofence,
+)
 
 
 User = get_user_model()
@@ -224,10 +239,12 @@ class AttendanceTeamAPIView(APIView):
         status_filter = query.validated_data.get("status")
 
         users_qs = User.objects.none()
-        if AttendancePolicy.is_admin_like(request.user):
+        if AccessPolicy.is_super_admin(request.user):
             users_qs = User.objects.filter(is_active=True)
+        elif AccessPolicy.is_admin(request.user):
+            users_qs = User.objects.filter(is_active=True).exclude(role__name=Role.Name.SUPER_ADMIN)
         else:
-            users_qs = request.user.team_members.filter(is_active=True)
+            users_qs = request.user.team_members.filter(is_active=True).exclude(role__name=Role.Name.SUPER_ADMIN)
 
         if user_id:
             users_qs = users_qs.filter(id=user_id)
@@ -241,6 +258,76 @@ class AttendanceTeamAPIView(APIView):
         if status_filter:
             qs = qs.filter(status=status_filter)
         return Response(AttendanceMarkSerializer(qs, many=True).data)
+
+
+class AttendanceOfficeCheckInAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [SessionAuthentication, JWTAuthentication]
+
+    def post(self, request):
+        geofence = office_geofence()
+        if geofence is None:
+            return Response(
+                {"detail": "Office geofence is not configured."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        serializer = OfficeCheckInSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        office_lat, office_lon, radius_m = geofence
+        lat = serializer.validated_data["latitude"]
+        lon = serializer.validated_data["longitude"]
+        accuracy = serializer.validated_data.get("accuracy_m")
+        client_ip = get_client_ip(request)
+
+        distance_m = haversine_distance_m(lat, lon, office_lat, office_lon)
+        ip_valid = is_office_ip(client_ip)
+        in_office = distance_m <= radius_m or ip_valid
+
+        mark = None
+        if in_office:
+            mark, _ = AttendanceMark.objects.get_or_create(
+                user=request.user,
+                date=date.today(),
+                defaults={
+                    "status": AttendanceMark.Status.PRESENT,
+                    "comment": "Office check-in",
+                    "created_by": request.user,
+                },
+            )
+            if mark.status != AttendanceMark.Status.PRESENT:
+                mark.status = AttendanceMark.Status.PRESENT
+                mark.save(update_fields=["status", "updated_at"])
+
+        session = AttendanceSession.objects.create(
+            user=request.user,
+            latitude=lat,
+            longitude=lon,
+            accuracy_m=accuracy,
+            ip_address=client_ip,
+            distance_m=distance_m,
+            office_latitude=office_lat,
+            office_longitude=office_lon,
+            radius_m=radius_m,
+            result=(
+                AttendanceSession.Result.IN_OFFICE
+                if in_office
+                else AttendanceSession.Result.OUTSIDE_GEOFENCE
+            ),
+            attendance_mark=mark,
+        )
+
+        if in_office:
+            AttendanceAuditService.log_office_checkin_in_office(request, session)
+        else:
+            AttendanceAuditService.log_office_checkin_outside(request, session)
+
+        payload = AttendanceSessionSerializer(session).data
+        payload["status"] = "IN_OFFICE" if in_office else "OUT_OF_OFFICE"
+        payload["in_office"] = in_office
+        payload["ip_valid"] = ip_valid
+        return Response(payload, status=status.HTTP_201_CREATED)
 
 
 class WorkCalendarDayAdminAPIView(APIView):

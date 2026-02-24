@@ -1,15 +1,21 @@
 from __future__ import annotations
 
 import calendar
+import ipaddress
+import math
 from datetime import date
 from typing import Optional
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
+from accounts.models import Role
+from accounts.access_policy import AccessPolicy
 
 from .models import AttendanceMark, WorkCalendarDay
 
 
 User = get_user_model()
+EARTH_RADIUS_M = 6371000.0
 
 
 def month_bounds(year: int, month: int) -> tuple[date, date]:
@@ -62,10 +68,16 @@ def generate_work_calendar_month(year: int, month: int, *, overwrite: bool = Fal
 def attendance_table_queryset(actor, *, include_all_for_admin: bool = True):
     if actor.is_anonymous:
         return User.objects.none()
-    if hasattr(actor, "is_admin_like") and actor.is_admin_like and include_all_for_admin:
+    if include_all_for_admin and AccessPolicy.is_super_admin(actor):
         return User.objects.filter(is_active=True).select_related("position", "department", "role")
+    if include_all_for_admin and AccessPolicy.is_admin(actor):
+        return User.objects.filter(is_active=True).exclude(role__name=Role.Name.SUPER_ADMIN).select_related(
+            "position", "department", "role"
+        )
     if actor.team_members.exists():
-        return actor.team_members.filter(is_active=True).select_related("position", "department", "role")
+        return actor.team_members.filter(is_active=True).exclude(role__name=Role.Name.SUPER_ADMIN).select_related(
+            "position", "department", "role"
+        )
     return User.objects.filter(id=actor.id).select_related("position", "department", "role")
 
 
@@ -100,3 +112,50 @@ def build_attendance_table(*, users, year: int, month: int, status_filter: Optio
         )
 
     return {"days": days, "rows": rows}
+
+
+def haversine_distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    lat1_r = math.radians(lat1)
+    lon1_r = math.radians(lon1)
+    lat2_r = math.radians(lat2)
+    lon2_r = math.radians(lon2)
+
+    d_lat = lat2_r - lat1_r
+    d_lon = lon2_r - lon1_r
+
+    a = (
+        math.sin(d_lat / 2) ** 2
+        + math.cos(lat1_r) * math.cos(lat2_r) * math.sin(d_lon / 2) ** 2
+    )
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return EARTH_RADIUS_M * c
+
+
+def office_geofence():
+    lat = getattr(settings, "OFFICE_GEOFENCE_LATITUDE", None)
+    lon = getattr(settings, "OFFICE_GEOFENCE_LONGITUDE", None)
+    radius = getattr(settings, "OFFICE_GEOFENCE_RADIUS_M", None)
+    if lat is None or lon is None or radius is None:
+        return None
+    return float(lat), float(lon), int(radius)
+
+
+def office_networks():
+    return getattr(settings, "OFFICE_IP_NETWORKS", [])
+
+
+def is_office_ip(ip_string: str | None) -> bool:
+    if not ip_string:
+        return False
+    try:
+        ip = ipaddress.ip_address(ip_string)
+        return any(ip in network for network in office_networks())
+    except ValueError:
+        return False
+
+
+def get_client_ip(request) -> str | None:
+    x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+    if x_forwarded_for:
+        return x_forwarded_for.split(",")[0].strip()
+    return request.META.get("REMOTE_ADDR")

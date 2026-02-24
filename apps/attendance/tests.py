@@ -1,6 +1,8 @@
 from datetime import date, timedelta
+import ipaddress
 from unittest.mock import patch
 
+from django.test import override_settings
 from django.test import TestCase
 from django.core.management import call_command
 from rest_framework.test import APIClient
@@ -8,7 +10,7 @@ from rest_framework.test import APIClient
 from accounts.models import Role, User
 from work_schedule.models import ProductionCalendar
 
-from .models import AttendanceMark, WorkCalendarDay
+from .models import AttendanceMark, AttendanceSession, WorkCalendarDay
 
 
 class AttendanceApiTests(TestCase):
@@ -276,3 +278,89 @@ class AttendanceApiTests(TestCase):
             WorkCalendarDay.objects.filter(date__year=2026, date__month=3).count(),
             31,
         )
+
+    @override_settings(
+        OFFICE_GEOFENCE_LATITUDE=42.874621,
+        OFFICE_GEOFENCE_LONGITUDE=74.569762,
+        OFFICE_GEOFENCE_RADIUS_M=150,
+    )
+    @patch("apps.attendance.views.AttendanceAuditService.log_office_checkin_in_office")
+    def test_check_in_in_office_creates_session_and_mark(self, log_in_office):
+        self.client.force_authenticate(user=self.subordinate)
+        response = self.client.post(
+            "/api/v1/attendance/check-in/",
+            {"latitude": 42.874621, "longitude": 74.569762, "accuracy_m": 20},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(response.data["in_office"])
+        self.assertTrue(response.data["status"] == "IN_OFFICE")
+        self.assertFalse(response.data["ip_valid"])
+        self.assertEqual(response.data["result"], "IN_OFFICE")
+        self.assertTrue(
+            AttendanceMark.objects.filter(
+                user=self.subordinate,
+                date=date.today(),
+                status=AttendanceMark.Status.PRESENT,
+            ).exists()
+        )
+        self.assertEqual(AttendanceSession.objects.filter(user=self.subordinate).count(), 1)
+        log_in_office.assert_called_once()
+
+    @override_settings(
+        OFFICE_GEOFENCE_LATITUDE=42.874621,
+        OFFICE_GEOFENCE_LONGITUDE=74.569762,
+        OFFICE_GEOFENCE_RADIUS_M=150,
+    )
+    @patch("apps.attendance.views.AttendanceAuditService.log_office_checkin_outside")
+    def test_check_in_outside_creates_session_without_mark(self, log_outside):
+        self.client.force_authenticate(user=self.subordinate)
+        response = self.client.post(
+            "/api/v1/attendance/check-in/",
+            {"latitude": 42.900000, "longitude": 74.600000},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertFalse(response.data["in_office"])
+        self.assertEqual(response.data["status"], "OUT_OF_OFFICE")
+        self.assertEqual(response.data["result"], "OUTSIDE_GEOFENCE")
+        self.assertFalse(
+            AttendanceMark.objects.filter(user=self.subordinate, date=date.today()).exists()
+        )
+        self.assertEqual(AttendanceSession.objects.filter(user=self.subordinate).count(), 1)
+        log_outside.assert_called_once()
+
+    @override_settings(
+        OFFICE_GEOFENCE_LATITUDE=None,
+        OFFICE_GEOFENCE_LONGITUDE=None,
+        OFFICE_GEOFENCE_RADIUS_M=150,
+    )
+    def test_check_in_returns_503_when_geofence_not_configured(self):
+        self.client.force_authenticate(user=self.subordinate)
+        response = self.client.post(
+            "/api/v1/attendance/check-in/",
+            {"latitude": 42.874621, "longitude": 74.569762},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 503)
+
+    @override_settings(
+        OFFICE_GEOFENCE_LATITUDE=42.874621,
+        OFFICE_GEOFENCE_LONGITUDE=74.569762,
+        OFFICE_GEOFENCE_RADIUS_M=150,
+        OFFICE_IP_NETWORKS=[ipaddress.ip_network("192.168.10.0/24")],
+    )
+    @patch("apps.attendance.views.AttendanceAuditService.log_office_checkin_in_office")
+    def test_check_in_in_office_by_ip_network(self, log_in_office):
+        self.client.force_authenticate(user=self.subordinate)
+        response = self.client.post(
+            "/api/v1/attendance/check-in/",
+            {"latitude": 42.900000, "longitude": 74.600000},
+            format="json",
+            HTTP_X_FORWARDED_FOR="192.168.10.55",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(response.data["in_office"])
+        self.assertTrue(response.data["ip_valid"])
+        self.assertEqual(response.data["status"], "IN_OFFICE")
+        log_in_office.assert_called_once()
