@@ -137,6 +137,18 @@ label {
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
+.breaks-wrap {
+  border: 1px dashed #95b8c9;
+  border-radius: 8px;
+  padding: 0.5rem;
+  background: #f8fcff;
+}
+
+.breaks-list {
+  display: grid;
+  gap: 0.4rem;
+}
+
 .notice {
   color: #734b03;
 }

@@ -111,6 +111,9 @@ function makeEmptyShift(date = '', dayIndex = 0) {
     end_time: defaultEndHour,
     mode: 'office',
     comment: '',
+    breaks: [],
+    lunch_start: '',
+    lunch_end: '',
   }
 }
 
@@ -130,6 +133,24 @@ function createFixedWeekShifts(weekStart, sourceDays = []) {
       end_time: source.mode === 'day_off' ? '' : (source.end_time || (index < 5 ? '17:00' : '19:00')),
       mode: source.mode === 'online' || source.mode === 'day_off' ? source.mode : 'office',
       comment: source.comment || '',
+      breaks: Array.isArray(source.breaks)
+        ? source.breaks
+            .filter((item) => item && item.start_time && item.end_time)
+            .map((item) => ({
+              start_time: item.start_time,
+              end_time: (() => {
+                const startMinutes = hhmmToMinutes(item.start_time)
+                return startMinutes === null ? item.end_time : minutesToHHMM(startMinutes + 15)
+              })(),
+            }))
+        : [],
+      lunch_start: source.lunch_start || '',
+      lunch_end: source.lunch_start
+        ? (() => {
+            const startMinutes = hhmmToMinutes(source.lunch_start)
+            return startMinutes === null ? (source.lunch_end || '') : minutesToHHMM(startMinutes + 60)
+          })()
+        : '',
     }
   })
 }
@@ -143,6 +164,53 @@ function getShiftHours(shift) {
   const diff = endHour - startHour
   if (diff <= 0) return 0
   return diff
+}
+
+function hhmmToMinutes(value) {
+  if (!value || typeof value !== 'string') return null
+  const [h, m] = value.split(':').map(Number)
+  if (Number.isNaN(h) || Number.isNaN(m)) return null
+  return h * 60 + m
+}
+
+function minutesToHHMM(totalMinutes) {
+  const normalized = ((totalMinutes % (24 * 60)) + (24 * 60)) % (24 * 60)
+  const h = String(Math.floor(normalized / 60)).padStart(2, '0')
+  const m = String(normalized % 60).padStart(2, '0')
+  return `${h}:${m}`
+}
+
+function canUseShortBreaks(shift) {
+  return shift?.mode === 'office' && getShiftHours(shift) >= 7
+}
+
+function canUseLunchBreak(shift) {
+  return shift?.mode === 'office' && getShiftHours(shift) >= 8
+}
+
+function normalizeShiftBreakRules(shift) {
+  if (!shift || shift.mode !== 'office') {
+    return { ...(shift || {}), breaks: [], lunch_start: '', lunch_end: '' }
+  }
+  const next = { ...shift }
+  if (!canUseShortBreaks(next)) {
+    next.breaks = []
+  } else {
+    next.breaks = Array.isArray(next.breaks) ? next.breaks.slice(0, 4) : []
+  }
+  if (!canUseLunchBreak(next)) {
+    next.lunch_start = ''
+    next.lunch_end = ''
+  } else {
+    next.lunch_start = next.lunch_start || ''
+    if (next.lunch_start) {
+      const startMinutes = hhmmToMinutes(next.lunch_start)
+      next.lunch_end = startMinutes === null ? '' : minutesToHHMM(startMinutes + 60)
+    } else {
+      next.lunch_end = ''
+    }
+  }
+  return next
 }
 
 function sumShiftHours(shifts, mode) {
@@ -537,6 +605,20 @@ function App() {
         end_time: item.mode === 'day_off' ? null : item.end_time,
         mode: item.mode,
         comment: item.comment || '',
+        breaks:
+          item.mode === 'office'
+            ? (item.breaks || [])
+                .filter((part) => part?.start_time && part?.end_time)
+                .map((part) => ({
+                  start_time: part.start_time,
+                  end_time: part.end_time,
+                }))
+            : [],
+        lunch_start: item.mode === 'office' ? (item.lunch_start || null) : null,
+        lunch_end:
+          item.mode === 'office' && item.lunch_start
+            ? minutesToHHMM((hhmmToMinutes(item.lunch_start) || 0) + 60)
+            : null,
       }))
       .filter((item) => item.date && item.mode)
 
@@ -559,6 +641,52 @@ function App() {
     })
     if (hasInvalidHours) {
       setEmployeeError('Invalid time range. Mon-Fri: 09:00-21:00, Sat-Sun: 11:00-19:00, and end must be after start.')
+      return
+    }
+
+    const hasInvalidBreakRules = sanitizedDays.some((shift) => {
+      if (shift.mode !== 'office') {
+        return shift.breaks.length > 0 || shift.lunch_start || shift.lunch_end
+      }
+      const duration = getShiftHours(shift)
+      if (duration < 7 && shift.breaks.length > 0) return true
+      if (duration < 8 && (shift.lunch_start || shift.lunch_end)) return true
+      if ((shift.lunch_start && !shift.lunch_end) || (!shift.lunch_start && shift.lunch_end)) return true
+      if (shift.breaks.length > 4) return true
+
+      const shiftStart = hhmmToMinutes(shift.start_time)
+      const shiftEnd = hhmmToMinutes(shift.end_time)
+      if (shiftStart === null || shiftEnd === null) return true
+
+      const intervals = []
+      for (const part of shift.breaks) {
+        const partStart = hhmmToMinutes(part.start_time)
+        const partEnd = hhmmToMinutes(part.end_time)
+        if (partStart === null || partEnd === null || partEnd <= partStart) return true
+        if ((partStart % 15) !== 0 || (partEnd % 15) !== 0) return true
+        if ((partEnd - partStart) !== 15) return true
+        if (partStart < shiftStart || partEnd > shiftEnd) return true
+        intervals.push([partStart, partEnd])
+      }
+
+      if (shift.lunch_start && shift.lunch_end) {
+        const lunchStart = hhmmToMinutes(shift.lunch_start)
+        const lunchEnd = hhmmToMinutes(shift.lunch_end)
+        if (lunchStart === null || lunchEnd === null || lunchEnd <= lunchStart) return true
+        if ((lunchStart % 15) !== 0 || (lunchEnd % 15) !== 0) return true
+        if ((lunchEnd - lunchStart) !== 60) return true
+        if (lunchStart < shiftStart || lunchEnd > shiftEnd) return true
+        intervals.push([lunchStart, lunchEnd])
+      }
+
+      intervals.sort((a, b) => a[0] - b[0])
+      for (let i = 1; i < intervals.length; i += 1) {
+        if (intervals[i][0] < intervals[i - 1][1]) return true
+      }
+      return false
+    })
+    if (hasInvalidBreakRules) {
+      setEmployeeError('Break/lunch rules are invalid. Breaks: office >=7h, up to 4x15m. Lunch: office >=8h, exactly 60m. No overlaps.')
       return
     }
 
@@ -891,7 +1019,7 @@ function App() {
                           onChange={(event) =>
                             setEmployeeWeekDays((prev) =>
                               prev.map((x, i) =>
-                                i === index ? { ...x, start_time: event.target.value } : x,
+                                i === index ? normalizeShiftBreakRules({ ...x, start_time: event.target.value }) : x,
                               ),
                             )
                           }
@@ -909,7 +1037,7 @@ function App() {
                           onChange={(event) =>
                             setEmployeeWeekDays((prev) =>
                               prev.map((x, i) =>
-                                i === index ? { ...x, end_time: event.target.value } : x,
+                                i === index ? normalizeShiftBreakRules({ ...x, end_time: event.target.value }) : x,
                               ),
                             )
                           }
@@ -926,15 +1054,37 @@ function App() {
                                   ? (() => {
                                       const nextMode = event.target.value
                                       if (nextMode === 'day_off') {
-                                        return { ...x, mode: nextMode, start_time: '', end_time: '' }
+                                        return {
+                                          ...x,
+                                          mode: nextMode,
+                                          start_time: '',
+                                          end_time: '',
+                                          breaks: [],
+                                          lunch_start: '',
+                                          lunch_end: '',
+                                        }
                                       }
                                       const limits = getDayHourLimits(x.date)
-                                      return {
+                                      if (nextMode === 'online') {
+                                        return {
+                                          ...x,
+                                          mode: nextMode,
+                                          start_time: x.start_time || limits.min,
+                                          end_time: x.end_time || (index < 5 ? '17:00' : '19:00'),
+                                          breaks: [],
+                                          lunch_start: '',
+                                          lunch_end: '',
+                                        }
+                                      }
+                                      return normalizeShiftBreakRules({
                                         ...x,
                                         mode: nextMode,
                                         start_time: x.start_time || limits.min,
                                         end_time: x.end_time || (index < 5 ? '17:00' : '19:00'),
-                                      }
+                                        breaks: Array.isArray(x.breaks) ? x.breaks : [],
+                                        lunch_start: x.lunch_start || '',
+                                        lunch_end: x.lunch_end || '',
+                                      })
                                     })()
                                   : x,
                               ),
@@ -957,6 +1107,143 @@ function App() {
                           }
                         />
                       </label>
+                      {shift.mode === 'office' && (
+                        <div className="breaks-wrap">
+                          {canUseShortBreaks(shift) ? (
+                            <div className="breaks-list">
+                              {(shift.breaks || []).map((part, partIndex) => (
+                                <div className="actions-row" key={`${shift.date}-break-${partIndex}`}>
+                                  <input
+                                    type="time"
+                                    step="900"
+                                    value={part.start_time || ''}
+                                    onChange={(event) =>
+                                      setEmployeeWeekDays((prev) =>
+                                        prev.map((x, i) =>
+                                          i === index
+                                            ? {
+                                                ...x,
+                                                breaks: (x.breaks || []).map((y, yIndex) =>
+                                                  yIndex === partIndex
+                                                    ? {
+                                                        ...y,
+                                                        start_time: event.target.value,
+                                                        end_time: (() => {
+                                                          const startMinutes = hhmmToMinutes(event.target.value)
+                                                          return startMinutes === null
+                                                            ? y.end_time
+                                                            : minutesToHHMM(startMinutes + 15)
+                                                        })(),
+                                                      }
+                                                    : y,
+                                                ),
+                                              }
+                                            : x,
+                                        ),
+                                      )
+                                    }
+                                  />
+                                  <span>-</span>
+                                  <input
+                                    type="time"
+                                    step="900"
+                                    value={part.end_time || ''}
+                                    readOnly
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setEmployeeWeekDays((prev) =>
+                                        prev.map((x, i) =>
+                                          i === index
+                                            ? {
+                                                ...x,
+                                                breaks: (x.breaks || []).filter((_, yIndex) => yIndex !== partIndex),
+                                              }
+                                            : x,
+                                        ),
+                                      )
+                                    }
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
+                              ))}
+                              <button
+                                type="button"
+                                disabled={(shift.breaks || []).length >= 4}
+                                onClick={() =>
+                                  setEmployeeWeekDays((prev) =>
+                                    prev.map((x, i) =>
+                                      i === index
+                                        ? {
+                                            ...x,
+                                            breaks: [
+                                              ...(x.breaks || []),
+                                              {
+                                                start_time: x.start_time || getDayHourLimits(x.date).min,
+                                                end_time: (() => {
+                                                  const startMinutes = hhmmToMinutes(x.start_time || getDayHourLimits(x.date).min)
+                                                  return startMinutes === null ? '09:15' : minutesToHHMM(startMinutes + 15)
+                                                })(),
+                                              },
+                                            ],
+                                          }
+                                        : x,
+                                    ),
+                                  )
+                                }
+                              >
+                                + Add 15-minute break
+                              </button>
+                            </div>
+                          ) : null}
+                          {canUseLunchBreak(shift) ? (
+                            <div className="actions-row">
+                              <input
+                                type="time"
+                                step="900"
+                                value={shift.lunch_start || ''}
+                                onChange={(event) =>
+                                  setEmployeeWeekDays((prev) =>
+                                    prev.map((x, i) =>
+                                      i === index
+                                        ? {
+                                            ...x,
+                                            lunch_start: event.target.value,
+                                            lunch_end: (() => {
+                                              const startMinutes = hhmmToMinutes(event.target.value)
+                                              return startMinutes === null ? '' : minutesToHHMM(startMinutes + 60)
+                                            })(),
+                                          }
+                                        : x,
+                                    ),
+                                  )
+                                }
+                              />
+                              <span>-</span>
+                              <input
+                                type="time"
+                                step="900"
+                                value={shift.lunch_end || ''}
+                                readOnly
+                              />
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setEmployeeWeekDays((prev) =>
+                                    prev.map((x, i) =>
+                                      i === index ? { ...x, lunch_start: '', lunch_end: '' } : x,
+                                    ),
+                                  )
+                                }
+                              >
+                                Clear lunch
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      )}
                       <p>Hours: {shift.mode === 'day_off' ? '-' : `${getShiftHours(shift)}h`}</p>
                     </div>
                   ))}
@@ -994,6 +1281,10 @@ function App() {
                           <p>{shift.date} ({formatShiftWeekday(shift.date)})</p>
                           <p>{shift.mode === 'day_off' ? 'Day off' : `${shift.start_time} - ${shift.end_time}`}</p>
                           <p>Mode: {shift.mode}</p>
+                          {Array.isArray(shift.breaks) && shift.breaks.length > 0 ? (
+                            <p>Breaks: {shift.breaks.map((part) => `${part.start_time}-${part.end_time}`).join(', ')}</p>
+                          ) : null}
+                          {shift.lunch_start && shift.lunch_end ? <p>Lunch: {shift.lunch_start}-{shift.lunch_end}</p> : null}
                           {shift.comment ? <p>Comment: {shift.comment}</p> : null}
                         </div>
                       ))}
@@ -1091,6 +1382,10 @@ function App() {
                     <p>{shift.date} ({formatShiftWeekday(shift.date)})</p>
                     <p>{shift.mode === 'day_off' ? 'Day off' : `${shift.start_time} - ${shift.end_time}`}</p>
                     <p>Mode: {shift.mode}</p>
+                    {Array.isArray(shift.breaks) && shift.breaks.length > 0 ? (
+                      <p>Breaks: {shift.breaks.map((part) => `${part.start_time}-${part.end_time}`).join(', ')}</p>
+                    ) : null}
+                    {shift.lunch_start && shift.lunch_end ? <p>Lunch: {shift.lunch_start}-{shift.lunch_end}</p> : null}
                     {shift.comment ? <p>Comment: {shift.comment}</p> : null}
                   </div>
                 ))}

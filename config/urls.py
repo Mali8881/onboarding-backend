@@ -1,9 +1,15 @@
 ﻿from django.contrib import admin
-from django.urls import include, path
+from django.urls import include, path, re_path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from .admin_views import attendance_checkin_page, content_dashboard, onboarding_dashboard
+from .admin_views import (
+    attendance_checkin_page,
+    content_dashboard,
+    onboarding_dashboard,
+    work_schedule_board_page,
+)
+from .spa_views import spa_asset, spa_index, spa_vite_icon
 
 admin.site.site_header = "HRM Администрирование"
 admin.site.site_title = "Админ-панель HRM"
@@ -33,4 +39,8 @@ urlpatterns = [
     path("api/v1/tasks/", include("apps.tasks.urls")),
     path("api/v1/payroll/", include("apps.payroll.urls")),
     path("api/", include("work_schedule.urls")),
+    path("assets/<path:asset_path>", spa_asset, name="spa-asset"),
+    path("vite.svg", spa_vite_icon, name="spa-vite-icon"),
+    path("", spa_index, name="spa-index"),
+    re_path(r"^(?!admin/|api/|ckeditor5/|media/|static/).*$", spa_index, name="spa-catch-all"),
 ]

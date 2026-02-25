@@ -49,12 +49,28 @@ class LoginView(APIView):
             return xff.split(",")[0].strip()
         return request.META.get("REMOTE_ADDR")
 
+    @staticmethod
+    def _landing_for(user):
+        role_name = user.role.name if getattr(user, "role", None) else ""
+        if role_name in {Role.Name.ADMIN, Role.Name.SUPER_ADMIN}:
+            return "admin_panel"
+        if role_name == Role.Name.INTERN:
+            return "intern_portal"
+        return "employee_portal"
+
     def post(self, request):
-        username = request.data.get("username")
+        username = (request.data.get("username") or "").strip()
         password = request.data.get("password")
 
-        user = authenticate(username=username, password=password)
+        if not username or not password:
+            return Response({"error": "Username and password are required"}, status=400)
+
         existing_user = User.objects.filter(username=username).first()
+        if not existing_user:
+            existing_user = User.objects.filter(email__iexact=username).first()
+
+        auth_username = existing_user.username if existing_user else username
+        user = authenticate(username=auth_username, password=password)
 
         # Проверка блокировки по попыткам
         if existing_user:
@@ -87,7 +103,7 @@ class LoginView(APIView):
             LoginHistory.objects.create(
                 user=existing_user,
                 ip_address=request.META.get("REMOTE_ADDR"),
-                user_agent=request.META.get("HTTP_USER_AGENT"),
+                user_agent=request.META.get("HTTP_USER_AGENT", ""),
                 success=False
             )
             log_event(
@@ -126,7 +142,7 @@ class LoginView(APIView):
         LoginHistory.objects.create(
             user=user,
             ip_address=request.META.get("REMOTE_ADDR"),
-            user_agent=request.META.get("HTTP_USER_AGENT"),
+            user_agent=request.META.get("HTTP_USER_AGENT", ""),
             success=True
         )
         log_event(
@@ -142,11 +158,15 @@ class LoginView(APIView):
         return Response({
             "access": str(refresh.access_token),
             "refresh": str(refresh),
+            "landing": self._landing_for(user),
             "user": {
                 "id": user.id,
                 "username": user.username,
                 "role": user.role.name if user.role else None,
                 "role_level": user.role.level if user.role else None,
+                "is_first_login": (
+                    user.role.name == Role.Name.INTERN and user.intern_onboarding_started_at is None
+                ) if user.role else False,
             }
         })
 
