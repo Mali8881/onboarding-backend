@@ -1,0 +1,40 @@
+﻿<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Единый вход</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f3f4f6; margin: 0; }
+    .wrap { max-width: 420px; margin: 8vh auto; background: #fff; border-radius: 12px; padding: 24px; box-shadow: 0 10px 30px rgba(0,0,0,.08); }
+    h1 { margin: 0 0 8px; font-size: 24px; }
+    p { color: #4b5563; margin: 0 0 16px; }
+    label { display: block; margin: 12px 0 6px; font-weight: 600; }
+    input { width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 8px; box-sizing: border-box; }
+    button { margin-top: 16px; width: 100%; border: 0; background: #111827; color: #fff; padding: 11px 14px; border-radius: 8px; cursor: pointer; }
+    .error { margin-top: 12px; color: #b91c1c; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <h1>Единый вход</h1>
+    <p>Админ, суперадмин, работник и стажер входят здесь.</p>
+    <form method="post" action="/admin/login/">
+      {% csrf_token %}
+      {% if request.GET.next %}
+      <input type="hidden" name="next" value="{{ request.GET.next }}" />
+      {% endif %}
+      <label for="username">Логин или email</label>
+      <input id="username" name="username" autocomplete="username" required />
+
+      <label for="password">Пароль</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required />
+
+      <button type="submit">Войти</button>
+    </form>
+    {% if error %}
+    <div class="error">{{ error }}</div>
+    {% endif %}
+  </main>
+</body>
+</html>

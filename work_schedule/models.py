@@ -160,7 +160,7 @@ class WeeklyWorkPlan(models.Model):
         if len(self.days) != 7:
             raise ValidationError({"days": "Exactly 7 shifts are required (Monday..Sunday)."})
 
-        allowed_keys = {"date", "start_time", "end_time", "mode", "comment"}
+        allowed_keys = {"date", "start_time", "end_time", "mode", "comment", "breaks", "lunch_start", "lunch_end"}
         total_office = 0
         total_online = 0
         seen_dates = set()
@@ -175,6 +175,9 @@ class WeeklyWorkPlan(models.Model):
 
             day_date = self._parse_date(raw.get("date"), idx)
             mode = raw.get("mode")
+            breaks = raw.get("breaks") or []
+            lunch_start_raw = raw.get("lunch_start")
+            lunch_end_raw = raw.get("lunch_end")
 
             if mode not in {"office", "online", "day_off"}:
                 raise ValidationError({"days": f"Item #{idx}: mode must be 'office', 'online' or 'day_off'."})
@@ -192,7 +195,13 @@ class WeeklyWorkPlan(models.Model):
             seen_dates.add(day_date)
 
             if mode == "day_off":
-                if raw.get("start_time") is not None or raw.get("end_time") is not None:
+                if (
+                    raw.get("start_time") is not None
+                    or raw.get("end_time") is not None
+                    or breaks
+                    or lunch_start_raw is not None
+                    or lunch_end_raw is not None
+                ):
                     raise ValidationError({"days": f"Item #{idx}: day_off must not contain start/end time."})
                 continue
 
@@ -213,6 +222,20 @@ class WeeklyWorkPlan(models.Model):
             duration_hours = (end_dt - start_dt).seconds // 3600
             if duration_hours <= 0:
                 raise ValidationError({"days": f"Item #{idx}: shift duration must be at least 1 hour."})
+
+            if mode == "online":
+                if breaks or lunch_start_raw is not None or lunch_end_raw is not None:
+                    raise ValidationError({"days": f"Item #{idx}: breaks/lunch are allowed only for office mode."})
+            else:
+                self._validate_office_breaks_and_lunch(
+                    idx=idx,
+                    start_time=start_time,
+                    end_time=end_time,
+                    duration_hours=duration_hours,
+                    breaks=breaks,
+                    lunch_start_raw=lunch_start_raw,
+                    lunch_end_raw=lunch_end_raw,
+                )
 
             if mode == "office":
                 total_office += duration_hours
@@ -247,7 +270,7 @@ class WeeklyWorkPlan(models.Model):
         raise ValidationError({"days": f"Item #{idx}: date is required."})
 
     @staticmethod
-    def _parse_time(value, idx: int, field_name: str):
+    def _parse_time(value, idx: int, field_name: str, *, minute_step: int = 60):
         if isinstance(value, dt_time):
             parsed = value
         elif isinstance(value, str):
@@ -258,8 +281,12 @@ class WeeklyWorkPlan(models.Model):
         else:
             raise ValidationError({"days": f"Item #{idx}: {field_name} is required."})
 
-        if parsed.minute != 0 or parsed.second != 0 or parsed.microsecond != 0:
+        if parsed.second != 0 or parsed.microsecond != 0:
+            raise ValidationError({"days": f"Item #{idx}: {field_name} must be in HH:MM format."})
+        if minute_step == 60 and parsed.minute != 0:
             raise ValidationError({"days": f"Item #{idx}: {field_name} must be set in full hours (HH:00)."})
+        if minute_step != 60 and (parsed.minute % minute_step) != 0:
+            raise ValidationError({"days": f"Item #{idx}: {field_name} must use {minute_step}-minute slots."})
         return parsed
 
     @staticmethod
@@ -267,6 +294,85 @@ class WeeklyWorkPlan(models.Model):
         if day_date.weekday() < 5:
             return 9, 21
         return 11, 19
+
+    @staticmethod
+    def _to_minutes(value: dt_time):
+        return value.hour * 60 + value.minute
+
+    def _validate_office_breaks_and_lunch(
+        self,
+        *,
+        idx: int,
+        start_time: dt_time,
+        end_time: dt_time,
+        duration_hours: int,
+        breaks,
+        lunch_start_raw,
+        lunch_end_raw,
+    ):
+        if duration_hours < 7 and breaks:
+            raise ValidationError({"days": f"Item #{idx}: breaks are allowed only when office shift is 7+ hours."})
+        if duration_hours < 8 and (lunch_start_raw is not None or lunch_end_raw is not None):
+            raise ValidationError({"days": f"Item #{idx}: lunch is allowed only when office shift is 8+ hours."})
+
+        if (lunch_start_raw is None) != (lunch_end_raw is None):
+            raise ValidationError({"days": f"Item #{idx}: lunch_start and lunch_end must be set together."})
+
+        shift_start = self._to_minutes(start_time)
+        shift_end = self._to_minutes(end_time)
+        intervals = []
+
+        if breaks:
+            if not isinstance(breaks, list):
+                raise ValidationError({"days": f"Item #{idx}: breaks must be an array."})
+            if len(breaks) > 4:
+                raise ValidationError({"days": f"Item #{idx}: no more than 4 short breaks are allowed."})
+            for break_idx, break_item in enumerate(breaks, start=1):
+                if not isinstance(break_item, dict):
+                    raise ValidationError({"days": f"Item #{idx}: break #{break_idx} must be an object."})
+                b_start = self._parse_time(
+                    break_item.get("start_time"),
+                    idx,
+                    f"breaks[{break_idx}].start_time",
+                    minute_step=15,
+                )
+                b_end = self._parse_time(
+                    break_item.get("end_time"),
+                    idx,
+                    f"breaks[{break_idx}].end_time",
+                    minute_step=15,
+                )
+                b_start_m = self._to_minutes(b_start)
+                b_end_m = self._to_minutes(b_end)
+                if b_end_m <= b_start_m:
+                    raise ValidationError({"days": f"Item #{idx}: break #{break_idx} end must be after start."})
+                if (b_end_m - b_start_m) != 15:
+                    raise ValidationError({"days": f"Item #{idx}: each short break must be exactly 15 minutes."})
+                if b_start_m < shift_start or b_end_m > shift_end:
+                    raise ValidationError({"days": f"Item #{idx}: break #{break_idx} must be inside shift time."})
+                intervals.append((b_start_m, b_end_m, f"break #{break_idx}"))
+
+        if lunch_start_raw is not None and lunch_end_raw is not None:
+            lunch_start = self._parse_time(lunch_start_raw, idx, "lunch_start", minute_step=15)
+            lunch_end = self._parse_time(lunch_end_raw, idx, "lunch_end", minute_step=15)
+            lunch_start_m = self._to_minutes(lunch_start)
+            lunch_end_m = self._to_minutes(lunch_end)
+            if lunch_end_m <= lunch_start_m:
+                raise ValidationError({"days": f"Item #{idx}: lunch end must be after lunch start."})
+            if (lunch_end_m - lunch_start_m) != 60:
+                raise ValidationError({"days": f"Item #{idx}: lunch must be exactly 60 minutes."})
+            if lunch_start_m < shift_start or lunch_end_m > shift_end:
+                raise ValidationError({"days": f"Item #{idx}: lunch must be inside shift time."})
+            intervals.append((lunch_start_m, lunch_end_m, "lunch"))
+
+        intervals.sort(key=lambda row: row[0])
+        prev_end = None
+        prev_label = None
+        for start_m, end_m, label in intervals:
+            if prev_end is not None and start_m < prev_end:
+                raise ValidationError({"days": f"Item #{idx}: {label} overlaps with {prev_label}."})
+            prev_end = end_m
+            prev_label = label
 
     def save(self, *args, **kwargs):
         self.full_clean()

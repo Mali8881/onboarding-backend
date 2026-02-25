@@ -1,0 +1,17 @@
+﻿<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Переход в кабинет</title>
+</head>
+<body>
+  <p>Выполняется вход...</p>
+  <script>
+    localStorage.setItem('onboarding_access_token', '{{ access_token|escapejs }}');
+    localStorage.setItem('onboarding_landing', '{{ landing|escapejs }}');
+    localStorage.setItem('onboarding_role', '{{ role|escapejs }}');
+    window.location.replace('{{ target_url|default:"/admin/login/portal/"|escapejs }}');
+  </script>
+</body>
+</html>

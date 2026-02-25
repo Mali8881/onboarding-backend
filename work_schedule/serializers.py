@@ -58,6 +58,11 @@ class WorkScheduleMonthGenerateSerializer(serializers.Serializer):
     overwrite = serializers.BooleanField(required=False, default=False)
 
 
+class ShiftBreakSerializer(serializers.Serializer):
+    start_time = serializers.TimeField(format="%H:%M", input_formats=["%H:%M"])
+    end_time = serializers.TimeField(format="%H:%M", input_formats=["%H:%M"])
+
+
 class WeeklyWorkPlanUpsertSerializer(serializers.Serializer):
     class ShiftSerializer(serializers.Serializer):
         date = serializers.DateField()
@@ -65,6 +70,19 @@ class WeeklyWorkPlanUpsertSerializer(serializers.Serializer):
         end_time = serializers.TimeField(format="%H:%M", input_formats=["%H:%M"], required=False, allow_null=True)
         mode = serializers.ChoiceField(choices=("office", "online", "day_off"))
         comment = serializers.CharField(required=False, allow_blank=True)
+        breaks = ShiftBreakSerializer(many=True, required=False)
+        lunch_start = serializers.TimeField(
+            format="%H:%M",
+            input_formats=["%H:%M"],
+            required=False,
+            allow_null=True,
+        )
+        lunch_end = serializers.TimeField(
+            format="%H:%M",
+            input_formats=["%H:%M"],
+            required=False,
+            allow_null=True,
+        )
 
     week_start = serializers.DateField()
     days = ShiftSerializer(many=True)
@@ -102,9 +120,18 @@ class WeeklyWorkPlanUpsertSerializer(serializers.Serializer):
             mode = item["mode"]
             start_time = item.get("start_time")
             end_time = item.get("end_time")
+            breaks = item.get("breaks") or []
+            lunch_start = item.get("lunch_start")
+            lunch_end = item.get("lunch_end")
 
             if mode == "day_off":
-                if start_time is not None or end_time is not None:
+                if (
+                    start_time is not None
+                    or end_time is not None
+                    or breaks
+                    or lunch_start is not None
+                    or lunch_end is not None
+                ):
                     raise serializers.ValidationError({"days": f"Shift #{idx}: day_off must not contain start/end time."})
                 normalized_days.append(
                     {
@@ -113,6 +140,9 @@ class WeeklyWorkPlanUpsertSerializer(serializers.Serializer):
                         "end_time": None,
                         "mode": mode,
                         "comment": item.get("comment", ""),
+                        "breaks": [],
+                        "lunch_start": None,
+                        "lunch_end": None,
                     }
                 )
                 continue
@@ -137,6 +167,20 @@ class WeeklyWorkPlanUpsertSerializer(serializers.Serializer):
             if duration_hours <= 0:
                 raise serializers.ValidationError({"days": f"Shift #{idx}: duration must be at least 1 hour."})
 
+            if mode == "online":
+                if breaks or lunch_start is not None or lunch_end is not None:
+                    raise serializers.ValidationError({"days": f"Shift #{idx}: breaks/lunch are allowed only for office mode."})
+            else:
+                self._validate_office_breaks_and_lunch(
+                    idx=idx,
+                    start_time=start_time,
+                    end_time=end_time,
+                    duration_hours=duration_hours,
+                    breaks=breaks,
+                    lunch_start=lunch_start,
+                    lunch_end=lunch_end,
+                )
+
             if mode == "office":
                 total_office += duration_hours
             else:
@@ -149,6 +193,15 @@ class WeeklyWorkPlanUpsertSerializer(serializers.Serializer):
                     "end_time": end_time.strftime("%H:%M"),
                     "mode": mode,
                     "comment": item.get("comment", ""),
+                    "breaks": [
+                        {
+                            "start_time": break_item["start_time"].strftime("%H:%M"),
+                            "end_time": break_item["end_time"].strftime("%H:%M"),
+                        }
+                        for break_item in breaks
+                    ],
+                    "lunch_start": lunch_start.strftime("%H:%M") if lunch_start else None,
+                    "lunch_end": lunch_end.strftime("%H:%M") if lunch_end else None,
                 }
             )
 
@@ -172,6 +225,77 @@ class WeeklyWorkPlanUpsertSerializer(serializers.Serializer):
         if day_date.weekday() < 5:
             return 9, 21
         return 11, 19
+
+    @staticmethod
+    def _to_minutes(value):
+        return value.hour * 60 + value.minute
+
+    def _validate_office_breaks_and_lunch(
+        self,
+        *,
+        idx,
+        start_time,
+        end_time,
+        duration_hours,
+        breaks,
+        lunch_start,
+        lunch_end,
+    ):
+        if duration_hours < 7 and breaks:
+            raise serializers.ValidationError({"days": f"Shift #{idx}: breaks are allowed only when office shift is 7+ hours."})
+        if duration_hours < 8 and (lunch_start is not None or lunch_end is not None):
+            raise serializers.ValidationError({"days": f"Shift #{idx}: lunch is allowed only when office shift is 8+ hours."})
+
+        if (lunch_start is None) != (lunch_end is None):
+            raise serializers.ValidationError({"days": f"Shift #{idx}: lunch_start and lunch_end must be set together."})
+
+        shift_start = self._to_minutes(start_time)
+        shift_end = self._to_minutes(end_time)
+        intervals = []
+
+        if breaks:
+            if len(breaks) > 4:
+                raise serializers.ValidationError({"days": f"Shift #{idx}: no more than 4 short breaks are allowed."})
+            for break_idx, break_item in enumerate(breaks, start=1):
+                b_start = break_item["start_time"]
+                b_end = break_item["end_time"]
+                if b_start.second or b_end.second:
+                    raise serializers.ValidationError({"days": f"Shift #{idx}: break #{break_idx} must be in HH:MM format."})
+                if (b_start.minute % 15) != 0 or (b_end.minute % 15) != 0:
+                    raise serializers.ValidationError({"days": f"Shift #{idx}: break #{break_idx} must use 15-minute slots."})
+                b_start_m = self._to_minutes(b_start)
+                b_end_m = self._to_minutes(b_end)
+                if b_end_m <= b_start_m:
+                    raise serializers.ValidationError({"days": f"Shift #{idx}: break #{break_idx} end must be after start."})
+                if (b_end_m - b_start_m) != 15:
+                    raise serializers.ValidationError({"days": f"Shift #{idx}: each short break must be exactly 15 minutes."})
+                if b_start_m < shift_start or b_end_m > shift_end:
+                    raise serializers.ValidationError({"days": f"Shift #{idx}: break #{break_idx} must be inside shift time."})
+                intervals.append((b_start_m, b_end_m, f"break #{break_idx}"))
+
+        if lunch_start is not None and lunch_end is not None:
+            if lunch_start.second or lunch_end.second:
+                raise serializers.ValidationError({"days": f"Shift #{idx}: lunch must be in HH:MM format."})
+            if (lunch_start.minute % 15) != 0 or (lunch_end.minute % 15) != 0:
+                raise serializers.ValidationError({"days": f"Shift #{idx}: lunch must use 15-minute slots."})
+            lunch_start_m = self._to_minutes(lunch_start)
+            lunch_end_m = self._to_minutes(lunch_end)
+            if lunch_end_m <= lunch_start_m:
+                raise serializers.ValidationError({"days": f"Shift #{idx}: lunch end must be after lunch start."})
+            if (lunch_end_m - lunch_start_m) != 60:
+                raise serializers.ValidationError({"days": f"Shift #{idx}: lunch must be exactly 60 minutes."})
+            if lunch_start_m < shift_start or lunch_end_m > shift_end:
+                raise serializers.ValidationError({"days": f"Shift #{idx}: lunch must be inside shift time."})
+            intervals.append((lunch_start_m, lunch_end_m, "lunch"))
+
+        intervals.sort(key=lambda row: row[0])
+        prev_end = None
+        prev_label = None
+        for start_m, end_m, label in intervals:
+            if prev_end is not None and start_m < prev_end:
+                raise serializers.ValidationError({"days": f"Shift #{idx}: {label} overlaps with {prev_label}."})
+            prev_end = end_m
+            prev_label = label
 
 
 class WeeklyWorkPlanSerializer(serializers.ModelSerializer):

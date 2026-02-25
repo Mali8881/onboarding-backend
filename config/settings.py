@@ -276,7 +276,7 @@ if HAS_UNFOLD:
                         {
                             "title": "Графики работы",
                             "icon": "calendar_month",
-                            "link": "/admin/work_schedule/workschedule/",
+                            "link": "/admin/work_schedule",
                             "permission": _is_admin_like,
                         },
                         {
@@ -418,3 +418,4 @@ CSRF_COOKIE_SECURE = not DEBUG
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SAMESITE = "Lax"
 SESSION_COOKIE_SAMESITE = "Lax"
+

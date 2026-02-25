@@ -22,7 +22,11 @@ from .serializers import (
     WorkScheduleSelectSerializer,
     WorkScheduleSerializer,
 )
-from .services import generate_production_calendar_month, get_month_calendar
+from .services import (
+    ensure_user_schedule_for_approved_weekly_plan,
+    generate_production_calendar_month,
+    get_month_calendar,
+)
 
 
 class WorkScheduleListAPIView(APIView):
@@ -358,6 +362,8 @@ class WeeklyWorkPlanAdminDecisionAPIView(APIView):
         plan.reviewed_by = request.user
         plan.reviewed_at = timezone.now()
         plan.save(update_fields=["status", "admin_comment", "reviewed_by", "reviewed_at", "updated_at"])
+        if action == "approve":
+            ensure_user_schedule_for_approved_weekly_plan(plan)
 
         WorkScheduleAuditService.log_weekly_plan_decision(request, plan, action=action)
         return Response(WeeklyWorkPlanSerializer(plan).data, status=status.HTTP_200_OK)

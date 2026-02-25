@@ -1,5 +1,6 @@
 import calendar
 from datetime import date
+from datetime import time as dt_time
 
 from .models import WorkSchedule, ProductionCalendar, UserWorkSchedule
 
@@ -116,3 +117,80 @@ def generate_production_calendar_month(year: int, month: int, overwrite: bool = 
                 updated += 1
 
     return created, updated
+
+
+def ensure_user_schedule_for_approved_weekly_plan(plan):
+    """
+    Ensure approved weekly plan is reflected in UserWorkSchedule list.
+    Returns tuple: (assignment, assignment_created, schedule_created)
+    """
+    assignment = UserWorkSchedule.objects.filter(user=plan.user).select_related("schedule").first()
+    if assignment:
+        changed_fields = []
+        if not assignment.approved:
+            assignment.approved = True
+            changed_fields.append("approved")
+        if changed_fields:
+            assignment.save(update_fields=changed_fields)
+        return assignment, False, False
+
+    schedule = WorkSchedule.objects.filter(is_active=True, is_default=True).first()
+    schedule_created = False
+
+    if not schedule:
+        schedule = WorkSchedule.objects.filter(is_active=True).order_by("id").first()
+
+    if not schedule:
+        schedule = _build_schedule_from_weekly_plan(plan)
+        schedule_created = True
+
+    assignment = UserWorkSchedule.objects.create(
+        user=plan.user,
+        schedule=schedule,
+        approved=True,
+    )
+    return assignment, True, schedule_created
+
+
+def _build_schedule_from_weekly_plan(plan):
+    work_days = set()
+    start_candidates = []
+    end_candidates = []
+
+    for item in plan.days or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("mode") == "day_off":
+            continue
+        day_raw = item.get("date")
+        start_raw = item.get("start_time")
+        end_raw = item.get("end_time")
+        if not day_raw or not start_raw or not end_raw:
+            continue
+        try:
+            day = day_raw if isinstance(day_raw, date) else date.fromisoformat(str(day_raw))
+            start = start_raw if isinstance(start_raw, dt_time) else dt_time.fromisoformat(str(start_raw))
+            end = end_raw if isinstance(end_raw, dt_time) else dt_time.fromisoformat(str(end_raw))
+        except ValueError:
+            continue
+        work_days.add(day.weekday())
+        start_candidates.append(start)
+        end_candidates.append(end)
+
+    if not work_days:
+        work_days = {0, 1, 2, 3, 4}
+    if not start_candidates:
+        start_candidates = [dt_time(hour=9, minute=0)]
+    if not end_candidates:
+        end_candidates = [dt_time(hour=18, minute=0)]
+
+    return WorkSchedule.objects.create(
+        name=f"Auto schedule {plan.user.username} {plan.week_start.isoformat()}",
+        work_days=sorted(work_days),
+        start_time=min(start_candidates),
+        end_time=max(end_candidates),
+        break_start=None,
+        break_end=None,
+        is_default=False,
+        is_active=True,
+    )
