@@ -35,14 +35,16 @@ class Role(models.Model):
     class Name(models.TextChoices):
         SUPER_ADMIN = "SUPER_ADMIN", "SuperAdmin"
         ADMIN = "ADMIN", "Admin"
+        TEAMLEAD = "TEAMLEAD", "TeamLead"
         EMPLOYEE = "EMPLOYEE", "Employee"
         INTERN = "INTERN", "Intern"
 
     class Level(models.IntegerChoices):
         INTERN = 10, "Intern"
         EMPLOYEE = 20, "Employee"
-        ADMIN = 30, "Admin"
-        SUPER_ADMIN = 40, "SuperAdmin"
+        TEAMLEAD = 30, "TeamLead"
+        ADMIN = 40, "Admin"
+        SUPER_ADMIN = 50, "SuperAdmin"
 
     name = models.CharField("Название", max_length=50, unique=True)
     level = models.PositiveSmallIntegerField(
@@ -184,7 +186,9 @@ class User(AbstractUser):
     def can_manage_team(self) -> bool:
         if self.is_admin_like:
             return True
-        return self.team_members.exists()
+        if not self.role_id:
+            return False
+        return self.role.name == Role.Name.TEAMLEAD
 
 
 # ================= Security =================

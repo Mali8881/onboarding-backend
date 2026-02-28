@@ -1,5 +1,7 @@
 from rest_framework import serializers
 from .models import User, Role, Department, Position
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 
 
 # =========================
@@ -53,6 +55,24 @@ class PasswordResetRequestSerializer(serializers.Serializer):
 class PasswordResetConfirmSerializer(serializers.Serializer):
     token = serializers.UUIDField()
     new_password = serializers.CharField(write_only=True)
+
+
+class PasswordChangeSerializer(serializers.Serializer):
+    current_password = serializers.CharField(write_only=True)
+    new_password = serializers.CharField(write_only=True)
+    new_password_confirm = serializers.CharField(write_only=True)
+
+    def validate(self, attrs):
+        user = self.context["request"].user
+        if not user.check_password(attrs["current_password"]):
+            raise serializers.ValidationError({"current_password": "Current password is incorrect."})
+        if attrs["new_password"] != attrs["new_password_confirm"]:
+            raise serializers.ValidationError({"new_password_confirm": "Passwords do not match."})
+        try:
+            validate_password(attrs["new_password"], user)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({"new_password": list(exc.messages)})
+        return attrs
 
 
 # =========================

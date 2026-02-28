@@ -1,5 +1,6 @@
 ﻿from django.contrib import admin
 from django.urls import include, path, re_path
+from django.views.generic import RedirectView
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
@@ -7,20 +8,32 @@ from .admin_views import (
     attendance_checkin_page,
     content_dashboard,
     onboarding_dashboard,
+    unified_admin_login,
     work_schedule_board_page,
 )
-from .spa_views import spa_asset, spa_index, spa_vite_icon
+from .health import health_check
+from .spa_views import spa_asset, spa_index, spa_portal, spa_vite_icon
 
 admin.site.site_header = "HRM Администрирование"
 admin.site.site_title = "Админ-панель HRM"
 admin.site.index_title = "Управление системой"
 
 urlpatterns = [
+    path("health/", health_check, name="health"),
     path("ckeditor5/", include("django_ckeditor_5.urls")),
-    path("admin/onboarding/", onboarding_dashboard, name="admin-onboarding-dashboard"),
-    path("admin/content/", content_dashboard, name="admin-content-dashboard"),
-    path("admin/attendance/check-in/", attendance_checkin_page, name="admin-attendance-checkin-page"),
-    path("admin/", admin.site.urls),
+
+    # Unified web login: all roles enter only via /admin
+    path("admin/login/portal/", spa_portal, name="admin-login-portal"),
+    path("admin/login/", unified_admin_login, name="admin-login"),
+    path("admin/", unified_admin_login, name="admin-root"),
+
+    # Keep Django admin available on a separate technical path.
+    path("admin/panel/onboarding/", onboarding_dashboard, name="admin-onboarding-dashboard"),
+    path("admin/panel/content/", content_dashboard, name="admin-content-dashboard"),
+    path("admin/panel/attendance/check-in/", attendance_checkin_page, name="admin-attendance-checkin-page"),
+    path("admin/panel/work-schedule-board/", work_schedule_board_page, name="admin-work-schedule-board"),
+    path("admin/panel/login/", RedirectView.as_view(url="/admin/login/", permanent=False), name="admin-panel-login-redirect"),
+    path("admin/panel/", admin.site.urls),
 
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
@@ -38,9 +51,20 @@ urlpatterns = [
     path("api/v1/attendance/", include("apps.attendance.urls")),
     path("api/v1/tasks/", include("apps.tasks.urls")),
     path("api/v1/payroll/", include("apps.payroll.urls")),
+    path("api/v1/kb/", include("apps.kb.urls")),
+    path("api/v1/metrics/", include("apps.metrics.urls")),
+    path("api/v1/bpm/", include("apps.bpm.urls")),
     path("api/", include("work_schedule.urls")),
+
     path("assets/<path:asset_path>", spa_asset, name="spa-asset"),
     path("vite.svg", spa_vite_icon, name="spa-vite-icon"),
-    path("", spa_index, name="spa-index"),
-    re_path(r"^(?!admin/|api/|ckeditor5/|media/|static/).*$", spa_index, name="spa-catch-all"),
+
+    # Remove direct web entrypoints outside /admin
+    path("", RedirectView.as_view(url="/admin/", permanent=False), name="spa-index"),
+    re_path(
+        r"^(?!admin/|api/|ckeditor5/|media/|static/|assets/|vite\.svg$).*$",
+        RedirectView.as_view(url="/admin/", permanent=False),
+        name="spa-catch-all",
+    ),
 ]
+

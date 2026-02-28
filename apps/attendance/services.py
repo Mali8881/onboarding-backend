@@ -74,7 +74,7 @@ def attendance_table_queryset(actor, *, include_all_for_admin: bool = True):
         return User.objects.filter(is_active=True).exclude(role__name=Role.Name.SUPER_ADMIN).select_related(
             "position", "department", "role"
         )
-    if actor.team_members.exists():
+    if AccessPolicy.is_teamlead(actor):
         return actor.team_members.filter(is_active=True).exclude(role__name=Role.Name.SUPER_ADMIN).select_related(
             "position", "department", "role"
         )

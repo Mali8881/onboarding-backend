@@ -3,6 +3,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.http import FileResponse, Http404, HttpResponse
+from django.shortcuts import redirect
 
 
 FRONTEND_DIST_DIR = Path(settings.BASE_DIR) / "frontend" / "dist"
@@ -14,6 +15,12 @@ def spa_index(request):
     if not index_path.exists():
         raise Http404("Frontend build not found. Run `npm run build` in frontend/.")
     return HttpResponse(index_path.read_text(encoding="utf-8"), content_type="text/html; charset=utf-8")
+
+
+def spa_portal(request):
+    if not request.user.is_authenticated:
+        return redirect("/admin/login/")
+    return spa_index(request)
 
 
 def spa_asset(request, asset_path: str):

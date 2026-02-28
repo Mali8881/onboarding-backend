@@ -1,4 +1,4 @@
-from django.conf import settings
+﻿from django.conf import settings
 from django.utils import timezone
 
 
@@ -13,61 +13,66 @@ class OnboardingDay(models.Model):
 
     day_number = models.PositiveIntegerField(
         unique=True,
-        verbose_name="Номер дня"
+        verbose_name="РќРѕРјРµСЂ РґРЅСЏ"
     )
 
     title = models.CharField(
         max_length=255,
-        verbose_name="Название дня"
+        verbose_name="РќР°Р·РІР°РЅРёРµ РґРЅСЏ"
     )
 
     goals = models.TextField(
         blank=True,
-        verbose_name="Цели дня"
+        verbose_name="Р¦РµР»Рё РґРЅСЏ"
     )
 
     description = models.TextField(
         blank=True,
-        verbose_name="Описание дня"
+        verbose_name="РћРїРёСЃР°РЅРёРµ РґРЅСЏ"
     )
 
     instructions = models.TextField(
         blank=True,
-        verbose_name="Инструкции"
+        verbose_name="РРЅСЃС‚СЂСѓРєС†РёРё"
     )
 
-    # дедлайн без даты — строго по ТЗ
+    # РґРµРґР»Р°Р№РЅ Р±РµР· РґР°С‚С‹ вЂ” СЃС‚СЂРѕРіРѕ РїРѕ РўР—
     deadline_time = models.TimeField(
         null=True,
         blank=True,
-        verbose_name="Дедлайн (ЧЧ:ММ)"
+        verbose_name="Р”РµРґР»Р°Р№РЅ (Р§Р§:РњРњ)"
     )
 
-    # связь с регламентами
+    # СЃРІСЏР·СЊ СЃ СЂРµРіР»Р°РјРµРЅС‚Р°РјРё
     regulations = models.ManyToManyField(
         "regulations.Regulation",
         blank=True,
         related_name="onboarding_days",
-        verbose_name="Регламенты"
+        verbose_name="Р РµРіР»Р°РјРµРЅС‚С‹"
     )
 
     is_active = models.BooleanField(
         default=True,
-        verbose_name="Активен"
+        verbose_name="РђРєС‚РёРІРµРЅ"
     )
 
     position = models.PositiveIntegerField(
         default=0,
-        verbose_name="Порядок отображения"
+        verbose_name="РџРѕСЂСЏРґРѕРє РѕС‚РѕР±СЂР°Р¶РµРЅРёСЏ"
+    )
+    task_templates = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name="Task templates",
     )
 
     class Meta:
         ordering = ["position", "day_number"]
-        verbose_name = "День онбординга"
-        verbose_name_plural = "Дни онбординга"
+        verbose_name = "Р”РµРЅСЊ РѕРЅР±РѕСЂРґРёРЅРіР°"
+        verbose_name_plural = "Р”РЅРё РѕРЅР±РѕСЂРґРёРЅРіР°"
 
     def __str__(self):
-        return f"День {self.day_number}: {self.title}"
+        return f"Р”РµРЅСЊ {self.day_number}: {self.title}"
 
 class OnboardingMaterial(models.Model):
     class MaterialType(models.TextChoices):
@@ -100,8 +105,8 @@ class OnboardingMaterial(models.Model):
     class Meta:
         ordering = ["position"]
         unique_together = ("day", "position")
-        verbose_name = "Материал онбординга"
-        verbose_name_plural = "Материалы онбординга"
+        verbose_name = "РњР°С‚РµСЂРёР°Р» РѕРЅР±РѕСЂРґРёРЅРіР°"
+        verbose_name_plural = "РњР°С‚РµСЂРёР°Р»С‹ РѕРЅР±РѕСЂРґРёРЅРіР°"
 
     def __str__(self):
         return f"{self.day} - {self.type}"
@@ -146,8 +151,8 @@ class OnboardingProgress(models.Model):
     class Meta:
         unique_together = ("user", "day")
         ordering = ["day__position", "day__day_number"]
-        verbose_name = "Прогресс онбординга"
-        verbose_name_plural = "Прогресс онбординга"
+        verbose_name = "РџСЂРѕРіСЂРµСЃСЃ РѕРЅР±РѕСЂРґРёРЅРіР°"
+        verbose_name_plural = "РџСЂРѕРіСЂРµСЃСЃ РѕРЅР±РѕСЂРґРёРЅРіР°"
 
     def mark_done(self):
         self.status = self.Status.DONE

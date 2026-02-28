@@ -75,6 +75,9 @@ INSTALLED_APPS = [
     "apps.attendance.apps.AttendanceConfig",
     "apps.tasks.apps.TasksConfig",
     "apps.payroll.apps.PayrollConfig",
+    "apps.kb.apps.KbConfig",
+    "apps.metrics.apps.MetricsConfig",
+    "apps.bpm.apps.BpmConfig",
 ]
 
 if HAS_UNFOLD:
@@ -187,7 +190,7 @@ if HAS_UNFOLD:
             return False
         role = getattr(user, "role", None)
         role_name = getattr(role, "name", "")
-        return role_name == "EMPLOYEE"
+        return role_name in {"EMPLOYEE", "TEAMLEAD"}
 
     UNFOLD = {
         "SITE_TITLE": "HRM Админ-панель",

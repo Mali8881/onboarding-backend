@@ -2,7 +2,7 @@
 from datetime import timedelta
 
 from django.contrib.admin.views.decorators import staff_member_required
-from django.contrib.auth import authenticate
+from django.contrib.auth import authenticate, login as auth_login
 from django.db.models import Count
 from django.shortcuts import redirect, render
 from django.urls import reverse
@@ -39,6 +39,8 @@ def _landing_for(user):
         return "admin_panel"
     if role_name == Role.Name.INTERN:
         return "intern_portal"
+    if role_name == Role.Name.TEAMLEAD:
+        return "teamlead_portal"
     return "employee_portal"
 
 
@@ -133,6 +135,7 @@ def unified_admin_login(request):
     user.failed_login_attempts = 0
     user.lockout_until = None
     user.save(update_fields=["failed_login_attempts", "lockout_until"])
+    auth_login(request, user, backend="django.contrib.auth.backends.ModelBackend")
 
     LoginHistory.objects.create(
         user=user,

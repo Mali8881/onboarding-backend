@@ -1,11 +1,15 @@
+from datetime import timedelta
 from unittest.mock import patch
 
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from accounts.models import Role, User
+from work_schedule.models import WeeklyWorkPlan
 
 from .models import Column, Task
+from .views import MANDATORY_WEEKLY_PLAN_TASK_TITLE
 
 
 class TasksApiTests(TestCase):
@@ -15,6 +19,10 @@ class TasksApiTests(TestCase):
             name=Role.Name.EMPLOYEE,
             defaults={"level": Role.Level.EMPLOYEE},
         )
+        self.teamlead_role, _ = Role.objects.get_or_create(
+            name=Role.Name.TEAMLEAD,
+            defaults={"level": Role.Level.TEAMLEAD},
+        )
         self.admin_role, _ = Role.objects.get_or_create(
             name=Role.Name.ADMIN,
             defaults={"level": Role.Level.ADMIN},
@@ -23,7 +31,7 @@ class TasksApiTests(TestCase):
         self.lead = User.objects.create_user(
             username="lead_task",
             password="StrongPass123!",
-            role=self.employee_role,
+            role=self.teamlead_role,
         )
         self.subordinate = User.objects.create_user(
             username="sub_task",
@@ -86,8 +94,8 @@ class TasksApiTests(TestCase):
         self.client.force_authenticate(user=self.subordinate)
         response = self.client.get("/api/v1/tasks/my/")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.data), 1)
-        self.assertEqual(response.data[0]["id"], task1.id)
+        returned_ids = {item["id"] for item in response.data}
+        self.assertIn(task1.id, returned_ids)
 
     def test_team_endpoint_for_lead_returns_subordinates_tasks(self):
         task = Task.objects.create(
@@ -107,8 +115,8 @@ class TasksApiTests(TestCase):
         self.client.force_authenticate(user=self.lead)
         response = self.client.get("/api/v1/tasks/team/")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.data), 1)
-        self.assertEqual(response.data[0]["id"], task.id)
+        returned_ids = {item["id"] for item in response.data}
+        self.assertIn(task.id, returned_ids)
 
     @patch("apps.tasks.views.TasksAuditService.log_task_moved")
     def test_move_task_logs_audit(self, log_task_moved):
@@ -137,4 +145,50 @@ class TasksApiTests(TestCase):
     def _get_new_column(self, user):
         board = self._create_default_board(user)
         return board.columns.order_by("order").first()
+
+    def _next_monday(self):
+        today = timezone.localdate()
+        days_ahead = (7 - today.weekday()) % 7
+        return today + timedelta(days=days_ahead or 7)
+
+    def _empty_week_days(self, monday):
+        return [
+            {
+                "date": (monday + timedelta(days=i)).isoformat(),
+                "mode": "day_off",
+            }
+            for i in range(7)
+        ]
+
+    def test_team_endpoint_creates_weekly_plan_task_if_missing(self):
+        self.client.force_authenticate(user=self.lead)
+        response = self.client.get("/api/v1/tasks/team/")
+        self.assertEqual(response.status_code, 200)
+        task = Task.objects.filter(
+            assignee=self.subordinate,
+            title=MANDATORY_WEEKLY_PLAN_TASK_TITLE,
+            due_date=self._next_monday(),
+        ).first()
+        self.assertIsNotNone(task)
+
+    def test_team_endpoint_does_not_create_weekly_plan_task_if_plan_exists(self):
+        next_monday = self._next_monday()
+        WeeklyWorkPlan.objects.create(
+            user=self.subordinate,
+            week_start=next_monday,
+            days=self._empty_week_days(next_monday),
+            office_hours=0,
+            online_hours=0,
+            online_reason="n/a",
+        )
+        self.client.force_authenticate(user=self.lead)
+        response = self.client.get("/api/v1/tasks/team/")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(
+            Task.objects.filter(
+                assignee=self.subordinate,
+                title=MANDATORY_WEEKLY_PLAN_TASK_TITLE,
+                due_date=next_monday,
+            ).exists()
+        )
 

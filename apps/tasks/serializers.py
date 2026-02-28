@@ -25,6 +25,7 @@ class TaskSerializer(serializers.ModelSerializer):
             "reporter_username",
             "due_date",
             "priority",
+            "onboarding_day",
             "created_at",
             "updated_at",
         )
@@ -35,6 +36,7 @@ class TaskCreateSerializer(serializers.Serializer):
     title = serializers.CharField(max_length=255)
     description = serializers.CharField(required=False, allow_blank=True)
     assignee_id = serializers.IntegerField()
+    onboarding_day_id = serializers.UUIDField(required=False, allow_null=True)
     due_date = serializers.DateField(required=False, allow_null=True)
     priority = serializers.ChoiceField(choices=Task.Priority.choices, default=Task.Priority.MEDIUM)
 

@@ -5,13 +5,13 @@ from accounts.models import Role, User
 
 
 class Command(BaseCommand):
-    help = "Оставляет только 4 системные роли и переносит пользователей с лишних ролей на EMPLOYEE."
+    help = "Оставляет только системные роли и переносит пользователей с лишних ролей на EMPLOYEE."
 
     def add_arguments(self, parser):
         parser.add_argument(
             "--fallback-role",
             default=Role.Name.EMPLOYEE,
-            choices=[Role.Name.EMPLOYEE, Role.Name.INTERN, Role.Name.ADMIN, Role.Name.SUPER_ADMIN],
+            choices=[Role.Name.EMPLOYEE, Role.Name.INTERN, Role.Name.TEAMLEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN],
             help="Роль, в которую будут перенесены пользователи с удаляемых ролей.",
         )
         parser.add_argument(
@@ -25,6 +25,7 @@ class Command(BaseCommand):
         allowed = {
             Role.Name.SUPER_ADMIN: Role.Level.SUPER_ADMIN,
             Role.Name.ADMIN: Role.Level.ADMIN,
+            Role.Name.TEAMLEAD: Role.Level.TEAMLEAD,
             Role.Name.EMPLOYEE: Role.Level.EMPLOYEE,
             Role.Name.INTERN: Role.Level.INTERN,
         }
