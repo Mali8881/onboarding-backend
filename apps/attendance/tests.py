@@ -1,16 +1,14 @@
 from datetime import date, timedelta
-import ipaddress
 from unittest.mock import patch
 
-from django.test import override_settings
 from django.test import TestCase
 from django.core.management import call_command
 from rest_framework.test import APIClient
 
 from accounts.models import Role, User
-from work_schedule.models import ProductionCalendar
+from work_schedule.models import ProductionCalendar, WeeklyWorkPlan
 
-from .models import AttendanceMark, AttendanceSession, WorkCalendarDay
+from .models import AttendanceMark, AttendanceSession, OfficeNetwork, WorkCalendarDay
 
 
 class AttendanceApiTests(TestCase):
@@ -50,6 +48,65 @@ class AttendanceApiTests(TestCase):
             username="admin_att",
             password="StrongPass123!",
             role=self.admin_role,
+        )
+        self.super_admin_role, _ = Role.objects.get_or_create(
+            name=Role.Name.SUPER_ADMIN,
+            defaults={"level": Role.Level.SUPER_ADMIN},
+        )
+        self.super_admin = User.objects.create_user(
+            username="super_admin_att",
+            password="StrongPass123!",
+            role=self.super_admin_role,
+        )
+
+    def _create_approved_plan_for_today(self, *, mode_for_today: str):
+        today = date.today()
+        week_start = today - timedelta(days=today.weekday())
+        days = []
+        for i in range(7):
+            day_date = week_start + timedelta(days=i)
+            if day_date.weekday() < 5:
+                mode = "office"
+                if day_date == today:
+                    mode = mode_for_today
+                days.append(
+                    {
+                        "date": day_date.isoformat(),
+                        "mode": mode,
+                        "start_time": "10:00",
+                        "end_time": "18:00",
+                        "comment": "",
+                    }
+                )
+            else:
+                if day_date == today:
+                    days.append(
+                        {
+                            "date": day_date.isoformat(),
+                            "mode": mode_for_today,
+                            "start_time": "11:00",
+                            "end_time": "17:00",
+                            "comment": "",
+                        }
+                    )
+                else:
+                    days.append(
+                        {
+                            "date": day_date.isoformat(),
+                            "mode": "day_off",
+                            "comment": "",
+                        }
+                    )
+
+        WeeklyWorkPlan.objects.update_or_create(
+            user=self.subordinate,
+            week_start=week_start,
+            defaults={
+                "days": days,
+                "status": WeeklyWorkPlan.Status.APPROVED,
+                "online_reason": "",
+                "employee_comment": "",
+            },
         )
 
     @patch("apps.attendance.views.AttendanceAuditService.log_mark_created")
@@ -279,23 +336,21 @@ class AttendanceApiTests(TestCase):
             31,
         )
 
-    @override_settings(
-        OFFICE_GEOFENCE_LATITUDE=42.874621,
-        OFFICE_GEOFENCE_LONGITUDE=74.569762,
-        OFFICE_GEOFENCE_RADIUS_M=150,
-    )
     @patch("apps.attendance.views.AttendanceAuditService.log_office_checkin_in_office")
     def test_check_in_in_office_creates_session_and_mark(self, log_in_office):
+        self._create_approved_plan_for_today(mode_for_today="office")
+        OfficeNetwork.objects.create(name="HQ", cidr="192.168.10.0/24", is_active=True)
         self.client.force_authenticate(user=self.subordinate)
         response = self.client.post(
             "/api/v1/attendance/check-in/",
-            {"latitude": 42.874621, "longitude": 74.569762, "accuracy_m": 20},
+            {"work_mode": "office"},
             format="json",
+            HTTP_X_FORWARDED_FOR="192.168.10.55",
         )
         self.assertEqual(response.status_code, 201)
         self.assertTrue(response.data["in_office"])
         self.assertTrue(response.data["status"] == "IN_OFFICE")
-        self.assertFalse(response.data["ip_valid"])
+        self.assertTrue(response.data["ip_valid"])
         self.assertEqual(response.data["result"], "IN_OFFICE")
         self.assertTrue(
             AttendanceMark.objects.filter(
@@ -307,55 +362,44 @@ class AttendanceApiTests(TestCase):
         self.assertEqual(AttendanceSession.objects.filter(user=self.subordinate).count(), 1)
         log_in_office.assert_called_once()
 
-    @override_settings(
-        OFFICE_GEOFENCE_LATITUDE=42.874621,
-        OFFICE_GEOFENCE_LONGITUDE=74.569762,
-        OFFICE_GEOFENCE_RADIUS_M=150,
-    )
     @patch("apps.attendance.views.AttendanceAuditService.log_office_checkin_outside")
-    def test_check_in_outside_creates_session_without_mark(self, log_outside):
+    def test_check_in_outside_returns_403_and_does_not_mark_attendance(self, log_outside):
+        self._create_approved_plan_for_today(mode_for_today="office")
+        OfficeNetwork.objects.create(name="HQ", cidr="192.168.10.0/24", is_active=True)
         self.client.force_authenticate(user=self.subordinate)
         response = self.client.post(
             "/api/v1/attendance/check-in/",
-            {"latitude": 42.900000, "longitude": 74.600000},
+            {"work_mode": "office"},
             format="json",
+            HTTP_X_FORWARDED_FOR="203.0.113.42",
         )
-        self.assertEqual(response.status_code, 201)
-        self.assertFalse(response.data["in_office"])
-        self.assertEqual(response.data["status"], "OUT_OF_OFFICE")
-        self.assertEqual(response.data["result"], "OUTSIDE_GEOFENCE")
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("detail", response.data)
         self.assertFalse(
             AttendanceMark.objects.filter(user=self.subordinate, date=date.today()).exists()
         )
         self.assertEqual(AttendanceSession.objects.filter(user=self.subordinate).count(), 1)
         log_outside.assert_called_once()
 
-    @override_settings(
-        OFFICE_GEOFENCE_LATITUDE=None,
-        OFFICE_GEOFENCE_LONGITUDE=None,
-        OFFICE_GEOFENCE_RADIUS_M=150,
-    )
-    def test_check_in_returns_503_when_geofence_not_configured(self):
+    def test_check_in_returns_403_when_office_ip_networks_do_not_match(self):
+        self._create_approved_plan_for_today(mode_for_today="office")
         self.client.force_authenticate(user=self.subordinate)
         response = self.client.post(
             "/api/v1/attendance/check-in/",
-            {"latitude": 42.874621, "longitude": 74.569762},
+            {"work_mode": "office"},
             format="json",
+            HTTP_X_FORWARDED_FOR="192.168.10.55",
         )
-        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.status_code, 403)
 
-    @override_settings(
-        OFFICE_GEOFENCE_LATITUDE=42.874621,
-        OFFICE_GEOFENCE_LONGITUDE=74.569762,
-        OFFICE_GEOFENCE_RADIUS_M=150,
-        OFFICE_IP_NETWORKS=[ipaddress.ip_network("192.168.10.0/24")],
-    )
     @patch("apps.attendance.views.AttendanceAuditService.log_office_checkin_in_office")
     def test_check_in_in_office_by_ip_network(self, log_in_office):
+        self._create_approved_plan_for_today(mode_for_today="office")
+        OfficeNetwork.objects.create(name="HQ", cidr="192.168.10.0/24", is_active=True)
         self.client.force_authenticate(user=self.subordinate)
         response = self.client.post(
             "/api/v1/attendance/check-in/",
-            {"latitude": 42.900000, "longitude": 74.600000},
+            {"work_mode": "office"},
             format="json",
             HTTP_X_FORWARDED_FOR="192.168.10.55",
         )
@@ -363,4 +407,71 @@ class AttendanceApiTests(TestCase):
         self.assertTrue(response.data["in_office"])
         self.assertTrue(response.data["ip_valid"])
         self.assertEqual(response.data["status"], "IN_OFFICE")
+        log_in_office.assert_called_once()
+
+    def test_online_check_in_requires_schedule_and_sets_remote_mark(self):
+        self._create_approved_plan_for_today(mode_for_today="online")
+        self.client.force_authenticate(user=self.subordinate)
+        response = self.client.post("/api/v1/attendance/check-in/", {"work_mode": "online"}, format="json")
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["status"], "ONLINE")
+        self.assertFalse(response.data["in_office"])
+        self.assertTrue(
+            AttendanceMark.objects.filter(
+                user=self.subordinate,
+                date=date.today(),
+                status=AttendanceMark.Status.REMOTE,
+            ).exists()
+        )
+
+    def test_check_in_rejects_when_mode_mismatches_schedule(self):
+        self._create_approved_plan_for_today(mode_for_today="online")
+        self.client.force_authenticate(user=self.subordinate)
+        response = self.client.post(
+            "/api/v1/attendance/check-in/",
+            {"work_mode": "office"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 409)
+
+    def test_superadmin_can_manage_office_networks_via_api(self):
+        self.client.force_authenticate(user=self.super_admin)
+        created = self.client.post(
+            "/api/v1/attendance/admin/office-networks/",
+            {"name": "HQ", "cidr": "192.168.50.0/24", "is_active": True},
+            format="json",
+        )
+        self.assertEqual(created.status_code, 201)
+        network_id = created.data["id"]
+
+        listed = self.client.get("/api/v1/attendance/admin/office-networks/")
+        self.assertEqual(listed.status_code, 200)
+        self.assertGreaterEqual(len(listed.data), 1)
+
+        patched = self.client.patch(
+            f"/api/v1/attendance/admin/office-networks/{network_id}/",
+            {"is_active": False},
+            format="json",
+        )
+        self.assertEqual(patched.status_code, 200)
+        self.assertFalse(patched.data["is_active"])
+
+    def test_admin_cannot_manage_office_networks_via_api(self):
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.get("/api/v1/attendance/admin/office-networks/")
+        self.assertEqual(response.status_code, 403)
+
+    @patch("apps.attendance.views.AttendanceAuditService.log_office_checkin_in_office")
+    def test_check_in_uses_database_office_network_whitelist(self, log_in_office):
+        self._create_approved_plan_for_today(mode_for_today="office")
+        OfficeNetwork.objects.create(name="HQ DB", cidr="10.10.10.0/24", is_active=True)
+        self.client.force_authenticate(user=self.subordinate)
+        response = self.client.post(
+            "/api/v1/attendance/check-in/",
+            {"work_mode": "office"},
+            format="json",
+            HTTP_X_FORWARDED_FOR="10.10.10.55",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(response.data["ip_valid"])
         log_in_office.assert_called_once()

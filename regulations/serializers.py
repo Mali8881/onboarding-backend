@@ -1,3 +1,4 @@
+﻿from django.utils import timezone
 from rest_framework import serializers
 
 from .models import (
@@ -5,6 +6,11 @@ from .models import (
     Regulation,
     RegulationAcknowledgement,
     RegulationFeedback,
+    RegulationReadReport,
+    RegulationQuiz,
+    RegulationQuizAttempt,
+    RegulationQuizOption,
+    RegulationQuizQuestion,
     RegulationReadProgress,
 )
 
@@ -14,6 +20,11 @@ class RegulationSerializer(serializers.ModelSerializer):
     action = serializers.SerializerMethodField()
     is_acknowledged = serializers.SerializerMethodField()
     acknowledged_at = serializers.SerializerMethodField()
+    is_overdue = serializers.SerializerMethodField()
+    quiz_required = serializers.SerializerMethodField()
+    quiz_passed = serializers.SerializerMethodField()
+    report_required_today = serializers.SerializerMethodField()
+    report_submitted_today = serializers.SerializerMethodField()
 
     class Meta:
         model = Regulation
@@ -25,6 +36,12 @@ class RegulationSerializer(serializers.ModelSerializer):
             "content",
             "action",
             "is_mandatory_on_day_one",
+            "read_deadline_at",
+            "is_overdue",
+            "quiz_required",
+            "quiz_passed",
+            "report_required_today",
+            "report_submitted_today",
             "is_acknowledged",
             "acknowledged_at",
             "position",
@@ -38,9 +55,8 @@ class RegulationSerializer(serializers.ModelSerializer):
         return None
 
     def get_action(self, obj):
-        if obj.type == Regulation.RegulationType.LINK:
-            return "open"
-        return "download"
+        # File can also be opened by URL in browser; keep action unified for frontend.
+        return "open"
 
     def _ack(self, obj):
         request = self.context.get("request")
@@ -63,6 +79,49 @@ class RegulationSerializer(serializers.ModelSerializer):
         ack = self._ack(obj)
         return ack.acknowledged_at if ack else None
 
+    def get_is_overdue(self, obj):
+        if not obj.read_deadline_at:
+            return False
+        request = self.context.get("request")
+        if not request or not request.user.is_authenticated:
+            return False
+
+        progress_map = self.context.get("read_progress_map") or {}
+        progress = progress_map.get(obj.id)
+        if progress and progress.is_read:
+            return False
+        return timezone.now() > obj.read_deadline_at
+
+    def get_quiz_required(self, obj):
+        quiz_required_map = self.context.get("quiz_required_map")
+        if quiz_required_map is not None:
+            return bool(quiz_required_map.get(obj.id, False))
+        return RegulationQuiz.objects.filter(regulation=obj, is_active=True).exists()
+
+    def get_quiz_passed(self, obj):
+        request = self.context.get("request")
+        if not request or not request.user.is_authenticated:
+            return False
+        quiz_passed_map = self.context.get("quiz_passed_map") or {}
+        return bool(quiz_passed_map.get(obj.id, False))
+
+    def get_report_required_today(self, obj):
+        request = self.context.get("request")
+        if not request or not request.user.is_authenticated:
+            return False
+        progress_map = self.context.get("read_progress_map") or {}
+        progress = progress_map.get(obj.id)
+        if not progress or not progress.is_read or not progress.read_at:
+            return False
+        return progress.read_at.date() == timezone.localdate()
+
+    def get_report_submitted_today(self, obj):
+        request = self.context.get("request")
+        if not request or not request.user.is_authenticated:
+            return False
+        report_map = self.context.get("read_report_map") or {}
+        return bool(report_map.get(obj.id, False))
+
 
 class RegulationAdminSerializer(serializers.ModelSerializer):
     class Meta:
@@ -77,6 +136,7 @@ class RegulationAdminSerializer(serializers.ModelSerializer):
             "position",
             "is_active",
             "is_mandatory_on_day_one",
+            "read_deadline_at",
             "created_at",
             "updated_at",
         )
@@ -132,6 +192,49 @@ class RegulationFeedbackCreateSerializer(serializers.ModelSerializer):
         fields = ("text",)
 
 
+class RegulationReadReportCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RegulationReadReport
+        fields = ("report_text",)
+
+
+class RegulationQuizOptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RegulationQuizOption
+        fields = ("id", "text", "position")
+
+
+class RegulationQuizQuestionSerializer(serializers.ModelSerializer):
+    options = RegulationQuizOptionSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = RegulationQuizQuestion
+        fields = ("id", "text", "position", "options")
+
+
+class RegulationQuizSerializer(serializers.ModelSerializer):
+    questions = RegulationQuizQuestionSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = RegulationQuiz
+        fields = ("id", "regulation", "title", "description", "passing_score", "questions")
+        read_only_fields = fields
+
+
+class RegulationQuizSubmitSerializer(serializers.Serializer):
+    answers = serializers.DictField(
+        child=serializers.IntegerField(min_value=1),
+        allow_empty=False,
+        help_text="Mapping question_id -> selected option_id",
+    )
+
+
+class RegulationQuizResultSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RegulationQuizAttempt
+        fields = ("score_percent", "passed", "submitted_at")
+
+
 class InternOnboardingRequestSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source="user.username", read_only=True)
 
@@ -148,4 +251,3 @@ class InternOnboardingRequestSerializer(serializers.ModelSerializer):
             "reviewed_by",
         )
         read_only_fields = ("requested_at", "reviewed_at", "reviewed_by")
-

@@ -145,8 +145,7 @@ class AttendanceAuditService:
             ip_address=cls._ip(request),
             metadata={
                 "actor_id": request.user.id,
-                "distance_m": round(float(session.distance_m), 2),
-                "radius_m": session.radius_m,
+                "ip_address": session.ip_address,
             },
         )
 
@@ -162,7 +161,6 @@ class AttendanceAuditService:
             ip_address=cls._ip(request),
             metadata={
                 "actor_id": request.user.id,
-                "distance_m": round(float(session.distance_m), 2),
-                "radius_m": session.radius_m,
+                "ip_address": session.ip_address,
             },
         )

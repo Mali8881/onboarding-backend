@@ -1,9 +1,10 @@
-import uuid
+﻿import uuid
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import FileExtensionValidator
 from django.db import models
+from django.utils import timezone
 
 
 def validate_regulation_file_size(value):
@@ -54,6 +55,7 @@ class Regulation(models.Model):
         default=Language.RU,
         verbose_name="Язык",
     )
+    read_deadline_at = models.DateTimeField(null=True, blank=True, verbose_name="Дедлайн прочтения")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True, null=True)
 
@@ -147,6 +149,105 @@ class RegulationFeedback(models.Model):
         ordering = ["-created_at"]
 
 
+class RegulationReadReport(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="regulation_read_reports",
+    )
+    regulation = models.ForeignKey(
+        Regulation,
+        on_delete=models.CASCADE,
+        related_name="read_reports",
+    )
+    report_text = models.TextField()
+    # Calendar date when regulation was opened/read by the user.
+    opened_on = models.DateField()
+    submitted_at = models.DateTimeField(default=timezone.now)
+    is_late = models.BooleanField(default=False)
+
+    class Meta:
+        unique_together = ("user", "regulation", "opened_on")
+        ordering = ["-submitted_at"]
+
+
+class RegulationQuiz(models.Model):
+    regulation = models.OneToOneField(
+        Regulation,
+        on_delete=models.CASCADE,
+        related_name="quiz",
+    )
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    passing_score = models.PositiveSmallIntegerField(default=70)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def clean(self):
+        super().clean()
+        if self.passing_score < 1 or self.passing_score > 100:
+            raise ValidationError({"passing_score": "Passing score must be between 1 and 100."})
+
+    def __str__(self):
+        return f"Quiz for {self.regulation.title}"
+
+
+class RegulationQuizQuestion(models.Model):
+    quiz = models.ForeignKey(
+        RegulationQuiz,
+        on_delete=models.CASCADE,
+        related_name="questions",
+    )
+    text = models.TextField()
+    position = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["position", "id"]
+
+    def __str__(self):
+        return f"Q{self.position}: {self.text[:60]}"
+
+
+class RegulationQuizOption(models.Model):
+    question = models.ForeignKey(
+        RegulationQuizQuestion,
+        on_delete=models.CASCADE,
+        related_name="options",
+    )
+    text = models.CharField(max_length=500)
+    is_correct = models.BooleanField(default=False)
+    position = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["position", "id"]
+
+    def __str__(self):
+        return self.text
+
+
+class RegulationQuizAttempt(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="regulation_quiz_attempts",
+    )
+    quiz = models.ForeignKey(
+        RegulationQuiz,
+        on_delete=models.CASCADE,
+        related_name="attempts",
+    )
+    score_percent = models.PositiveSmallIntegerField(default=0)
+    passed = models.BooleanField(default=False)
+    submitted_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-submitted_at"]
+
+
 class InternOnboardingRequest(models.Model):
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
@@ -176,4 +277,3 @@ class InternOnboardingRequest(models.Model):
 
     class Meta:
         ordering = ["-requested_at"]
-

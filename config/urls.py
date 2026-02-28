@@ -1,12 +1,19 @@
 ﻿from django.contrib import admin
+from django.http import JsonResponse
 from django.urls import include, path, re_path
-from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
+from drf_spectacular.generators import SchemaGenerator
+from drf_spectacular.views import SpectacularSwaggerView
+from rest_framework.permissions import AllowAny
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from .admin_views import (
     attendance_checkin_page,
+    company_list_page,
+    company_structure_page,
     content_dashboard,
     onboarding_dashboard,
+    office_networks_page,
+    profile_page,
     work_schedule_board_page,
 )
 from .spa_views import spa_asset, spa_index, spa_vite_icon
@@ -15,15 +22,33 @@ admin.site.site_header = "HRM Администрирование"
 admin.site.site_title = "Админ-панель HRM"
 admin.site.index_title = "Управление системой"
 
+
+def public_schema_json_view(request):
+    schema = SchemaGenerator().get_schema(request=None, public=True)
+    return JsonResponse(schema, safe=False)
+
+
 urlpatterns = [
     path("ckeditor5/", include("django_ckeditor_5.urls")),
     path("admin/onboarding/", onboarding_dashboard, name="admin-onboarding-dashboard"),
     path("admin/content/", content_dashboard, name="admin-content-dashboard"),
+    path("admin/company/structure/", company_structure_page, name="admin-company-structure-page"),
+    path("admin/company/list/", company_list_page, name="admin-company-list-page"),
     path("admin/attendance/check-in/", attendance_checkin_page, name="admin-attendance-checkin-page"),
+    path("admin/attendance/office-networks/", office_networks_page, name="admin-office-networks-page"),
+    path("admin/profile/", profile_page, name="admin-profile-page"),
     path("admin/", admin.site.urls),
 
-    path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
-    path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
+    path("api/schema/", public_schema_json_view, name="schema"),
+    path(
+        "api/docs/",
+        SpectacularSwaggerView.as_view(
+            url_name="schema",
+            authentication_classes=[],
+            permission_classes=[AllowAny],
+        ),
+        name="swagger-ui",
+    ),
 
     path("api/v1/auth/login/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("api/v1/auth/refresh/", TokenRefreshView.as_view(), name="token_refresh"),

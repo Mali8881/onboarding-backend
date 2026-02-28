@@ -1,21 +1,22 @@
 from django.urls import path
 
 from .views import (
+    HourlyRateAdminAPIView,
+    HourlyRateHistoryAdminAPIView,
     PayrollAdminAPIView,
-    PayrollGenerateAPIView,
+    PayrollFundSummaryAPIView,
     PayrollMyAPIView,
-    PayrollPeriodStatusAPIView,
-    SalaryProfileAdminAPIView,
-    SalaryProfileAdminDetailAPIView,
+    PayrollRecalculateAPIView,
+    PayrollRecordStatusAPIView,
 )
 
 
 urlpatterns = [
     path("", PayrollMyAPIView.as_view(), name="payroll-my"),
     path("admin/", PayrollAdminAPIView.as_view(), name="payroll-admin"),
-    path("admin/generate/", PayrollGenerateAPIView.as_view(), name="payroll-generate"),
-    path("admin/periods/<int:period_id>/status/", PayrollPeriodStatusAPIView.as_view(), name="payroll-period-status"),
-    path("admin/salary-profiles/", SalaryProfileAdminAPIView.as_view(), name="salary-profile-admin"),
-    path("admin/salary-profiles/<int:profile_id>/", SalaryProfileAdminDetailAPIView.as_view(), name="salary-profile-admin-detail"),
+    path("admin/summary/", PayrollFundSummaryAPIView.as_view(), name="payroll-admin-summary"),
+    path("admin/recalculate/", PayrollRecalculateAPIView.as_view(), name="payroll-recalculate"),
+    path("admin/records/<int:record_id>/status/", PayrollRecordStatusAPIView.as_view(), name="payroll-record-status"),
+    path("admin/hourly-rates/", HourlyRateAdminAPIView.as_view(), name="payroll-hourly-rates"),
+    path("admin/hourly-rates/<int:user_id>/history/", HourlyRateHistoryAdminAPIView.as_view(), name="payroll-hourly-rates-history"),
 ]
-

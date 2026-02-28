@@ -11,6 +11,7 @@ from .models import AuditLog, Department, LoginHistory, Permission, Position, Ro
 
 ROLE_BADGE_COLORS = {
     Role.Name.SUPER_ADMIN: "#d97706",
+    Role.Name.ADMINISTRATOR: "#0ea5e9",
     Role.Name.ADMIN: "#2563eb",
     Role.Name.EMPLOYEE: "#059669",
     Role.Name.INTERN: "#7c3aed",
@@ -22,7 +23,11 @@ def is_super_admin(user):
 
 
 def is_admin(user):
-    return AccessPolicy.is_admin(user)
+    return AccessPolicy.is_admin_like(user)
+
+
+def can_manage_users(user):
+    return AccessPolicy.is_super_admin(user) or AccessPolicy.is_administrator(user)
 
 
 @admin.register(User)
@@ -187,13 +192,13 @@ class UserAdmin(DjangoUserAdmin):
         self.message_user(request, f"Разблокировано пользователей: {updated}")
 
     def has_module_permission(self, request):
-        return AccessPolicy.can_access_admin_panel(request.user)
+        return can_manage_users(request.user)
 
     def has_view_permission(self, request, obj=None):
-        return AccessPolicy.can_access_admin_panel(request.user)
+        return can_manage_users(request.user)
 
     def has_add_permission(self, request):
-        return AccessPolicy.can_access_admin_panel(request.user)
+        return can_manage_users(request.user)
 
     def get_queryset(self, request):
         qs = super().get_queryset(request)
@@ -201,8 +206,8 @@ class UserAdmin(DjangoUserAdmin):
         if not request.user.is_authenticated:
             return qs.none()
 
-        if is_admin(request.user):
-            return qs.filter(role__name__in=[Role.Name.INTERN, Role.Name.EMPLOYEE])
+        if not can_manage_users(request.user):
+            return qs.none()
 
         return qs
 
@@ -211,18 +216,17 @@ class UserAdmin(DjangoUserAdmin):
             return False
 
         if obj is None:
-            return AccessPolicy.can_access_admin_panel(request.user)
+            return can_manage_users(request.user)
 
-        if obj and is_admin(request.user):
-            return AccessPolicy.can_manage_user(request.user, obj)
-
+        if not can_manage_users(request.user):
+            return False
         return super().has_change_permission(request, obj)
 
     def has_delete_permission(self, request, obj=None):
         if not request.user.is_authenticated:
             return False
 
-        if obj and is_admin(request.user):
+        if not can_manage_users(request.user):
             return False
 
         return super().has_delete_permission(request, obj)
@@ -249,7 +253,7 @@ class RoleAdmin(admin.ModelAdmin):
                 "permissions": "Права доступа",
             }
             help_texts = {
-                "name": "Допустимы только: SUPER_ADMIN, ADMIN, EMPLOYEE, INTERN.",
+                "name": "Допустимы только: SUPER_ADMIN, ADMINISTRATOR, ADMIN, EMPLOYEE, INTERN.",
                 "permissions": "Права назначаются на уровне роли и применяются ко всем пользователям этой роли.",
             }
             widgets = {
@@ -262,12 +266,15 @@ class RoleAdmin(admin.ModelAdmin):
             value = (self.cleaned_data.get("name") or "").strip().upper()
             allowed = {
                 Role.Name.SUPER_ADMIN,
+                Role.Name.ADMINISTRATOR,
                 Role.Name.ADMIN,
                 Role.Name.EMPLOYEE,
                 Role.Name.INTERN,
             }
             if value not in allowed:
-                raise forms.ValidationError("Допустимы только SUPER_ADMIN, ADMIN, EMPLOYEE, INTERN.")
+                raise forms.ValidationError(
+                    "Допустимы только SUPER_ADMIN, ADMINISTRATOR, ADMIN, EMPLOYEE, INTERN."
+                )
             return value
 
     form = RoleAdminForm

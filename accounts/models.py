@@ -5,6 +5,7 @@ from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
 from django.core.validators import FileExtensionValidator
+from django.core.validators import MinValueValidator
 from django.db import models
 from django.utils import timezone
 
@@ -34,6 +35,7 @@ class Permission(models.Model):
 class Role(models.Model):
     class Name(models.TextChoices):
         SUPER_ADMIN = "SUPER_ADMIN", "SuperAdmin"
+        ADMINISTRATOR = "ADMINISTRATOR", "Administrator"
         ADMIN = "ADMIN", "Admin"
         EMPLOYEE = "EMPLOYEE", "Employee"
         INTERN = "INTERN", "Intern"
@@ -41,7 +43,8 @@ class Role(models.Model):
     class Level(models.IntegerChoices):
         INTERN = 10, "Intern"
         EMPLOYEE = 20, "Employee"
-        ADMIN = 30, "Admin"
+        ADMINISTRATOR = 30, "Administrator"
+        ADMIN = 31, "Admin"
         SUPER_ADMIN = 40, "SuperAdmin"
 
     name = models.CharField("Название", max_length=50, unique=True)
@@ -129,6 +132,12 @@ class User(AbstractUser):
 
     telegram = models.CharField("Telegram", max_length=100, blank=True)
     phone = models.CharField("Телефон", max_length=50, blank=True)
+    current_hourly_rate = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0)],
+    )
     photo = models.ImageField(
         "Фото",
         upload_to="users/",
@@ -178,7 +187,7 @@ class User(AbstractUser):
     def is_admin_like(self) -> bool:
         if not self.role_id:
             return False
-        return self.role.name in {Role.Name.ADMIN, Role.Name.SUPER_ADMIN}
+        return self.role.name in {Role.Name.ADMINISTRATOR, Role.Name.ADMIN}
 
     @property
     def can_manage_team(self) -> bool:

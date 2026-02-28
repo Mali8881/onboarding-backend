@@ -1,5 +1,5 @@
 from rest_framework.generics import ListAPIView, RetrieveAPIView, CreateAPIView
-from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework import status
@@ -90,14 +90,22 @@ class FeedbackAdminView(ModelViewSet):
     serializer_class = FeedbackSerializer
     permission_classes = [IsAuthenticated]
 
-    def _ensure_super_admin(self):
+    def _ensure_dashboard_access(self):
         user = self.request.user
-        if not (user and user.is_authenticated and AccessPolicy.is_super_admin(user)):
-            self.permission_denied(self.request, message="Only super admin can manage feedback dashboard.")
+        if not (user and user.is_authenticated):
+            self.permission_denied(self.request, message="Authentication required.")
+        if not AccessPolicy.has_permission(user, "feedback_manage"):
+            self.permission_denied(self.request, message="Missing permission: feedback_manage.")
+        if not AccessPolicy.is_admin_like(user):
+            self.permission_denied(self.request, message="Only operational admin can manage feedback dashboard.")
+
+    def _ensure_admin_action(self):
+        if not AccessPolicy.is_admin_like(self.request.user):
+            self.permission_denied(self.request, message="Only operational admin can process feedback.")
 
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
-        self._ensure_super_admin()
+        self._ensure_dashboard_access()
 
     def get_serializer_class(self):
         if self.action in {"list", "retrieve"}:
@@ -107,34 +115,44 @@ class FeedbackAdminView(ModelViewSet):
         return FeedbackSerializer
 
     def get_queryset(self):
+        user = self.request.user
         qs = Feedback.objects.all().order_by("-created_at")
+
+        if AccessPolicy.is_admin_like(user):
+            scoped = qs
+        else:
+            scoped = qs.none()
+
         status_filter = self.request.query_params.get("status")
         type_filter = self.request.query_params.get("type")
         search = self.request.query_params.get("search")
         is_read = self.request.query_params.get("is_read")
 
         if status_filter:
-            qs = qs.filter(status=status_filter)
+            scoped = scoped.filter(status=status_filter)
         if type_filter:
-            qs = qs.filter(type=type_filter)
+            scoped = scoped.filter(type=type_filter)
         if is_read in {"true", "false"}:
-            qs = qs.filter(is_read=(is_read == "true"))
+            scoped = scoped.filter(is_read=(is_read == "true"))
         if search:
-            qs = qs.filter(
+            scoped = scoped.filter(
                 Q(text__icontains=search)
                 | Q(full_name__icontains=search)
                 | Q(contact__icontains=search)
             )
-        return qs
+        return scoped
 
     @action(detail=False, methods=["get"], url_path="stats")
     def stats(self, request):
-        qs = Feedback.objects.all()
+        qs = self.get_queryset()
+        accepted_qs = qs.filter(status__in={"accepted", "closed"})
         payload = {
             "total": qs.count(),
             "new": qs.filter(status="new").count(),
             "in_progress": qs.filter(status="in_progress").count(),
-            "closed": qs.filter(status="closed").count(),
+            "accepted": accepted_qs.count(),
+            "resolved": accepted_qs.count(),
+            "closed": accepted_qs.count(),
             "unread": qs.filter(is_read=False).count(),
         }
         return Response(payload)
@@ -156,6 +174,7 @@ class FeedbackAdminView(ModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="set-status")
     def set_status(self, request, pk=None):
+        self._ensure_admin_action()
         feedback = self.get_object()
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -179,9 +198,10 @@ class FeedbackAdminView(ModelViewSet):
                 to_status=feedback.status,
             )
 
-        return Response(FeedbackAdminListSerializer(feedback).data)
+        return Response(FeedbackAdminListSerializer(feedback, context={"request": request}).data)
 
     def perform_update(self, serializer):
+        self._ensure_admin_action()
         instance = serializer.instance
         old_status = instance.status
         feedback = serializer.save()
@@ -199,14 +219,27 @@ class FeedbackAdminView(ModelViewSet):
                 to_status=feedback.status,
             )
 
+    def destroy(self, request, *args, **kwargs):
+        self._ensure_admin_action()
+        return super().destroy(request, *args, **kwargs)
+
 
 class FeedbackCreateView(CreateAPIView):
     queryset = Feedback.objects.all()
     serializer_class = FeedbackCreateSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def perform_create(self, serializer):
-        feedback = serializer.save()
+        user = self.request.user
+        is_anonymous = serializer.validated_data.get("is_anonymous", True)
+        full_name = None if is_anonymous else (f"{user.first_name} {user.last_name}".strip() or user.username)
+        contact = None if is_anonymous else (user.email or user.phone or user.username)
+        feedback = serializer.save(
+            sender=user,
+            recipient="ADMIN",
+            full_name=full_name,
+            contact=contact,
+        )
         ContentAuditService.log_feedback_created(self.request, feedback)
 
 
@@ -313,19 +346,22 @@ class AdminCourseViewSet(ModelViewSet):
     serializer_class = CourseSerializer
     permission_classes = [IsAuthenticated]
 
-    def get_permissions(self):
-        if not (AccessPolicy.is_admin(self.request.user) or AccessPolicy.is_super_admin(self.request.user)):
-            self.permission_denied(self.request, message="Only admin or super admin can manage courses.")
-        return super().get_permissions()
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        # Allow schema generation to inspect this view without forcing auth checks.
+        if getattr(self, "swagger_fake_view", False):
+            return
+        if not AccessPolicy.is_admin_like(request.user):
+            self.permission_denied(request, message="Only operational admin can manage courses.")
 
 
 class AdminCourseAssignAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        if not (AccessPolicy.is_admin(request.user) or AccessPolicy.is_super_admin(request.user)):
+        if not AccessPolicy.is_admin_like(request.user):
             return Response(
-                {"detail": "Only admin or super admin can assign courses."},
+                {"detail": "Only operational admin can assign courses."},
                 status=status.HTTP_403_FORBIDDEN,
             )
 

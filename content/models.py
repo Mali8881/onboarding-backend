@@ -180,9 +180,14 @@ class Feedback(models.Model):
     )
 
     STATUS_CHOICES = (
-        ('new', 'Новое'),
-        ('in_progress', 'В работе'),
-        ('closed', 'Закрыто'),
+        ('new', 'РќРѕРІРѕРµ'),
+        ('in_progress', 'Р’ СЂР°Р±РѕС‚Рµ'),
+        ('accepted', 'РџСЂРёРЅСЏС‚Рѕ'),
+    )
+
+    RECIPIENT_CHOICES = (
+        ("ADMIN", "To admin"),
+        ("SUPER_ADMIN", "To super admin"),
     )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -194,6 +199,14 @@ class Feedback(models.Model):
 
     type = models.CharField(max_length=20, choices=TYPE_CHOICES)
     text = models.TextField()
+    recipient = models.CharField(max_length=20, choices=RECIPIENT_CHOICES, default="ADMIN")
+    sender = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="sent_feedback",
+    )
 
     status = models.CharField(
         max_length=20,

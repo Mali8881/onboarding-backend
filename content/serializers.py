@@ -1,5 +1,6 @@
 ﻿from rest_framework import serializers
 
+from accounts.access_policy import AccessPolicy
 from accounts.models import User
 from .models import (
     Course,
@@ -72,6 +73,13 @@ class FeedbackAdminListSerializer(serializers.ModelSerializer):
     status_label = serializers.CharField(source="get_status_display", read_only=True)
     employee = serializers.SerializerMethodField()
     short_text = serializers.SerializerMethodField()
+    sender_role = serializers.SerializerMethodField()
+    recipient_label = serializers.CharField(source="get_recipient_display", read_only=True)
+    message = serializers.SerializerMethodField()
+    employee_name = serializers.SerializerMethodField()
+    date = serializers.DateField(source="created_at", read_only=True)
+    can_mark_read = serializers.SerializerMethodField()
+    can_accept = serializers.SerializerMethodField()
 
     class Meta:
         model = Feedback
@@ -89,6 +97,14 @@ class FeedbackAdminListSerializer(serializers.ModelSerializer):
             "text",
             "short_text",
             "created_at",
+            "recipient",
+            "recipient_label",
+            "sender_role",
+            "message",
+            "employee_name",
+            "date",
+            "can_mark_read",
+            "can_accept",
         )
 
     def get_employee(self, obj):
@@ -100,6 +116,28 @@ class FeedbackAdminListSerializer(serializers.ModelSerializer):
         text = (obj.text or "").strip()
         return text if len(text) <= 90 else f"{text[:87]}..."
 
+    def get_sender_role(self, obj):
+        if not obj.sender_id or not getattr(obj.sender, "role", None):
+            return "-"
+        return obj.sender.role.name
+
+    def get_message(self, obj):
+        return self.get_short_text(obj)
+
+    def get_employee_name(self, obj):
+        return self.get_employee(obj)
+
+    def _can_process_feedback(self):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        return bool(user and AccessPolicy.is_admin_like(user))
+
+    def get_can_mark_read(self, obj):
+        return self._can_process_feedback() and not obj.is_read
+
+    def get_can_accept(self, obj):
+        return self._can_process_feedback() and obj.status in {"new", "in_progress"}
+
 
 class FeedbackCreateSerializer(serializers.ModelSerializer):
     class Meta:
@@ -107,8 +145,7 @@ class FeedbackCreateSerializer(serializers.ModelSerializer):
         fields = (
             "type",
             "text",
-            "full_name",
-            "contact",
+            "is_anonymous",
         )
 
 

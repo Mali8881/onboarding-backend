@@ -4,11 +4,10 @@ from accounts.access_policy import AccessPolicy
 
 
 class IsAdminLike(BasePermission):
-    """Allow only Admin or SuperAdmin roles."""
+    """Allow only operational admin roles."""
 
     def has_permission(self, request, view):
         user = request.user
         if not user or not user.is_authenticated:
             return False
-        return AccessPolicy.is_admin(user) or AccessPolicy.is_super_admin(user)
-
+        return AccessPolicy.is_admin_like(user)

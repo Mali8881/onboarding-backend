@@ -3,83 +3,86 @@ from django.core.validators import MinValueValidator
 from django.db import models
 
 
-class SalaryProfile(models.Model):
-    class EmploymentType(models.TextChoices):
-        FIXED = "fixed", "Fixed"
-        DAILY = "daily", "Daily"
+class PayrollCompensation(models.Model):
+    class PayType(models.TextChoices):
         HOURLY = "hourly", "Hourly"
+        MINUTE = "minute", "Minute"
+        FIXED_SALARY = "fixed_salary", "Fixed salary"
 
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name="salary_profile",
+        related_name="payroll_compensation",
     )
-    base_salary = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(0)])
-    employment_type = models.CharField(max_length=20, choices=EmploymentType.choices)
-    currency = models.CharField(max_length=8, default="RUB")
-    is_active = models.BooleanField(default=True)
-
-    class Meta:
-        indexes = [
-            models.Index(fields=["employment_type"]),
-            models.Index(fields=["is_active"]),
-        ]
-
-    def __str__(self):
-        return f"{self.user_id}:{self.employment_type}"
-
-
-class PayrollPeriod(models.Model):
-    class Status(models.TextChoices):
-        DRAFT = "draft", "Draft"
-        LOCKED = "locked", "Locked"
-        PAID = "paid", "Paid"
-
-    year = models.PositiveIntegerField()
-    month = models.PositiveSmallIntegerField()
-    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
-    created_at = models.DateTimeField(auto_now_add=True)
+    pay_type = models.CharField(max_length=20, choices=PayType.choices, default=PayType.HOURLY)
+    hourly_rate = models.DecimalField(max_digits=12, decimal_places=2, default=0, validators=[MinValueValidator(0)])
+    minute_rate = models.DecimalField(max_digits=12, decimal_places=2, default=0, validators=[MinValueValidator(0)])
+    fixed_salary = models.DecimalField(max_digits=12, decimal_places=2, default=0, validators=[MinValueValidator(0)])
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ("year", "month")
-        ordering = ["-year", "-month"]
         indexes = [
-            models.Index(fields=["year", "month"]),
-            models.Index(fields=["status"]),
+            models.Index(fields=["pay_type"]),
         ]
 
     def __str__(self):
-        return f"{self.year}-{self.month:02d}:{self.status}"
+        return f"{self.user_id}:{self.pay_type}"
 
 
-class PayrollEntry(models.Model):
+class HourlyRateHistory(models.Model):
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name="payroll_entries",
+        related_name="hourly_rate_history",
     )
-    period = models.ForeignKey(
-        PayrollPeriod,
+    rate = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(0)])
+    start_date = models.DateField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-start_date", "-id"]
+        indexes = [
+            models.Index(fields=["user", "start_date"]),
+            models.Index(fields=["start_date"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(fields=["user", "start_date"], name="payroll_unique_rate_user_start_date"),
+        ]
+
+    def __str__(self):
+        return f"{self.user_id}:{self.rate}@{self.start_date}"
+
+
+class PayrollRecord(models.Model):
+    class Status(models.TextChoices):
+        CALCULATED = "calculated", "Calculated"
+        PAID = "paid", "Paid"
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name="entries",
+        related_name="payroll_records",
     )
-    planned_days = models.PositiveIntegerField(default=0)
-    worked_days = models.PositiveIntegerField(default=0)
-    advances = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    salary_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    month = models.DateField(help_text="First day of payroll month")
+    total_hours = models.DecimalField(max_digits=8, decimal_places=2, default=0, validators=[MinValueValidator(0)])
+    total_salary = models.DecimalField(max_digits=12, decimal_places=2, default=0, validators=[MinValueValidator(0)])
+    bonus = models.DecimalField(max_digits=12, decimal_places=2, default=0, validators=[MinValueValidator(0)])
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.CALCULATED)
+    calculated_at = models.DateTimeField(auto_now=True)
+    paid_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ("user", "period")
-        ordering = ["user_id"]
+        ordering = ["month", "user_id"]
         indexes = [
-            models.Index(fields=["user", "period"]),
-            models.Index(fields=["period"]),
+            models.Index(fields=["month"]),
+            models.Index(fields=["status"]),
+            models.Index(fields=["user", "month"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(fields=["user", "month"], name="payroll_unique_record_user_month"),
         ]
 
     def __str__(self):
-        return f"{self.period_id}:{self.user_id}"
-
+        return f"{self.user_id}:{self.month}:{self.total_salary}"

@@ -1,5 +1,8 @@
+import ipaddress
+
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.core.validators import MinValueValidator
 from django.db import models
 
 
@@ -25,6 +28,34 @@ class WorkCalendarDay(models.Model):
         return str(self.date)
 
 
+class OfficeNetwork(models.Model):
+    name = models.CharField(max_length=150)
+    cidr = models.CharField(max_length=64, unique=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name", "id"]
+        indexes = [
+            models.Index(fields=["is_active"]),
+            models.Index(fields=["cidr"]),
+        ]
+
+    def clean(self):
+        try:
+            ipaddress.ip_network(self.cidr, strict=False)
+        except ValueError as exc:
+            raise ValidationError({"cidr": "Invalid network. Use CIDR format, e.g. 203.0.113.0/24"}) from exc
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.name} ({self.cidr})"
+
+
 class AttendanceMark(models.Model):
     class Status(models.TextChoices):
         PRESENT = "present", "Present"
@@ -41,6 +72,8 @@ class AttendanceMark(models.Model):
     )
     date = models.DateField()
     status = models.CharField(max_length=20, choices=Status.choices)
+    planned_hours = models.DecimalField(max_digits=6, decimal_places=2, default=0, validators=[MinValueValidator(0)])
+    actual_hours = models.DecimalField(max_digits=6, decimal_places=2, default=0, validators=[MinValueValidator(0)])
     comment = models.TextField(blank=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

@@ -3,7 +3,7 @@ from datetime import date
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
-from .models import AttendanceMark, AttendanceSession, WorkCalendarDay
+from .models import AttendanceMark, AttendanceSession, OfficeNetwork, WorkCalendarDay
 from .policies import AttendancePolicy
 
 
@@ -89,9 +89,15 @@ class WorkCalendarDayUpsertSerializer(serializers.ModelSerializer):
 
 
 class OfficeCheckInSerializer(serializers.Serializer):
-    latitude = serializers.FloatField(min_value=-90, max_value=90)
-    longitude = serializers.FloatField(min_value=-180, max_value=180)
-    accuracy_m = serializers.FloatField(required=False, min_value=0)
+    class WorkMode:
+        OFFICE = "office"
+        ONLINE = "online"
+        CHOICES = (
+            (OFFICE, "Office"),
+            (ONLINE, "Online"),
+        )
+
+    work_mode = serializers.ChoiceField(choices=WorkMode.CHOICES)
 
 
 class AttendanceSessionSerializer(serializers.ModelSerializer):
@@ -101,14 +107,14 @@ class AttendanceSessionSerializer(serializers.ModelSerializer):
             "id",
             "user",
             "checked_at",
-            "latitude",
-            "longitude",
-            "accuracy_m",
             "ip_address",
-            "distance_m",
-            "office_latitude",
-            "office_longitude",
-            "radius_m",
             "result",
             "attendance_mark",
         )
+
+
+class OfficeNetworkSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OfficeNetwork
+        fields = ("id", "name", "cidr", "is_active", "created_at", "updated_at")
+        read_only_fields = ("created_at", "updated_at")

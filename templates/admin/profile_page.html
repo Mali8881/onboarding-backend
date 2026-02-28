@@ -1,0 +1,97 @@
+﻿{% extends "admin/base_site.html" %}
+
+{% block content %}
+<div style="max-width: 1100px; margin: 0 auto;">
+  <h1 style="font-size: 30px; margin-bottom: 6px;">Профиль пользователя</h1>
+  <p style="color: #64748b; margin-bottom: 18px;">Управляйте своими личными данными и настройками.</p>
+
+  <div style="background: linear-gradient(135deg, #fff1e6, #ffe7d6); border: 1px solid #fed7aa; border-radius: 14px; padding: 18px; margin-bottom: 18px;">
+    <div style="display: flex; align-items: center; gap: 14px;">
+      <div style="width: 56px; height: 56px; border-radius: 999px; background: #ef4444; color: white; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 22px;">
+        {{ profile_user.username|slice:":2"|upper }}
+      </div>
+      <div style="flex: 1;">
+        <div style="font-size: 24px; font-weight: 700;">{{ profile_user.get_full_name|default:profile_user.username }}</div>
+        <div style="color: #475569;">{{ profile_user.username }}</div>
+      </div>
+      <div style="background: #be123c; color: #fff; border-radius: 999px; padding: 6px 12px; font-size: 12px; font-weight: 700;">
+        {{ role_name }}
+      </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 16px;">
+      <div style="background: #fff; border-radius: 10px; padding: 10px 12px; border: 1px solid #e5e7eb;">
+        <div style="font-size: 12px; color: #64748b;">Логин</div>
+        <div style="font-weight: 600;">{{ profile_user.username }}</div>
+      </div>
+      <div style="background: #fff; border-radius: 10px; padding: 10px 12px; border: 1px solid #e5e7eb;">
+        <div style="font-size: 12px; color: #64748b;">Email</div>
+        <div style="font-weight: 600;">{{ profile_user.email|default:"—" }}</div>
+      </div>
+      <div style="background: #fff; border-radius: 10px; padding: 10px 12px; border: 1px solid #e5e7eb;">
+        <div style="font-size: 12px; color: #64748b;">Дата найма</div>
+        <div style="font-weight: 600;">{{ profile_user.date_joined|date:"d.m.Y" }}</div>
+      </div>
+    </div>
+  </div>
+
+  <form method="post" enctype="multipart/form-data" style="background: #fff; border: 1px solid #e5e7eb; border-radius: 14px; padding: 18px; margin-bottom: 18px;">
+    {% csrf_token %}
+
+    <h2 style="font-size: 22px; margin-bottom: 14px;">Персональные данные</h2>
+
+    {% if form.non_field_errors %}
+      <div style="background: #fee2e2; border: 1px solid #fca5a5; color: #b91c1c; border-radius: 10px; padding: 10px 12px; margin-bottom: 12px;">
+        {{ form.non_field_errors }}
+      </div>
+    {% endif %}
+
+    <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px;">
+      <div>
+        <label style="display:block; font-weight:600; margin-bottom: 4px;">{{ form.first_name.label }}</label>
+        {{ form.first_name }}
+        {% if form.first_name.errors %}<div style="color:#b91c1c; font-size:12px; margin-top:4px;">{{ form.first_name.errors }}</div>{% endif %}
+      </div>
+      <div>
+        <label style="display:block; font-weight:600; margin-bottom: 4px;">{{ form.last_name.label }}</label>
+        {{ form.last_name }}
+        {% if form.last_name.errors %}<div style="color:#b91c1c; font-size:12px; margin-top:4px;">{{ form.last_name.errors }}</div>{% endif %}
+      </div>
+      <div>
+        <label style="display:block; font-weight:600; margin-bottom: 4px;">Подразделение</label>
+        <input type="text" value="{{ department_name }}" readonly style="width:100%; border:1px solid #d1d5db; border-radius:10px; padding:10px 12px; background:#f8fafc;" />
+      </div>
+      <div>
+        <label style="display:block; font-weight:600; margin-bottom: 4px;">Должность</label>
+        <input type="text" value="{{ position_name }}" readonly style="width:100%; border:1px solid #d1d5db; border-radius:10px; padding:10px 12px; background:#f8fafc;" />
+      </div>
+      <div>
+        <label style="display:block; font-weight:600; margin-bottom: 4px;">{{ form.telegram.label }}</label>
+        {{ form.telegram }}
+        {% if form.telegram.errors %}<div style="color:#b91c1c; font-size:12px; margin-top:4px;">{{ form.telegram.errors }}</div>{% endif %}
+      </div>
+      <div>
+        <label style="display:block; font-weight:600; margin-bottom: 4px;">{{ form.phone.label }}</label>
+        {{ form.phone }}
+        {% if form.phone.errors %}<div style="color:#b91c1c; font-size:12px; margin-top:4px;">{{ form.phone.errors }}</div>{% endif %}
+      </div>
+      <div>
+        <label style="display:block; font-weight:600; margin-bottom: 4px;">{{ form.email.label }}</label>
+        {{ form.email }}
+        {% if form.email.errors %}<div style="color:#b91c1c; font-size:12px; margin-top:4px;">{{ form.email.errors }}</div>{% endif %}
+      </div>
+      <div>
+        <label style="display:block; font-weight:600; margin-bottom: 4px;">{{ form.photo.label }}</label>
+        {{ form.photo }}
+        {% if form.photo.help_text %}<div style="font-size:12px; color:#64748b; margin-top:4px;">{{ form.photo.help_text }}</div>{% endif %}
+        {% if form.photo.errors %}<div style="color:#b91c1c; font-size:12px; margin-top:4px;">{{ form.photo.errors }}</div>{% endif %}
+      </div>
+    </div>
+
+    <div style="display:flex; justify-content:flex-end; margin-top: 16px;">
+      <button type="submit" class="button default" style="padding: 10px 16px; border-radius: 10px;">Сохранить изменения</button>
+    </div>
+  </form>
+
+</div>
+{% endblock %}

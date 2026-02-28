@@ -178,7 +178,7 @@ class EmployeeDailyReportAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        if not (AccessPolicy.is_employee(request.user) or AccessPolicy.is_admin(request.user) or AccessPolicy.is_super_admin(request.user)):
+        if not (AccessPolicy.is_employee(request.user) or AccessPolicy.is_admin_like(request.user)):
             return Response({"detail": "Access denied."}, status=drf_status.HTTP_403_FORBIDDEN)
 
         report_date = request.query_params.get("date")

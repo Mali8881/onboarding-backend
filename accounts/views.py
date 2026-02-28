@@ -52,7 +52,7 @@ class LoginView(APIView):
     @staticmethod
     def _landing_for(user):
         role_name = user.role.name if getattr(user, "role", None) else ""
-        if role_name in {Role.Name.ADMIN, Role.Name.SUPER_ADMIN}:
+        if role_name in {Role.Name.ADMINISTRATOR, Role.Name.ADMIN, Role.Name.SUPER_ADMIN}:
             return "admin_panel"
         if role_name == Role.Name.INTERN:
             return "intern_portal"
@@ -566,11 +566,7 @@ class EmployeeHomeAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        if not (
-            AccessPolicy.is_employee(request.user)
-            or AccessPolicy.is_admin(request.user)
-            or AccessPolicy.is_super_admin(request.user)
-        ):
+        if not (AccessPolicy.is_employee(request.user) or AccessPolicy.is_admin_like(request.user)):
             return Response({"detail": "Access denied."}, status=403)
 
         my_courses = CourseEnrollment.objects.filter(

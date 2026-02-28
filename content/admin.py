@@ -16,12 +16,14 @@ class FeedbackAdminForm(forms.ModelForm):
             "contact": "Контакт (email/телефон)",
             "type": "Тип обращения",
             "text": "Сообщение",
+            "recipient": "Кому адресовано",
+            "sender": "Отправитель",
             "status": "Статус",
             "is_read": "Прочитано",
         }
         help_texts = {
-            "full_name": "Заполняется только если обращение не анонимное.",
-            "contact": "Опционально, для обратной связи.",
+            "full_name": "Заполняется автоматически для авторизованного отправителя.",
+            "contact": "Заполняется автоматически (email), можно уточнить вручную.",
             "text": "Кратко опишите суть обращения.",
         }
         widgets = {
@@ -63,12 +65,10 @@ class InstructionAdminForm(forms.ModelForm):
             "text": forms.Textarea(
                 attrs={
                     "rows": 8,
-                    "placeholder": "Вставь полный текст инструкции для стажера...",
+                    "placeholder": "Напишите пошаговую инструкцию для сотрудника...",
                 }
             ),
-            "external_url": forms.URLInput(
-                attrs={"placeholder": "https://example.com/instruction"}
-            ),
+            "external_url": forms.URLInput(attrs={"placeholder": "https://example.com/instruction"}),
         }
 
     def clean(self):
@@ -136,22 +136,24 @@ class FeedbackAdmin(admin.ModelAdmin):
     list_display = (
         "type_badge",
         "author_display",
+        "recipient",
         "short_text",
         "status_badge",
         "is_read",
         "created_at",
     )
-    list_filter = ("type", "status", "is_read", "is_anonymous", "created_at")
+    list_filter = ("type", "recipient", "status", "is_read", "is_anonymous", "created_at")
     search_fields = ("full_name", "contact", "text")
     ordering = ("-created_at",)
     readonly_fields = ("created_at",)
     fieldsets = (
-        ("Обращение", {"fields": ("type", "text")}),
-        ("Автор", {"fields": ("is_anonymous", "full_name", "contact")}),
-        ("Обработка", {"fields": ("status", "is_read")}),
+        ("Обращение", {"fields": ("type", "text")} ),
+        ("Автор", {"fields": ("sender", "is_anonymous", "full_name", "contact")} ),
+        ("Маршрут", {"fields": ("recipient",)}),
+        ("Обработка", {"fields": ("status", "is_read")} ),
         ("Система", {"fields": ("created_at",), "classes": ("collapse",)}),
     )
-    actions = ("set_in_progress", "set_closed", "mark_read", "mark_unread")
+    actions = ("set_in_progress", "set_accepted", "mark_read", "mark_unread")
 
     @admin.display(description="Тип")
     def type_badge(self, obj):
@@ -186,7 +188,7 @@ class FeedbackAdmin(admin.ModelAdmin):
         colors = {
             "new": "#2563eb",
             "in_progress": "#d97706",
-            "closed": "#059669",
+            "accepted": "#059669",
         }
         color = colors.get(obj.status, "#64748b")
         return format_html(
@@ -201,9 +203,9 @@ class FeedbackAdmin(admin.ModelAdmin):
         updated = queryset.update(status="in_progress", is_read=True)
         self.message_user(request, f"Обновлено обращений: {updated}")
 
-    @admin.action(description="Перевести в статус: Закрыто")
-    def set_closed(self, request, queryset):
-        updated = queryset.update(status="closed", is_read=True)
+    @admin.action(description="Перевести в статус: Принято")
+    def set_accepted(self, request, queryset):
+        updated = queryset.update(status="accepted", is_read=True)
         self.message_user(request, f"Обновлено обращений: {updated}")
 
     @admin.action(description="Отметить как прочитанные")
@@ -215,6 +217,12 @@ class FeedbackAdmin(admin.ModelAdmin):
     def mark_unread(self, request, queryset):
         updated = queryset.update(is_read=False)
         self.message_user(request, f"Отмечено как непрочитанные: {updated}")
+
+    def get_changeform_initial_data(self, request):
+        initial = super().get_changeform_initial_data(request)
+        initial.setdefault("recipient", "ADMIN")
+        initial.setdefault("is_anonymous", False)
+        return initial
 
     def has_module_permission(self, request):
         return AccessPolicy.is_admin_like(request.user)
@@ -229,7 +237,31 @@ class FeedbackAdmin(admin.ModelAdmin):
         return AccessPolicy.is_admin_like(request.user)
 
     def has_delete_permission(self, request, obj=None):
-        return AccessPolicy.is_super_admin(request.user)
+        return AccessPolicy.is_admin_like(request.user)
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request).select_related("sender", "sender__role")
+        if AccessPolicy.is_admin_like(request.user):
+            return qs
+        return qs.none()
+
+    def get_readonly_fields(self, request, obj=None):
+        fields = list(self.readonly_fields)
+        if not AccessPolicy.is_super_admin(request.user):
+            fields.append("sender")
+        return tuple(fields)
+
+    def save_model(self, request, obj, form, change):
+        if not obj.sender_id:
+            obj.sender = request.user
+        if not obj.full_name:
+            obj.full_name = f"{request.user.first_name} {request.user.last_name}".strip() or request.user.username
+        if not obj.contact:
+            obj.contact = request.user.email or ""
+
+        obj.recipient = "ADMIN"
+
+        super().save_model(request, obj, form, change)
 
 
 @admin.register(Instruction)
@@ -241,8 +273,8 @@ class InstructionAdmin(admin.ModelAdmin):
     readonly_fields = ("preview",)
 
     fieldsets = (
-        ("Основное", {"fields": ("language", "type", "is_active")} ),
-        ("Контент", {"fields": ("text", "external_url", "file")} ),
+        ("Основное", {"fields": ("language", "type", "is_active")}),
+        ("Контент", {"fields": ("text", "external_url", "file")}),
         ("Предпросмотр", {"fields": ("preview",)}),
     )
 
@@ -259,6 +291,9 @@ class InstructionAdmin(admin.ModelAdmin):
 
     preview.short_description = "Предпросмотр"
 
+    class Media:
+        js = ("admin/js/instruction-form.js",)
+
     def has_module_permission(self, request):
         return AccessPolicy.is_admin_like(request.user)
 
@@ -272,4 +307,4 @@ class InstructionAdmin(admin.ModelAdmin):
         return AccessPolicy.is_admin_like(request.user)
 
     def has_delete_permission(self, request, obj=None):
-        return AccessPolicy.is_super_admin(request.user)
+        return AccessPolicy.is_admin_like(request.user)

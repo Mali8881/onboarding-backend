@@ -10,8 +10,11 @@ class UserSerializer(serializers.ModelSerializer):
     role = serializers.CharField(source="role.name", read_only=True)
     role_level = serializers.IntegerField(source="role.level", read_only=True)
     department = serializers.CharField(source="department.name", read_only=True)
+    department_id = serializers.IntegerField(source="department.id", read_only=True, allow_null=True)
     position = serializers.CharField(source="position.name", read_only=True)
+    position_id = serializers.IntegerField(source="position.id", read_only=True, allow_null=True)
     manager = serializers.PrimaryKeyRelatedField(read_only=True)
+    manager_id = serializers.IntegerField(source="manager.id", read_only=True, allow_null=True)
     full_name = serializers.SerializerMethodField()
 
     class Meta:
@@ -25,8 +28,11 @@ class UserSerializer(serializers.ModelSerializer):
             "role",
             "role_level",
             "department",
+            "department_id",
             "position",
+            "position_id",
             "manager",
+            "manager_id",
             "custom_position",
             "telegram",
             "phone",

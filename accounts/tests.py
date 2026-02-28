@@ -122,6 +122,10 @@ class LoginLandingTests(TestCase):
             name=Role.Name.ADMIN,
             defaults={"level": Role.Level.ADMIN},
         )
+        self.administrator_role, _ = Role.objects.get_or_create(
+            name=Role.Name.ADMINISTRATOR,
+            defaults={"level": Role.Level.ADMINISTRATOR},
+        )
         self.intern = User.objects.create_user(
             username="intern_landing",
             password="StrongPass123!",
@@ -131,6 +135,11 @@ class LoginLandingTests(TestCase):
             username="admin_landing",
             password="StrongPass123!",
             role=self.admin_role,
+        )
+        self.administrator = User.objects.create_user(
+            username="administrator_landing",
+            password="StrongPass123!",
+            role=self.administrator_role,
         )
 
     def test_intern_login_returns_intern_landing(self):
@@ -151,3 +160,66 @@ class LoginLandingTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["landing"], "admin_panel")
+
+    def test_administrator_login_returns_admin_landing(self):
+        response = self.client.post(
+            "/api/v1/accounts/login/",
+            {"username": "administrator_landing", "password": "StrongPass123!"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["landing"], "admin_panel")
+
+
+class AdminPanelAccessTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.administrator_role, _ = Role.objects.get_or_create(
+            name=Role.Name.ADMINISTRATOR,
+            defaults={"level": Role.Level.ADMINISTRATOR},
+        )
+        self.administrator = User.objects.create_user(
+            username="administrator_panel",
+            password="StrongPass123!",
+            role=self.administrator_role,
+            is_staff=True,
+            is_active=True,
+        )
+
+    def test_administrator_can_login_admin_panel(self):
+        response = self.client.post(
+            "/admin/login/?next=/admin/",
+            {
+                "username": "administrator_panel",
+                "password": "StrongPass123!",
+                "next": "/admin/",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], "/admin/")
+
+
+class ProfileContractTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.admin_role, _ = Role.objects.get_or_create(
+            name=Role.Name.ADMIN,
+            defaults={"level": Role.Level.ADMIN},
+        )
+        self.department = Department.objects.create(name="IT", is_active=True)
+        self.position = Position.objects.create(name="Backend", is_active=True)
+        self.user = User.objects.create_user(
+            username="profile_admin",
+            password="StrongPass123!",
+            role=self.admin_role,
+            department=self.department,
+            position=self.position,
+        )
+
+    def test_me_profile_includes_id_fields_for_frontend_contract(self):
+        self.client.force_authenticate(self.user)
+        response = self.client.get("/api/v1/accounts/me/profile/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["department_id"], self.department.id)
+        self.assertEqual(response.data["position_id"], self.position.id)
+        self.assertIn("manager_id", response.data)

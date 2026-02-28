@@ -3,9 +3,39 @@ from django.contrib.auth import get_user_model
 from django.shortcuts import redirect
 
 from accounts.access_policy import AccessPolicy
-from .models import AttendanceMark, AttendanceSession, WorkCalendarDay
+from .models import AttendanceMark, AttendanceSession, OfficeNetwork, WorkCalendarDay
 
 User = get_user_model()
+
+
+class SuperAdminOnlyAdminMixin:
+    def _can_access(self, request) -> bool:
+        user = request.user
+        return bool(user and user.is_authenticated and (user.is_superuser or AccessPolicy.is_super_admin(user)))
+
+    def has_module_permission(self, request):
+        return self._can_access(request)
+
+    def has_view_permission(self, request, obj=None):
+        return self._can_access(request)
+
+    def has_add_permission(self, request):
+        return self._can_access(request)
+
+    def has_change_permission(self, request, obj=None):
+        return self._can_access(request)
+
+    def has_delete_permission(self, request, obj=None):
+        return self._can_access(request)
+
+
+@admin.register(OfficeNetwork)
+class OfficeNetworkAdmin(SuperAdminOnlyAdminMixin, admin.ModelAdmin):
+    list_display = ("name", "cidr", "is_active", "created_at", "updated_at")
+    list_filter = ("is_active",)
+    search_fields = ("name", "cidr")
+    ordering = ("name",)
+    readonly_fields = ("created_at", "updated_at")
 
 
 @admin.register(WorkCalendarDay)
@@ -137,21 +167,14 @@ class AttendanceMarkAdmin(admin.ModelAdmin):
 
 @admin.register(AttendanceSession)
 class AttendanceSessionAdmin(admin.ModelAdmin):
-    list_display = ("user", "checked_at", "result", "ip_address", "distance_m", "radius_m", "attendance_mark")
+    list_display = ("user", "checked_at", "result", "ip_address", "attendance_mark")
     list_filter = ("result", "checked_at")
     search_fields = ("user__username",)
     ordering = ("-checked_at",)
     readonly_fields = (
         "user",
         "checked_at",
-        "latitude",
-        "longitude",
-        "accuracy_m",
         "ip_address",
-        "distance_m",
-        "office_latitude",
-        "office_longitude",
-        "radius_m",
         "result",
         "attendance_mark",
     )

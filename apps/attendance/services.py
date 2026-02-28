@@ -2,20 +2,19 @@ from __future__ import annotations
 
 import calendar
 import ipaddress
-import math
 from datetime import date
+from datetime import timedelta
 from typing import Optional
 
-from django.conf import settings
 from django.contrib.auth import get_user_model
 from accounts.models import Role
 from accounts.access_policy import AccessPolicy
 
-from .models import AttendanceMark, WorkCalendarDay
+from .models import AttendanceMark, OfficeNetwork, WorkCalendarDay
+from work_schedule.models import WeeklyWorkPlan
 
 
 User = get_user_model()
-EARTH_RADIUS_M = 6371000.0
 
 
 def month_bounds(year: int, month: int) -> tuple[date, date]:
@@ -68,16 +67,14 @@ def generate_work_calendar_month(year: int, month: int, *, overwrite: bool = Fal
 def attendance_table_queryset(actor, *, include_all_for_admin: bool = True):
     if actor.is_anonymous:
         return User.objects.none()
-    if include_all_for_admin and AccessPolicy.is_super_admin(actor):
-        return User.objects.filter(is_active=True).select_related("position", "department", "role")
-    if include_all_for_admin and AccessPolicy.is_admin(actor):
-        return User.objects.filter(is_active=True).exclude(role__name=Role.Name.SUPER_ADMIN).select_related(
-            "position", "department", "role"
-        )
-    if actor.team_members.exists():
-        return actor.team_members.filter(is_active=True).exclude(role__name=Role.Name.SUPER_ADMIN).select_related(
-            "position", "department", "role"
-        )
+    if include_all_for_admin and AccessPolicy.is_admin_like(actor):
+        if not actor.department_id:
+            return User.objects.none()
+        return User.objects.filter(
+            is_active=True,
+            department_id=actor.department_id,
+            role__name__in=[Role.Name.EMPLOYEE, Role.Name.INTERN],
+        ).select_related("position", "department", "role")
     return User.objects.filter(id=actor.id).select_related("position", "department", "role")
 
 
@@ -114,34 +111,15 @@ def build_attendance_table(*, users, year: int, month: int, status_filter: Optio
     return {"days": days, "rows": rows}
 
 
-def haversine_distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    lat1_r = math.radians(lat1)
-    lon1_r = math.radians(lon1)
-    lat2_r = math.radians(lat2)
-    lon2_r = math.radians(lon2)
-
-    d_lat = lat2_r - lat1_r
-    d_lon = lon2_r - lon1_r
-
-    a = (
-        math.sin(d_lat / 2) ** 2
-        + math.cos(lat1_r) * math.cos(lat2_r) * math.sin(d_lon / 2) ** 2
-    )
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    return EARTH_RADIUS_M * c
-
-
-def office_geofence():
-    lat = getattr(settings, "OFFICE_GEOFENCE_LATITUDE", None)
-    lon = getattr(settings, "OFFICE_GEOFENCE_LONGITUDE", None)
-    radius = getattr(settings, "OFFICE_GEOFENCE_RADIUS_M", None)
-    if lat is None or lon is None or radius is None:
-        return None
-    return float(lat), float(lon), int(radius)
-
-
 def office_networks():
-    return getattr(settings, "OFFICE_IP_NETWORKS", [])
+    networks = []
+    for cidr in OfficeNetwork.objects.filter(is_active=True).values_list("cidr", flat=True):
+        try:
+            networks.append(ipaddress.ip_network(cidr, strict=False))
+        except ValueError:
+            continue
+
+    return networks
 
 
 def is_office_ip(ip_string: str | None) -> bool:
@@ -159,3 +137,25 @@ def get_client_ip(request) -> str | None:
     if x_forwarded_for:
         return x_forwarded_for.split(",")[0].strip()
     return request.META.get("REMOTE_ADDR")
+
+
+def planned_work_mode_for_date(*, user, target_date: date) -> str | None:
+    week_start = target_date - timedelta(days=target_date.weekday())
+    plan = WeeklyWorkPlan.objects.filter(
+        user=user,
+        status=WeeklyWorkPlan.Status.APPROVED,
+        week_start=week_start,
+    ).first()
+    if not plan:
+        return None
+
+    target = target_date.isoformat()
+    for item in plan.days or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("date") != target:
+            continue
+        mode = item.get("mode")
+        if mode in {"office", "online", "day_off"}:
+            return mode
+    return None

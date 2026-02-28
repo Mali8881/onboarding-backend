@@ -1,7 +1,8 @@
 from django.contrib.auth import get_user_model
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework import status
-from rest_framework.test import APITestCase
+from rest_framework.test import APIClient, APITestCase
 from django.core.files.uploadedfile import SimpleUploadedFile
 
 from accounts.models import Department, Role, User
@@ -9,6 +10,10 @@ from regulations.models import (
     InternOnboardingRequest,
     Regulation,
     RegulationAcknowledgement,
+    RegulationReadReport,
+    RegulationQuiz,
+    RegulationQuizOption,
+    RegulationQuizQuestion,
     RegulationReadProgress,
 )
 
@@ -118,7 +123,21 @@ class RegulationsApiTests(APITestCase):
         response = self.client.get(url, {"language": "ru", "type": "file", "q": "HR"})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data), 1)
-        self.assertEqual(response.data[0]["action"], "download")
+        self.assertEqual(response.data[0]["action"], "open")
+
+    def test_public_list_includes_overdue_state_for_unread(self):
+        overdue_regulation = Regulation.objects.create(
+            title="Overdue",
+            type=Regulation.RegulationType.LINK,
+            external_url="https://example.com/overdue",
+            is_active=True,
+            read_deadline_at=timezone.now() - timezone.timedelta(days=1),
+        )
+        self.client.force_authenticate(self.employee)
+        response = self.client.get(reverse("regulations-list"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        item = next(i for i in response.data if i["id"] == str(overdue_regulation.id))
+        self.assertTrue(item["is_overdue"])
 
     def test_public_detail_is_read_only(self):
         self.client.force_authenticate(self.employee)
@@ -201,6 +220,29 @@ class InternOnboardingFlowTests(APITestCase):
             external_url="https://example.com",
             is_active=True,
         )
+        self.quiz = RegulationQuiz.objects.create(
+            regulation=self.regulation,
+            title="Mini test",
+            passing_score=100,
+            is_active=True,
+        )
+        self.question = RegulationQuizQuestion.objects.create(
+            quiz=self.quiz,
+            text="Q1",
+            position=1,
+        )
+        self.correct_option = RegulationQuizOption.objects.create(
+            question=self.question,
+            text="Correct",
+            is_correct=True,
+            position=1,
+        )
+        self.wrong_option = RegulationQuizOption.objects.create(
+            question=self.question,
+            text="Wrong",
+            is_correct=False,
+            position=2,
+        )
 
     def test_intern_can_mark_read_and_submit_completion(self):
         self.client.force_authenticate(self.intern)
@@ -214,6 +256,34 @@ class InternOnboardingFlowTests(APITestCase):
             ).exists()
         )
 
+        blocked_submit = self.client.post("/api/v1/regulations/intern/submit/")
+        self.assertEqual(blocked_submit.status_code, 400)
+
+        quiz_submit = self.client.post(
+            f"/api/v1/regulations/{self.regulation.id}/quiz/submit/",
+            {"answers": {str(self.question.id): self.correct_option.id}},
+            format="json",
+        )
+        self.assertEqual(quiz_submit.status_code, 201)
+        self.assertTrue(quiz_submit.data["result"]["passed"])
+
+        still_blocked_submit = self.client.post("/api/v1/regulations/intern/submit/")
+        self.assertEqual(still_blocked_submit.status_code, 400)
+        self.assertIn("missing_report_regulation_ids", still_blocked_submit.data)
+
+        report_submit = self.client.post(
+            f"/api/v1/regulations/{self.regulation.id}/read-report/",
+            {"report_text": "Сегодня изучил регламент и основные пункты."},
+            format="json",
+        )
+        self.assertIn(report_submit.status_code, {200, 201})
+        self.assertTrue(
+            RegulationReadReport.objects.filter(
+                user=self.intern,
+                regulation=self.regulation,
+            ).exists()
+        )
+
         submit_response = self.client.post("/api/v1/regulations/intern/submit/")
         self.assertEqual(submit_response.status_code, 201)
         self.assertTrue(
@@ -222,6 +292,30 @@ class InternOnboardingFlowTests(APITestCase):
                 status=InternOnboardingRequest.Status.PENDING,
             ).exists()
         )
+
+    def test_quiz_detail_returns_questions_and_options(self):
+        self.client.force_authenticate(self.intern)
+        response = self.client.get(f"/api/v1/regulations/{self.regulation.id}/quiz/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["id"], self.quiz.id)
+        self.assertEqual(len(response.data["questions"]), 1)
+
+    def test_intern_can_submit_read_report_only_after_read(self):
+        self.client.force_authenticate(self.intern)
+        before_read = self.client.post(
+            f"/api/v1/regulations/{self.regulation.id}/read-report/",
+            {"report_text": "report"},
+            format="json",
+        )
+        self.assertEqual(before_read.status_code, 400)
+
+        self.client.post(f"/api/v1/regulations/{self.regulation.id}/read/")
+        after_read = self.client.post(
+            f"/api/v1/regulations/{self.regulation.id}/read-report/",
+            {"report_text": "изучил регламент"},
+            format="json",
+        )
+        self.assertIn(after_read.status_code, {200, 201})
 
     def test_admin_can_approve_and_promote_to_employee(self):
         request_obj = InternOnboardingRequest.objects.create(user=self.intern)

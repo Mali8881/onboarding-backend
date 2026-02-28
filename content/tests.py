@@ -1,16 +1,15 @@
 from unittest.mock import patch
 
-from django.test import TestCase
 from rest_framework import status
-from rest_framework.test import APIRequestFactory, force_authenticate
+from rest_framework.test import APIRequestFactory, APITestCase, force_authenticate
 
 from accounts.models import Department, Permission, Role, User
 from content.models import Course, CourseEnrollment, Feedback
-from content.views import FeedbackAdminView, FeedbackCreateView
+from content.views import FeedbackCreateView
 from onboarding_core.models import OnboardingDay, OnboardingProgress
 
 
-class FeedbackAuditTests(TestCase):
+class FeedbackAccessTests(APITestCase):
     def setUp(self):
         self.factory = APIRequestFactory()
 
@@ -18,17 +17,205 @@ class FeedbackAuditTests(TestCase):
             codename="feedback_manage",
             defaults={"module": "content"},
         )
-        self.role, _ = Role.objects.get_or_create(
+        self.super_role, _ = Role.objects.get_or_create(
+            name=Role.Name.SUPER_ADMIN,
+            defaults={"level": Role.Level.SUPER_ADMIN},
+        )
+        self.admin_role, _ = Role.objects.get_or_create(
             name=Role.Name.ADMIN,
             defaults={"level": Role.Level.ADMIN},
         )
-        self.role.permissions.add(self.permission)
+        self.admin_no_perm_role, _ = Role.objects.get_or_create(
+            name="ADMIN_NO_FEEDBACK",
+            defaults={"level": Role.Level.ADMIN},
+        )
+        self.employee_role, _ = Role.objects.get_or_create(
+            name=Role.Name.EMPLOYEE,
+            defaults={"level": Role.Level.EMPLOYEE},
+        )
+        self.intern_role, _ = Role.objects.get_or_create(
+            name=Role.Name.INTERN,
+            defaults={"level": Role.Level.INTERN},
+        )
+        self.super_role.permissions.add(self.permission)
+        self.admin_role.permissions.add(self.permission)
 
+        self.superadmin = User.objects.create_user(
+            username="content_super",
+            password="StrongPass123!",
+            role=self.super_role,
+            email="super@example.com",
+            first_name="Super",
+            last_name="Admin",
+        )
         self.admin = User.objects.create_user(
             username="content_admin",
             password="StrongPass123!",
-            role=self.role,
+            role=self.admin_role,
+            email="admin@example.com",
+            first_name="Admin",
+            last_name="User",
         )
+        self.admin_no_perm = User.objects.create_user(
+            username="content_admin_no_perm",
+            password="StrongPass123!",
+            role=self.admin_no_perm_role,
+        )
+        self.employee = User.objects.create_user(
+            username="content_employee",
+            password="StrongPass123!",
+            role=self.employee_role,
+            email="employee@example.com",
+            first_name="Emp",
+            last_name="Loyee",
+        )
+        self.intern = User.objects.create_user(
+            username="content_intern",
+            password="StrongPass123!",
+            role=self.intern_role,
+            email="intern@example.com",
+            first_name="In",
+            last_name="Tern",
+        )
+
+    def _feedback_payload(self, is_anonymous=True):
+        return {
+            "type": "review",
+            "text": "Feedback text",
+            "is_anonymous": is_anonymous,
+        }
+
+    @patch("content.views.ContentAuditService.log_feedback_created")
+    def test_all_roles_use_same_feedback_payload_and_can_be_anonymous(self, log_feedback_created):
+        users = [self.superadmin, self.admin, self.employee, self.intern]
+        for user in users:
+            self.client.force_authenticate(user=user)
+            response = self.client.post("/api/v1/content/feedback/", self._feedback_payload(True), format="json")
+            self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+            created = Feedback.objects.filter(sender=user).latest("created_at")
+            self.assertEqual(created.recipient, "SUPER_ADMIN")
+            self.assertTrue(created.is_anonymous)
+            self.assertIsNone(created.full_name)
+            self.assertIsNone(created.contact)
+        self.assertEqual(log_feedback_created.call_count, 4)
+
+    def test_non_anonymous_feedback_autofills_author(self):
+        self.client.force_authenticate(user=self.employee)
+        response = self.client.post("/api/v1/content/feedback/", self._feedback_payload(False), format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        created = Feedback.objects.get(sender=self.employee)
+        self.assertEqual(created.recipient, "SUPER_ADMIN")
+        self.assertEqual(created.full_name, "Emp Loyee")
+        self.assertEqual(created.contact, "employee@example.com")
+        self.assertFalse(created.is_anonymous)
+
+    def test_feedback_admin_requires_feedback_manage_and_admin_like(self):
+        self.client.force_authenticate(user=self.admin_no_perm)
+        denied_no_permission = self.client.get("/api/v1/content/admin/feedback/")
+        self.assertEqual(denied_no_permission.status_code, status.HTTP_403_FORBIDDEN)
+
+        self.employee_role.permissions.add(self.permission)
+        self.client.force_authenticate(user=self.employee)
+        denied_not_admin_like = self.client.get("/api/v1/content/admin/feedback/")
+        self.assertEqual(denied_not_admin_like.status_code, status.HTTP_403_FORBIDDEN)
+
+        self.client.force_authenticate(user=self.admin)
+        allowed_admin = self.client.get("/api/v1/content/admin/feedback/")
+        self.assertEqual(allowed_admin.status_code, status.HTTP_200_OK)
+
+        self.client.force_authenticate(user=self.superadmin)
+        allowed_superadmin = self.client.get("/api/v1/content/admin/feedback/")
+        self.assertEqual(allowed_superadmin.status_code, status.HTTP_200_OK)
+
+    def test_only_superadmin_can_mark_read_or_accept(self):
+        feedback = Feedback.objects.create(
+            type="complaint",
+            text="Old text",
+            is_anonymous=True,
+            sender=self.employee,
+            recipient="SUPER_ADMIN",
+        )
+
+        self.client.force_authenticate(user=self.admin)
+        denied = self.client.post(
+            f"/api/v1/content/admin/feedback/{feedback.id}/set-status/",
+            {"status": "accepted"},
+            format="json",
+        )
+        self.assertEqual(denied.status_code, status.HTTP_403_FORBIDDEN)
+
+        self.client.force_authenticate(user=self.superadmin)
+        allowed = self.client.post(
+            f"/api/v1/content/admin/feedback/{feedback.id}/set-status/",
+            {"status": "accepted"},
+            format="json",
+        )
+        self.assertEqual(allowed.status_code, status.HTTP_200_OK)
+        feedback.refresh_from_db()
+        self.assertEqual(feedback.status, "accepted")
+        self.assertTrue(feedback.is_read)
+
+    @patch("content.views.ContentAuditService.log_feedback_status_changed_admin")
+    @patch("content.views.ContentAuditService.log_feedback_updated_admin")
+    def test_superadmin_update_logs_events(self, log_feedback_updated_admin, log_feedback_status_changed_admin):
+        feedback = Feedback.objects.create(
+            type="complaint",
+            text="Old text",
+            is_anonymous=True,
+            sender=self.employee,
+            recipient="SUPER_ADMIN",
+        )
+
+        self.client.force_authenticate(user=self.admin)
+        denied = self.client.patch(
+            f"/api/v1/content/admin/feedback/{feedback.id}/",
+            {"status": "in_progress"},
+            format="json",
+        )
+        self.assertEqual(denied.status_code, status.HTTP_403_FORBIDDEN)
+        log_feedback_updated_admin.assert_not_called()
+        log_feedback_status_changed_admin.assert_not_called()
+
+        self.client.force_authenticate(user=self.superadmin)
+        allowed = self.client.patch(
+            f"/api/v1/content/admin/feedback/{feedback.id}/",
+            {"status": "in_progress"},
+            format="json",
+        )
+        self.assertEqual(allowed.status_code, status.HTTP_200_OK)
+        log_feedback_updated_admin.assert_called_once()
+        log_feedback_status_changed_admin.assert_called_once()
+
+    def test_feedback_admin_stats_and_screen_fields(self):
+        Feedback.objects.create(type="review", text="f1", status="new", is_read=False, sender=self.employee, recipient="SUPER_ADMIN")
+        Feedback.objects.create(type="review", text="f2", status="in_progress", is_read=True, sender=self.employee, recipient="SUPER_ADMIN")
+        Feedback.objects.create(type="review", text="f3", status="accepted", is_read=True, sender=self.employee, recipient="SUPER_ADMIN")
+        Feedback.objects.create(type="review", text="f4", status="closed", is_read=True, sender=self.employee, recipient="SUPER_ADMIN")
+
+        self.client.force_authenticate(user=self.superadmin)
+        stats_response = self.client.get("/api/v1/content/admin/feedback/stats/")
+        self.assertEqual(stats_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(stats_response.data["total"], 4)
+        self.assertEqual(stats_response.data["new"], 1)
+        self.assertEqual(stats_response.data["in_progress"], 1)
+        self.assertEqual(stats_response.data["accepted"], 2)
+        self.assertEqual(stats_response.data["closed"], 2)
+
+        list_response = self.client.get("/api/v1/content/admin/feedback/")
+        self.assertEqual(list_response.status_code, status.HTTP_200_OK)
+        self.assertTrue(len(list_response.data) >= 1)
+        row = list_response.data[0]
+        for key in ("message", "employee_name", "date", "can_mark_read", "can_accept"):
+            self.assertIn(key, row)
+
+        self.client.force_authenticate(user=self.admin)
+        admin_list_response = self.client.get("/api/v1/content/admin/feedback/")
+        self.assertEqual(admin_list_response.status_code, status.HTTP_200_OK)
+        if admin_list_response.data:
+            self.assertFalse(admin_list_response.data[0]["can_mark_read"])
+            self.assertFalse(admin_list_response.data[0]["can_accept"])
 
     @patch("content.views.ContentAuditService.log_feedback_created")
     def test_feedback_create_logs_event_once(self, log_feedback_created):
@@ -37,41 +224,18 @@ class FeedbackAuditTests(TestCase):
             {
                 "type": "complaint",
                 "text": "Feedback text",
-                "full_name": "",
-                "contact": "",
+                "is_anonymous": True,
             },
             format="json",
         )
+        force_authenticate(request, user=self.admin)
         response = FeedbackCreateView.as_view()(request)
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         log_feedback_created.assert_called_once()
 
-    @patch("content.views.ContentAuditService.log_feedback_status_changed_admin")
-    @patch("content.views.ContentAuditService.log_feedback_updated_admin")
-    def test_feedback_admin_update_logs_update_event(self, log_feedback_updated_admin, log_feedback_status_changed_admin):
-        feedback = Feedback.objects.create(
-            type="complaint",
-            text="Old text",
-            is_anonymous=True,
-        )
 
-        request = self.factory.patch(
-            f"/api/v1/content/admin/feedback/{feedback.id}/",
-            {"text": "New text"},
-            format="json",
-        )
-        force_authenticate(request, user=self.admin)
-
-        view = FeedbackAdminView.as_view({"patch": "partial_update"})
-        response = view(request, pk=str(feedback.id))
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        log_feedback_updated_admin.assert_called_once()
-        log_feedback_status_changed_admin.assert_not_called()
-
-
-class CoursesFlowTests(TestCase):
+class CoursesFlowTests(APITestCase):
     def setUp(self):
         self.intern_role, _ = Role.objects.get_or_create(
             name=Role.Name.INTERN,

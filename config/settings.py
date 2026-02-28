@@ -1,5 +1,4 @@
 ﻿import os
-import ipaddress
 from importlib.util import find_spec
 from pathlib import Path
 
@@ -179,7 +178,7 @@ if HAS_UNFOLD:
             return True
         role = getattr(user, "role", None)
         role_name = getattr(role, "name", "")
-        return role_name in {"SUPER_ADMIN", "ADMIN"}
+        return role_name in {"SUPER_ADMIN", "ADMINISTRATOR", "ADMIN"}
 
     def _is_employee(request):
         user = getattr(request, "user", None)
@@ -188,6 +187,42 @@ if HAS_UNFOLD:
         role = getattr(user, "role", None)
         role_name = getattr(role, "name", "")
         return role_name == "EMPLOYEE"
+
+    def _is_admin(request):
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated:
+            return False
+        role = getattr(user, "role", None)
+        role_name = getattr(role, "name", "")
+        return role_name in {"ADMINISTRATOR", "ADMIN"}
+
+    def _can_manage_users(request):
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated:
+            return False
+        if getattr(user, "is_superuser", False):
+            return True
+        role = getattr(user, "role", None)
+        role_name = getattr(role, "name", "")
+        return role_name in {"SUPER_ADMIN", "ADMINISTRATOR"}
+
+    def _is_super_admin(request):
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated:
+            return False
+        if getattr(user, "is_superuser", False):
+            return True
+        role = getattr(user, "role", None)
+        role_name = getattr(role, "name", "")
+        return role_name == "SUPER_ADMIN"
+
+    def _can_checkin(request):
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated:
+            return False
+        role = getattr(user, "role", None)
+        role_name = getattr(role, "name", "")
+        return role_name in {"ADMIN", "EMPLOYEE", "INTERN"}
 
     UNFOLD = {
         "SITE_TITLE": "HRM Админ-панель",
@@ -229,12 +264,12 @@ if HAS_UNFOLD:
                             "title": "Отметка",
                             "icon": "fact_check",
                             "link": "/admin/attendance/check-in/",
-                            "permission": _is_employee,
+                            "permission": _can_checkin,
                         },
                         {
                             "title": "Профиль",
                             "icon": "person",
-                            "link": "/admin/accounts/user/",
+                            "link": "/admin/profile/",
                             "permission": lambda request: _is_admin_like(request) or _is_employee(request),
                         },
                         {
@@ -259,7 +294,19 @@ if HAS_UNFOLD:
                             "title": "Пользователи",
                             "icon": "group",
                             "link": "/admin/accounts/user/",
-                            "permission": _is_admin_like,
+                            "permission": _can_manage_users,
+                        },
+                        {
+                            "title": "Компания: структура",
+                            "icon": "account_tree",
+                            "link": "/admin/company/structure/",
+                            "permission": lambda request: bool(getattr(request, "user", None) and request.user.is_authenticated),
+                        },
+                        {
+                            "title": "Компания: список",
+                            "icon": "badge",
+                            "link": "/admin/company/list/",
+                            "permission": lambda request: bool(getattr(request, "user", None) and request.user.is_authenticated),
                         },
                         {
                             "title": "Контент",
@@ -286,16 +333,16 @@ if HAS_UNFOLD:
                             "permission": _is_admin_like,
                         },
                         {
-                            "title": "Посещаемость",
+                            "title": "Отметка и посещаемость",
                             "icon": "fact_check",
-                            "link": "/admin/attendance/attendancemark/",
+                            "link": "/admin/attendance/check-in/",
                             "permission": _is_admin_like,
                         },
                         {
-                            "title": "Check-in сессии",
-                            "icon": "pin_drop",
-                            "link": "/admin/attendance/attendancesession/",
-                            "permission": _is_admin_like,
+                            "title": "Офисные сети",
+                            "icon": "wifi",
+                            "link": "/admin/attendance/office-networks/",
+                            "permission": _is_super_admin,
                         },
                         {
                             "title": "Обратная связь",
@@ -365,32 +412,14 @@ AUDIT_PRIMARY_BACKEND = os.environ.get("AUDIT_PRIMARY_BACKEND", "accounts")
 AUDIT_LEGACY_BACKEND = os.environ.get("AUDIT_LEGACY_BACKEND", "security")
 AUDIT_WRITE_MODE = os.environ.get("AUDIT_WRITE_MODE", "primary_only")
 
-# Office geofence for one-time attendance check-in.
-OFFICE_GEOFENCE_LATITUDE = (
-    float(os.environ["OFFICE_GEOFENCE_LATITUDE"])
-    if os.environ.get("OFFICE_GEOFENCE_LATITUDE")
-    else None
-)
-OFFICE_GEOFENCE_LONGITUDE = (
-    float(os.environ["OFFICE_GEOFENCE_LONGITUDE"])
-    if os.environ.get("OFFICE_GEOFENCE_LONGITUDE")
-    else None
-)
-OFFICE_GEOFENCE_RADIUS_M = int(os.environ.get("OFFICE_GEOFENCE_RADIUS_M", "150"))
-OFFICE_IP_NETWORKS = [
-    ipaddress.ip_network(value.strip())
-    for value in os.environ.get(
-        "OFFICE_IP_NETWORKS",
-        "192.168.10.0/24,10.0.0.0/16",
-    ).split(",")
-    if value.strip()
-]
-
 SPECTACULAR_SETTINGS = {
     "TITLE": "Onboarding API",
     "DESCRIPTION": "API for onboarding platform",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
+    "SERVE_PUBLIC": True,
+    "SERVE_PERMISSIONS": ["rest_framework.permissions.AllowAny"],
+    "SERVE_AUTHENTICATION": [],
 }
 
 # ======================
@@ -405,7 +434,9 @@ CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:5173",
+    "http://localhost:5175",
     "http://127.0.0.1:5173",
+    "http://127.0.0.1:5175",
 ]
 
 CSRF_TRUSTED_ORIGINS = [

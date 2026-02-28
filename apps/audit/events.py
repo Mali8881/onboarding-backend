@@ -85,7 +85,6 @@ class AuditEvents:
     POSITION_DELETED = "position_deleted"
 
     # Payroll
-    SALARY_PROFILE_CREATED = "salary_profile_created"
-    SALARY_PROFILE_UPDATED = "salary_profile_updated"
+    HOURLY_RATE_CHANGED = "hourly_rate_changed"
     PAYROLL_PERIOD_GENERATED = "payroll_period_generated"
     PAYROLL_PERIOD_STATUS_CHANGED = "payroll_period_status_changed"

@@ -1,41 +1,84 @@
 from django.contrib import admin
+from django.contrib.auth import get_user_model
 
-from .models import PayrollEntry, PayrollPeriod, SalaryProfile
+from accounts.models import Role
+from .policies import PayrollPolicy
+
+from .models import PayrollCompensation
+
+User = get_user_model()
 
 
-@admin.register(SalaryProfile)
-class SalaryProfileAdmin(admin.ModelAdmin):
-    list_display = ("user", "base_salary", "employment_type", "currency", "is_active")
-    list_filter = ("employment_type", "is_active", "currency")
+class PayrollViewAdminMixin:
+    def _can_view(self, request) -> bool:
+        return PayrollPolicy.can_view_payroll(request.user)
+
+    def has_module_permission(self, request):
+        return self._can_view(request)
+
+    def has_view_permission(self, request, obj=None):
+        return self._can_view(request)
+
+
+class PayrollManageAdminMixin(PayrollViewAdminMixin):
+    def _can_manage(self, request) -> bool:
+        return PayrollPolicy.can_manage_payroll(request.user)
+
+    def has_add_permission(self, request):
+        return self._can_manage(request)
+
+    def has_change_permission(self, request, obj=None):
+        return self._can_manage(request)
+
+    def has_delete_permission(self, request, obj=None):
+        return self._can_manage(request)
+
+
+@admin.register(PayrollCompensation)
+class PayrollCompensationAdmin(PayrollViewAdminMixin, admin.ModelAdmin):
+    list_display = ("user", "pay_type", "hourly_rate", "minute_rate", "fixed_salary", "updated_at")
+    list_filter = ("pay_type",)
     search_fields = ("user__username",)
     autocomplete_fields = ("user",)
-    fieldsets = (
-        ("Сотрудник", {"fields": ("user",)}),
-        ("Условия оплаты", {"fields": ("employment_type", "base_salary", "currency", "is_active")}),
-    )
+    readonly_fields = ("updated_at",)
 
+    def has_add_permission(self, request):
+        return PayrollPolicy.can_manage_payroll(request.user)
 
-@admin.register(PayrollPeriod)
-class PayrollPeriodAdmin(admin.ModelAdmin):
-    list_display = ("year", "month", "status", "created_at")
-    list_filter = ("status", "year", "month")
-    search_fields = ("year", "month")
-    readonly_fields = ("created_at", "updated_at")
-    fieldsets = (
-        ("Период", {"fields": ("year", "month", "status")}),
-        ("Системные поля", {"fields": ("created_at", "updated_at")}),
-    )
+    def has_change_permission(self, request, obj=None):
+        if not PayrollPolicy.can_edit_compensation(request.user):
+            return False
+        if obj is None:
+            return True
+        return PayrollPolicy.can_edit_compensation_for_user(request.user, obj.user)
 
+    def has_delete_permission(self, request, obj=None):
+        return False
 
-@admin.register(PayrollEntry)
-class PayrollEntryAdmin(admin.ModelAdmin):
-    list_display = ("user", "period", "planned_days", "worked_days", "salary_amount", "total_amount")
-    list_filter = ("period__year", "period__month")
-    search_fields = ("user__username",)
-    autocomplete_fields = ("user", "period")
-    readonly_fields = ("created_at", "updated_at")
-    fieldsets = (
-        ("Связи", {"fields": ("user", "period")}),
-        ("Расчет", {"fields": ("planned_days", "worked_days", "advances", "salary_amount", "total_amount")}),
-        ("Системные поля", {"fields": ("created_at", "updated_at")}),
-    )
+    def get_queryset(self, request):
+        visible_users = User.objects.filter(is_active=True).exclude(role__name=Role.Name.INTERN).exclude(id=request.user.id)
+        if not PayrollPolicy.can_manage_payroll(request.user):
+            visible_users = visible_users.filter(
+                department_id=getattr(request.user, "department_id", None),
+                role__name=Role.Name.EMPLOYEE,
+            )
+
+        for user in visible_users:
+            PayrollCompensation.objects.get_or_create(
+                user=user,
+                defaults={
+                    "pay_type": PayrollCompensation.PayType.HOURLY,
+                    "hourly_rate": getattr(user, "current_hourly_rate", 0),
+                    "minute_rate": 0,
+                    "fixed_salary": 0,
+                },
+            )
+
+        qs = super().get_queryset(request).select_related("user", "user__role")
+        qs = qs.filter(user__in=visible_users)
+        if PayrollPolicy.can_manage_payroll(request.user):
+            return qs
+        return qs.filter(
+            user__department_id=getattr(request.user, "department_id", None),
+            user__role__name=Role.Name.EMPLOYEE,
+        )

@@ -42,12 +42,16 @@ class AccessPolicy:
         return cls._has_role(user) and user.role.name == Role.Name.SUPER_ADMIN
 
     @classmethod
+    def is_administrator(cls, user) -> bool:
+        return cls._has_role(user) and user.role.name == Role.Name.ADMINISTRATOR
+
+    @classmethod
     def is_admin(cls, user) -> bool:
         return cls._has_role(user) and user.role.name == Role.Name.ADMIN
 
     @classmethod
     def is_admin_like(cls, user) -> bool:
-        return cls.is_admin(user) or cls.is_super_admin(user)
+        return cls.is_administrator(user) or cls.is_admin(user)
 
     @classmethod
     def is_employee(cls, user) -> bool:
@@ -63,10 +67,8 @@ class AccessPolicy:
             return False
         if actor.pk == target.pk:
             return True
-        if cls.is_super_admin(actor):
-            return True
-        if cls.is_admin(actor):
-            return target.role.name in {Role.Name.INTERN, Role.Name.EMPLOYEE}
+        if cls.is_admin_like(actor):
+            return target.role.name != Role.Name.SUPER_ADMIN
         if actor.role.name == Role.Name.EMPLOYEE:
             return target.manager_id == actor.id
         return False
@@ -75,10 +77,8 @@ class AccessPolicy:
     def can_manage_user(cls, actor, target) -> bool:
         if not cls._has_role(actor):
             return False
-        if cls.is_super_admin(actor):
-            return True
-        if cls.is_admin(actor):
-            return target.role.name in {Role.Name.INTERN, Role.Name.EMPLOYEE}
+        if cls.is_admin_like(actor):
+            return target.role.name != Role.Name.SUPER_ADMIN
         return False
 
     @classmethod

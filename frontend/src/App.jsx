@@ -48,9 +48,22 @@ function formatLocalISO(date) {
 }
 
 function landingFromRole(role) {
-  if (role === 'ADMIN' || role === 'SUPER_ADMIN') return 'admin_panel'
+  if (role === 'ADMIN' || role === 'ADMINISTRATOR' || role === 'SUPER_ADMIN') return 'admin_panel'
   if (role === 'INTERN') return 'intern_portal'
   return 'employee_portal'
+}
+
+function normalizeLandingForRole(role, landing) {
+  const expected = landingFromRole(role)
+  if (!landing) return expected
+  if (role === 'INTERN' && landing !== 'intern_portal') return expected
+  if ((role === 'ADMIN' || role === 'ADMINISTRATOR' || role === 'SUPER_ADMIN') && landing !== 'admin_panel') {
+    return expected
+  }
+  if (role !== 'INTERN' && role !== 'ADMIN' && role !== 'ADMINISTRATOR' && role !== 'SUPER_ADMIN' && landing !== 'employee_portal') {
+    return expected
+  }
+  return landing
 }
 
 async function toJson(res) {
@@ -353,7 +366,7 @@ function App() {
     const nextRole = data?.role || ''
     setRole(nextRole)
     localStorage.setItem(STORAGE_ROLE, nextRole)
-    const nextLanding = landing || landingFromRole(nextRole)
+    const nextLanding = normalizeLandingForRole(nextRole, landing)
     setLanding(nextLanding)
     localStorage.setItem(STORAGE_LANDING, nextLanding)
 
@@ -376,8 +389,8 @@ function App() {
       if (!res.ok) throw new Error(getErrorMessage(data, 'Неверный логин или пароль'))
 
       const nextToken = data.access
-      const nextLanding = data.landing || landingFromRole(data?.user?.role)
       const nextRole = data?.user?.role || ''
+      const nextLanding = normalizeLandingForRole(nextRole, data.landing || '')
       setIsFirstLogin(Boolean(data?.user?.is_first_login))
 
       localStorage.setItem(STORAGE_TOKEN, nextToken)

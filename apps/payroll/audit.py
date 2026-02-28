@@ -14,55 +14,42 @@ class PayrollAuditService:
         return request.META.get("REMOTE_ADDR")
 
     @classmethod
-    def log_salary_profile_created(cls, request, profile) -> None:
+    def log_hourly_rate_changed(cls, request, history) -> None:
         log_event(
-            action=AuditEvents.SALARY_PROFILE_CREATED,
+            action=AuditEvents.HOURLY_RATE_CHANGED,
             actor=request.user,
-            object_type="salary_profile",
-            object_id=str(profile.id),
+            object_type="hourly_rate_history",
+            object_id=str(history.id),
             category="content",
             ip_address=cls._ip(request),
-            metadata={"user_id": profile.user_id},
+            metadata={"user_id": history.user_id, "rate": str(history.rate), "start_date": history.start_date.isoformat()},
         )
 
     @classmethod
-    def log_salary_profile_updated(cls, request, profile, changed_fields: list[str]) -> None:
-        log_event(
-            action=AuditEvents.SALARY_PROFILE_UPDATED,
-            actor=request.user,
-            object_type="salary_profile",
-            object_id=str(profile.id),
-            category="content",
-            ip_address=cls._ip(request),
-            metadata={"user_id": profile.user_id, "changed_fields": changed_fields},
-        )
-
-    @classmethod
-    def log_period_generated(cls, request, period, created: int, updated: int) -> None:
+    def log_period_generated(cls, request, year: int, month: int, created: int, updated: int) -> None:
         log_event(
             action=AuditEvents.PAYROLL_PERIOD_GENERATED,
             actor=request.user,
-            object_type="payroll_period",
-            object_id=str(period.id),
+            object_type="payroll_month",
+            object_id=f"{year}-{month:02d}",
             category="content",
             ip_address=cls._ip(request),
             metadata={
-                "year": period.year,
-                "month": period.month,
+                "year": year,
+                "month": month,
                 "entries_created": created,
                 "entries_updated": updated,
             },
         )
 
     @classmethod
-    def log_period_status_changed(cls, request, period, previous_status: str) -> None:
+    def log_period_status_changed(cls, request, record, previous_status: str) -> None:
         log_event(
             action=AuditEvents.PAYROLL_PERIOD_STATUS_CHANGED,
             actor=request.user,
-            object_type="payroll_period",
-            object_id=str(period.id),
+            object_type="payroll_record",
+            object_id=str(record.id),
             category="content",
             ip_address=cls._ip(request),
-            metadata={"from": previous_status, "to": period.status},
+            metadata={"from": previous_status, "to": record.status, "user_id": record.user_id, "month": record.month.isoformat()},
         )
-

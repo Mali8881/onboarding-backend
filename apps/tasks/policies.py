@@ -6,7 +6,7 @@ from accounts.access_policy import AccessPolicy
 class TaskPolicy:
     @staticmethod
     def is_admin_like(user) -> bool:
-        return AccessPolicy.is_admin(user) or AccessPolicy.is_super_admin(user)
+        return AccessPolicy.is_admin_like(user)
 
     @classmethod
     def can_manage_team(cls, actor) -> bool:
@@ -41,4 +41,3 @@ class TaskPolicy:
         if task.reporter_id == actor.id:
             return True
         return task.assignee.manager_id == actor.id
-

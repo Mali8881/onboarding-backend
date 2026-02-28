@@ -1,0 +1,78 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+<div class="cp-page">
+  <div class="cp-head">
+    <h1>Компания: структура</h1>
+    <div class="cp-nav">
+      <a class="cp-link" href="/admin/company/structure/">Структура</a>
+      <a class="cp-link" href="/admin/company/list/">Список сотрудников</a>
+    </div>
+  </div>
+
+  {% if rows %}
+    <div class="cp-list">
+      {% for row in rows %}
+        <section class="cp-row" style="margin-left: {{ row.level|add:0 }}em; --lvl: {{ row.level }};">
+          <div class="cp-row-head">
+            <h3>{{ row.department.name }}</h3>
+            <span>{{ row.members|length }} сотрудников</span>
+          </div>
+          {% if row.members %}
+            <ul class="cp-members">
+              {% for user in row.members %}
+                <li>
+                  <strong>{{ user.first_name }} {{ user.last_name }}</strong>
+                  <span>@{{ user.username }}</span>
+                  <span>{{ user.position.name|default:user.custom_position|default:"—" }}</span>
+                </li>
+              {% endfor %}
+            </ul>
+          {% else %}
+            <p class="cp-empty">В отделе пока нет сотрудников.</p>
+          {% endif %}
+        </section>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="cp-empty">Нет активных отделов для отображения структуры.</p>
+  {% endif %}
+
+  {% if orphan_members %}
+    <section class="cp-row cp-orphans">
+      <div class="cp-row-head">
+        <h3>Без отдела</h3>
+        <span>{{ orphan_members|length }} сотрудников</span>
+      </div>
+      <ul class="cp-members">
+        {% for user in orphan_members %}
+          <li>
+            <strong>{{ user.first_name }} {{ user.last_name }}</strong>
+            <span>@{{ user.username }}</span>
+            <span>{{ user.position.name|default:user.custom_position|default:"—" }}</span>
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% endif %}
+</div>
+
+<style>
+.cp-page{max-width:1400px;margin:0 auto}
+.cp-head{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}
+.cp-head h1{margin:0}
+.cp-nav{display:flex;gap:8px}
+.cp-link{padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;text-decoration:none}
+.cp-list{display:flex;flex-direction:column;gap:10px;margin-top:16px}
+.cp-row{background:#fff;border:1px solid #e2e8f0;border-left:4px solid #0ea5e9;border-radius:12px;padding:12px 14px}
+.cp-row-head{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.cp-row-head h3{margin:0;font-size:18px}
+.cp-row-head span{color:#475569}
+.cp-members{margin:10px 0 0;padding-left:16px}
+.cp-members li{display:flex;gap:10px;flex-wrap:wrap;padding:4px 0}
+.cp-members span{color:#64748b}
+.cp-empty{margin:10px 0 0;color:#64748b}
+.cp-orphans{margin-top:16px;border-left-color:#f59e0b}
+@media (max-width:760px){.cp-members li{display:block}}
+</style>
+{% endblock %}

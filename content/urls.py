@@ -42,7 +42,7 @@ urlpatterns = [
     path("feedback/", FeedbackCreateView.as_view(), name="feedback-create"),
     path(
         "admin/feedback/",
-        FeedbackAdminView.as_view({"get": "list", "post": "create"}),
+        FeedbackAdminView.as_view({"get": "list"}),
         name="feedback-admin-list",
     ),
     path(

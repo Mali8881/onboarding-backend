@@ -1,0 +1,82 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+<div class="cl-page">
+  <div class="cl-head">
+    <h1>Компания: список сотрудников</h1>
+    <div class="cl-nav">
+      <a class="cl-link" href="/admin/company/structure/">Структура</a>
+      <a class="cl-link" href="/admin/company/list/">Список сотрудников</a>
+    </div>
+  </div>
+
+  <form method="get" class="cl-filters">
+    <input type="text" name="q" value="{{ filters.q }}" placeholder="Поиск: имя, логин, email" />
+    <select name="department_id">
+      <option value="">Все отделы</option>
+      {% for d in departments %}
+        <option value="{{ d.id }}" {% if filters.department_id == d.id|stringformat:"s" %}selected{% endif %}>{{ d.name }}</option>
+      {% endfor %}
+    </select>
+    <select name="position_id">
+      <option value="">Все должности</option>
+      {% for p in positions %}
+        <option value="{{ p.id }}" {% if filters.position_id == p.id|stringformat:"s" %}selected{% endif %}>{{ p.name }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit">Фильтровать</button>
+    <a class="cl-reset" href="/admin/company/list/">Сбросить</a>
+  </form>
+
+  <div class="cl-count">Найдено: {{ users|length }}</div>
+
+  <div class="cl-table-wrap">
+    <table class="cl-table">
+      <thead>
+        <tr>
+          <th>Сотрудник</th>
+          <th>Логин</th>
+          <th>Email</th>
+          <th>Отдел</th>
+          <th>Должность</th>
+          <th>Роль</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for user in users %}
+          <tr>
+            <td>{{ user.first_name }} {{ user.last_name|default:"" }}</td>
+            <td>@{{ user.username }}</td>
+            <td>{{ user.email|default:"—" }}</td>
+            <td>{{ user.department.name|default:"—" }}</td>
+            <td>{{ user.position.name|default:user.custom_position|default:"—" }}</td>
+            <td>{{ user.role.name|default:"—" }}</td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="6">Сотрудники не найдены по выбранным фильтрам.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<style>
+.cl-page{max-width:1400px;margin:0 auto}
+.cl-head{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}
+.cl-head h1{margin:0}
+.cl-nav{display:flex;gap:8px}
+.cl-link{padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;text-decoration:none}
+.cl-filters{display:grid;grid-template-columns:2fr 1fr 1fr auto auto;gap:10px;margin:16px 0}
+.cl-filters input,.cl-filters select{padding:10px;border:1px solid #cbd5e1;border-radius:10px}
+.cl-filters button{padding:10px 14px;border:0;border-radius:10px;background:#0ea5e9;color:#fff;cursor:pointer}
+.cl-reset{display:inline-flex;align-items:center;justify-content:center;padding:10px 14px;border:1px solid #d1d5db;border-radius:10px;text-decoration:none}
+.cl-count{margin:0 0 10px;color:#475569;font-weight:600}
+.cl-table-wrap{overflow:auto;background:#fff;border:1px solid #e2e8f0;border-radius:12px}
+.cl-table{width:100%;border-collapse:collapse}
+.cl-table th,.cl-table td{padding:10px 12px;border-bottom:1px solid #f1f5f9;text-align:left}
+.cl-table th{background:#f8fafc;font-size:12px;letter-spacing:.02em;text-transform:uppercase;color:#334155}
+@media (max-width:900px){.cl-filters{grid-template-columns:1fr}}
+</style>
+{% endblock %}
