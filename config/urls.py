@@ -55,6 +55,7 @@ urlpatterns = [
     path("api/v1/metrics/", include("apps.metrics.urls")),
     path("api/v1/bpm/", include("apps.bpm.urls")),
     path("api/", include("work_schedule.urls")),
+    path("api/", include("config.frontend_compat_urls")),
 
     path("assets/<path:asset_path>", spa_asset, name="spa-asset"),
     path("vite.svg", spa_vite_icon, name="spa-vite-icon"),

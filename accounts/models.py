@@ -342,3 +342,54 @@ class TwoFactorCode(models.Model):
 
     def is_expired(self):
         return timezone.now() > self.created_at + timedelta(minutes=5)
+
+
+class PromotionRequest(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        APPROVED = "approved", "Approved"
+        REJECTED = "rejected", "Rejected"
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="promotion_requests",
+        verbose_name="Пользователь",
+    )
+    requested_role = models.ForeignKey(
+        Role,
+        on_delete=models.PROTECT,
+        related_name="promotion_requests",
+        verbose_name="Запрошенная роль",
+    )
+    reason = models.TextField("Причина", blank=True)
+    status = models.CharField(
+        "Статус",
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING,
+    )
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="reviewed_promotion_requests",
+        verbose_name="Проверил",
+    )
+    review_comment = models.TextField("Комментарий проверки", blank=True)
+    reviewed_at = models.DateTimeField("Дата проверки", null=True, blank=True)
+    created_at = models.DateTimeField("Создано", auto_now_add=True)
+    updated_at = models.DateTimeField("Обновлено", auto_now=True)
+
+    class Meta:
+        verbose_name = "Заявка на повышение"
+        verbose_name_plural = "Заявки на повышение"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["status"]),
+            models.Index(fields=["user"]),
+        ]
+
+    def __str__(self):
+        return f"{self.user_id} -> {self.requested_role.name} ({self.status})"

@@ -6,7 +6,11 @@ from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import redirect
 
 
-FRONTEND_DIST_DIR = Path(settings.BASE_DIR) / "frontend" / "dist"
+_DIST_CANDIDATES = [
+    Path(settings.BASE_DIR).parent / "vpluse_front" / "dist",
+    Path(settings.BASE_DIR) / "frontend" / "dist",
+]
+FRONTEND_DIST_DIR = next((path for path in _DIST_CANDIDATES if path.exists()), _DIST_CANDIDATES[0])
 FRONTEND_ASSETS_DIR = FRONTEND_DIST_DIR / "assets"
 
 
