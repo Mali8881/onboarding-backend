@@ -14,6 +14,7 @@ class Command(BaseCommand):
             choices=[
                 Role.Name.EMPLOYEE,
                 Role.Name.INTERN,
+                Role.Name.TEAMLEAD,
                 Role.Name.ADMINISTRATOR,
                 Role.Name.ADMIN,
                 Role.Name.SUPER_ADMIN,
@@ -32,6 +33,7 @@ class Command(BaseCommand):
             Role.Name.SUPER_ADMIN: Role.Level.SUPER_ADMIN,
             Role.Name.ADMINISTRATOR: Role.Level.ADMINISTRATOR,
             Role.Name.ADMIN: Role.Level.ADMIN,
+            Role.Name.TEAMLEAD: Role.Level.TEAMLEAD,
             Role.Name.EMPLOYEE: Role.Level.EMPLOYEE,
             Role.Name.INTERN: Role.Level.INTERN,
         }

@@ -15,7 +15,9 @@ class AttendancePolicy:
     def can_view_team(cls, actor) -> bool:
         if not actor or not actor.is_authenticated:
             return False
-        return cls.is_admin_like(actor)
+        if cls.is_admin_like(actor):
+            return True
+        return AccessPolicy.is_teamlead(actor)
 
     @classmethod
     def can_manage_work_calendar(cls, actor) -> bool:
@@ -35,16 +37,6 @@ class AttendancePolicy:
             return None
         return user.role.name
 
-    @classmethod
-    def is_trackable_user(cls, user) -> bool:
-        role_name = cls._role_name(user)
-        return role_name in {
-            Role.Name.ADMINISTRATOR,
-            Role.Name.ADMIN,
-            Role.Name.EMPLOYEE,
-            Role.Name.INTERN,
-        }
-
     @staticmethod
     def _same_department(actor, target_user) -> bool:
         return bool(
@@ -54,6 +46,17 @@ class AttendancePolicy:
         )
 
     @classmethod
+    def is_trackable_user(cls, user) -> bool:
+        role_name = cls._role_name(user)
+        return role_name in {
+            Role.Name.ADMINISTRATOR,
+            Role.Name.ADMIN,
+            Role.Name.TEAMLEAD,
+            Role.Name.EMPLOYEE,
+            Role.Name.INTERN,
+        }
+
+    @classmethod
     def can_delete_mark(cls, actor, target_user) -> bool:
         if not actor or not actor.is_authenticated:
             return False
@@ -61,11 +64,15 @@ class AttendancePolicy:
             return False
         actor_role = cls._role_name(actor)
         target_role = cls._role_name(target_user)
+        if actor_role == Role.Name.SUPER_ADMIN:
+            return True
         if actor_role in {Role.Name.ADMINISTRATOR, Role.Name.ADMIN}:
             return target_role in {Role.Name.EMPLOYEE, Role.Name.INTERN} and cls._same_department(actor, target_user)
+        if actor_role == Role.Name.TEAMLEAD:
+            return target_user.manager_id == actor.id and target_role in {Role.Name.EMPLOYEE, Role.Name.INTERN}
         if actor.id == target_user.id:
             return actor_role in {Role.Name.EMPLOYEE, Role.Name.INTERN}
-        return target_user.manager_id == actor.id
+        return False
 
     @classmethod
     def can_edit_mark(cls, actor, target_user, mark_date: date) -> bool:
@@ -81,12 +88,17 @@ class AttendancePolicy:
             return actor_role in {
                 Role.Name.ADMINISTRATOR,
                 Role.Name.ADMIN,
+                Role.Name.TEAMLEAD,
                 Role.Name.EMPLOYEE,
                 Role.Name.INTERN,
             }
+        if actor_role == Role.Name.SUPER_ADMIN:
+            return True
         if actor_role in {Role.Name.ADMINISTRATOR, Role.Name.ADMIN}:
             return target_role in {Role.Name.EMPLOYEE, Role.Name.INTERN} and cls._same_department(actor, target_user)
-        return target_user.manager_id == actor.id
+        if actor_role == Role.Name.TEAMLEAD:
+            return target_user.manager_id == actor.id and target_role in {Role.Name.EMPLOYEE, Role.Name.INTERN}
+        return False
 
     @classmethod
     def can_view_user_marks(cls, actor, target_user) -> bool:
@@ -98,6 +110,10 @@ class AttendancePolicy:
             return True
         actor_role = cls._role_name(actor)
         target_role = cls._role_name(target_user)
+        if actor_role == Role.Name.SUPER_ADMIN:
+            return True
         if actor_role in {Role.Name.ADMINISTRATOR, Role.Name.ADMIN}:
             return target_role in {Role.Name.EMPLOYEE, Role.Name.INTERN} and cls._same_department(actor, target_user)
-        return target_user.manager_id == actor.id
+        if actor_role == Role.Name.TEAMLEAD:
+            return target_user.manager_id == actor.id and target_role in {Role.Name.EMPLOYEE, Role.Name.INTERN}
+        return False

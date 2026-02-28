@@ -1,12 +1,13 @@
 from django.urls import path
 from .views import *
-from .views import MyProfileAPIView
+from .views import MyProfileAPIView, MyProfilePasswordAPIView
 
 
 
 urlpatterns = [
     path("login/", LoginView.as_view()),
     path("me/profile/", MyProfileAPIView.as_view(), name="my-profile"),
+    path("me/profile/password/", MyProfilePasswordAPIView.as_view(), name="my-profile-password"),
     path("employee/home/", EmployeeHomeAPIView.as_view(), name="employee-home"),
     path("company/structure/", CompanyStructureAPIView.as_view(), name="company-structure"),
     path("positions/", PositionListAPIView.as_view()),

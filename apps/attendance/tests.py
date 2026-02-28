@@ -23,6 +23,10 @@ class AttendanceApiTests(TestCase):
             name=Role.Name.EMPLOYEE,
             defaults={"level": Role.Level.EMPLOYEE},
         )
+        self.teamlead_role, _ = Role.objects.get_or_create(
+            name=Role.Name.TEAMLEAD,
+            defaults={"level": Role.Level.TEAMLEAD},
+        )
         self.admin_role, _ = Role.objects.get_or_create(
             name=Role.Name.ADMIN,
             defaults={"level": Role.Level.ADMIN},
@@ -31,7 +35,7 @@ class AttendanceApiTests(TestCase):
         self.teamlead = User.objects.create_user(
             username="teamlead",
             password="StrongPass123!",
-            role=self.employee_role,
+            role=self.teamlead_role,
         )
         self.subordinate = User.objects.create_user(
             username="subordinate",

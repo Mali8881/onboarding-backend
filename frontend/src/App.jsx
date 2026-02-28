@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+﻿import { useEffect, useMemo, useState } from 'react'
 import './App.css'
 
 const API = {
@@ -6,6 +6,10 @@ const API = {
   content: 'http://127.0.0.1:8000/api/v1/content',
   regulations: 'http://127.0.0.1:8000/api/v1/regulations',
   reports: 'http://127.0.0.1:8000/api/v1/reports',
+  tasks: 'http://127.0.0.1:8000/api/v1/tasks',
+  kb: 'http://127.0.0.1:8000/api/v1/kb',
+  metrics: 'http://127.0.0.1:8000/api/v1/metrics',
+  bpm: 'http://127.0.0.1:8000/api/v1/bpm',
   schedule: 'http://127.0.0.1:8000/api',
   common: 'http://127.0.0.1:8000/api/v1/common',
 }
@@ -13,7 +17,7 @@ const API = {
 const STORAGE_TOKEN = 'onboarding_access_token'
 const STORAGE_LANDING = 'onboarding_landing'
 const STORAGE_ROLE = 'onboarding_role'
-const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+const WEEKDAY_LABELS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
 
 function getErrorMessage(data, fallback) {
   if (!data) return fallback
@@ -50,6 +54,7 @@ function formatLocalISO(date) {
 function landingFromRole(role) {
   if (role === 'ADMIN' || role === 'ADMINISTRATOR' || role === 'SUPER_ADMIN') return 'admin_panel'
   if (role === 'INTERN') return 'intern_portal'
+  if (role === 'TEAMLEAD') return 'teamlead_portal'
   return 'employee_portal'
 }
 
@@ -305,12 +310,26 @@ function App() {
   const [employeeTab, setEmployeeTab] = useState('home')
   const [employeeLoading, setEmployeeLoading] = useState(false)
   const [dailyReportSummary, setDailyReportSummary] = useState('')
+  const [employeeTasksMy, setEmployeeTasksMy] = useState([])
+  const [employeeTasksTeam, setEmployeeTasksTeam] = useState([])
+  const [employeeTaskCreate, setEmployeeTaskCreate] = useState({ title: '', description: '', assignee_id: '' })
+  const [kbArticles, setKbArticles] = useState([])
+  const [kbReport, setKbReport] = useState(null)
+  const [myMetrics, setMyMetrics] = useState(null)
+  const [teamMetrics, setTeamMetrics] = useState(null)
+  const [bpmItems, setBpmItems] = useState([])
+  const [bpmTemplates, setBpmTemplates] = useState([])
+  const [selectedTaskId, setSelectedTaskId] = useState('')
+  const [selectedTaskColumn, setSelectedTaskColumn] = useState('')
 
   const [adminRequests, setAdminRequests] = useState([])
   const [adminDepartments, setAdminDepartments] = useState([])
   const [adminWeeklyPlans, setAdminWeeklyPlans] = useState([])
   const [adminWeeklyStatusFilter, setAdminWeeklyStatusFilter] = useState('pending')
   const [adminWeeklyDecisionById, setAdminWeeklyDecisionById] = useState({})
+  const [adminKbReport, setAdminKbReport] = useState(null)
+  const [adminBpmItems, setAdminBpmItems] = useState([])
+  const [adminMetricsTeam, setAdminMetricsTeam] = useState(null)
   const [adminLoading, setAdminLoading] = useState(false)
   const [adminError, setAdminError] = useState('')
   const [employeeActionLoading, setEmployeeActionLoading] = useState(false)
@@ -331,6 +350,8 @@ function App() {
   const employeeOfficeHoursTotal = useMemo(() => sumShiftHours(employeeWeekDays, 'office'), [employeeWeekDays])
   const employeeOnlineHoursTotal = useMemo(() => sumShiftHours(employeeWeekDays, 'online'), [employeeWeekDays])
   const employeeNeedsReason = employeeOfficeHoursTotal < 24 || employeeOnlineHoursTotal > 16
+  const isTeamLead = role === 'TEAMLEAD'
+  const isAdminLike = role === 'ADMIN' || role === 'SUPER_ADMIN'
 
   useEffect(() => {
     if (!token) {
@@ -346,10 +367,18 @@ function App() {
   useEffect(() => {
     if (!token || !landing) return
     if (landing === 'intern_portal') loadInternOverview()
-    if (landing === 'employee_portal') loadEmployeeData()
+    if (landing === 'employee_portal' || landing === 'teamlead_portal') loadEmployeeData()
     if (landing === 'admin_panel') loadAdminData()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [landing, token])
+
+  useEffect(() => {
+    if (!isTeamLead) return
+    const hiddenForTeamLead = ['home', 'my_courses', 'catalog', 'reports']
+    if (hiddenForTeamLead.includes(employeeTab)) {
+      setEmployeeTab('tasks')
+    }
+  }, [isTeamLead, employeeTab])
 
   async function hydrateSession() {
     setGlobalError('')
@@ -499,7 +528,7 @@ function App() {
     setEmployeeLoading(true)
     setEmployeeError('')
     try {
-      const [homeRes, myRes, catalogRes, reportsRes, scheduleRes, scheduleOptionsRes, structureRes, weeklyPlansRes] = await Promise.all([
+      const [homeRes, myRes, catalogRes, reportsRes, scheduleRes, scheduleOptionsRes, structureRes, weeklyPlansRes, tasksMyRes, tasksTeamRes, kbRes, metricsMyRes, metricsTeamRes, bpmRes, bpmTemplatesRes, kbReportRes] = await Promise.all([
         fetch(`${API.accounts}/employee/home/`, { headers: authHeaders }),
         fetch(`${API.content}/courses/my/`, { headers: authHeaders }),
         fetch(`${API.content}/courses/available/`, { headers: authHeaders }),
@@ -508,6 +537,14 @@ function App() {
         fetch(`${API.schedule}/schedules/`, { headers: authHeaders }),
         fetch(`${API.accounts}/company/structure/`, { headers: authHeaders }),
         fetch(`${API.schedule}/v1/work-schedules/weekly-plans/my/`, { headers: authHeaders }),
+        fetch(`${API.tasks}/my/`, { headers: authHeaders }),
+        fetch(`${API.tasks}/team/`, { headers: authHeaders }),
+        fetch(`${API.kb}/`, { headers: authHeaders }),
+        fetch(`${API.metrics}/`, { headers: authHeaders }),
+        fetch(`${API.metrics}/team/`, { headers: authHeaders }),
+        fetch(`${API.bpm}/`, { headers: authHeaders }),
+        fetch(`${API.bpm}/admin/templates/`, { headers: authHeaders }),
+        fetch(`${API.kb}/report/`, { headers: authHeaders }),
       ])
 
       const [
@@ -519,6 +556,14 @@ function App() {
         scheduleOptionsData,
         structureData,
         weeklyPlansData,
+        tasksMyData,
+        tasksTeamData,
+        kbData,
+        metricsMyData,
+        metricsTeamData,
+        bpmData,
+        bpmTemplatesData,
+        kbReportData,
       ] = await Promise.all([
         toJson(homeRes),
         toJson(myRes),
@@ -528,6 +573,14 @@ function App() {
         toJson(scheduleOptionsRes),
         toJson(structureRes),
         toJson(weeklyPlansRes),
+        toJson(tasksMyRes),
+        toJson(tasksTeamRes),
+        toJson(kbRes),
+        toJson(metricsMyRes),
+        toJson(metricsTeamRes),
+        toJson(bpmRes),
+        toJson(bpmTemplatesRes),
+        toJson(kbReportRes),
       ])
 
       if (!homeRes.ok) throw new Error(getErrorMessage(homeData, 'Не удалось загрузить страницу работника'))
@@ -546,6 +599,14 @@ function App() {
       setEmployeeWeekDays(createFixedWeekShifts(selectedWeekStart, selectedWeekPlan?.days || []))
       setEmployeeOnlineReason(selectedWeekPlan?.online_reason || '')
       setEmployeeWeekComment(selectedWeekPlan?.employee_comment || '')
+      setEmployeeTasksMy(tasksMyRes.ok && Array.isArray(tasksMyData) ? tasksMyData : [])
+      setEmployeeTasksTeam(tasksTeamRes.ok && Array.isArray(tasksTeamData) ? tasksTeamData : [])
+      setKbArticles(kbRes.ok && Array.isArray(kbData) ? kbData : [])
+      setMyMetrics(metricsMyRes.ok ? metricsMyData : null)
+      setTeamMetrics(metricsTeamRes.ok ? metricsTeamData : null)
+      setBpmItems(bpmRes.ok ? (Array.isArray(bpmData?.items) ? bpmData.items : []) : [])
+      setBpmTemplates(bpmTemplatesRes.ok && Array.isArray(bpmTemplatesData) ? bpmTemplatesData : [])
+      setKbReport(kbReportRes.ok ? kbReportData : null)
     } catch (error) {
       setEmployeeError(error.message || 'Ошибка страницы работника')
     } finally {
@@ -636,13 +697,13 @@ function App() {
       .filter((item) => item.date && item.mode)
 
     if (sanitizedDays.length !== 7) {
-      setEmployeeError('Need 7 day entries (Monday through Sunday).')
+      setEmployeeError('Нужно заполнить 7 дней (с понедельника по воскресенье).')
       return
     }
 
     const outsideWeek = sanitizedDays.some((item) => !isShiftInsideWeek(item.date, normalizedWeekStart))
     if (outsideWeek) {
-      setEmployeeError('All shifts must be inside the selected week (Monday-Sunday).')
+      setEmployeeError('Все смены должны быть внутри выбранной недели (понедельник-воскресенье).')
       return
     }
 
@@ -653,7 +714,7 @@ function App() {
       return shift.start_time < limits.min || shift.end_time > limits.max || shift.end_time <= shift.start_time
     })
     if (hasInvalidHours) {
-      setEmployeeError('Invalid time range. Mon-Fri: 09:00-21:00, Sat-Sun: 11:00-19:00, and end must be after start.')
+      setEmployeeError('Некорректный диапазон времени. Пн-Пт: 09:00-21:00, Сб-Вс: 11:00-19:00, окончание позже начала.')
       return
     }
 
@@ -699,12 +760,12 @@ function App() {
       return false
     })
     if (hasInvalidBreakRules) {
-      setEmployeeError('Break/lunch rules are invalid. Breaks: office >=7h, up to 4x15m. Lunch: office >=8h, exactly 60m. No overlaps.')
+      setEmployeeError('Неверные правила перерывов/обеда. Перерывы: офис >=7ч, до 4х15м. Обед: офис >=8ч, ровно 60м. Без пересечений.')
       return
     }
 
     if (employeeNeedsReason && !employeeOnlineReason.trim()) {
-      setEmployeeError('Explanation is required when offline < 24h and/or online > 16h.')
+      setEmployeeError('Пояснение обязательно, когда офлайн < 24ч и/или онлайн > 16ч.')
       return
     }
 
@@ -721,7 +782,83 @@ function App() {
     })
     const data = await toJson(res)
     if (!res.ok) {
-      setEmployeeError(getErrorMessage(data, 'Failed to submit weekly work plan'))
+      setEmployeeError(getErrorMessage(data, 'Не удалось отправить недельный план работы'))
+      setEmployeeActionLoading(false)
+      return
+    }
+    setEmployeeActionLoading(false)
+    await loadEmployeeData()
+  }
+
+  async function createTeamTask(event) {
+    event.preventDefault()
+    if (!employeeTaskCreate.title.trim() || !employeeTaskCreate.assignee_id) return
+    setEmployeeActionLoading(true)
+    const res = await fetch(`${API.tasks}/create/`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({
+        title: employeeTaskCreate.title.trim(),
+        description: employeeTaskCreate.description || '',
+        assignee_id: Number(employeeTaskCreate.assignee_id),
+      }),
+    })
+    const data = await toJson(res)
+    if (!res.ok) {
+      setEmployeeError(getErrorMessage(data, 'Не удалось создать задачу'))
+      setEmployeeActionLoading(false)
+      return
+    }
+    setEmployeeTaskCreate({ title: '', description: '', assignee_id: '' })
+    setEmployeeActionLoading(false)
+    await loadEmployeeData()
+  }
+
+  async function moveTaskColumn() {
+    if (!selectedTaskId || !selectedTaskColumn) return
+    setEmployeeActionLoading(true)
+    const res = await fetch(`${API.tasks}/${selectedTaskId}/move/`, {
+      method: 'PATCH',
+      headers: authHeaders,
+      body: JSON.stringify({ column_id: Number(selectedTaskColumn) }),
+    })
+    const data = await toJson(res)
+    if (!res.ok) {
+      setEmployeeError(getErrorMessage(data, 'Не удалось переместить задачу'))
+      setEmployeeActionLoading(false)
+      return
+    }
+    setEmployeeActionLoading(false)
+    await loadEmployeeData()
+  }
+
+  async function createBpmInstance(templateId) {
+    setEmployeeActionLoading(true)
+    const res = await fetch(`${API.bpm}/instances/`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({ template_id: templateId }),
+    })
+    const data = await toJson(res)
+    if (!res.ok) {
+      setEmployeeError(getErrorMessage(data, 'Не удалось запустить процесс'))
+      setEmployeeActionLoading(false)
+      return
+    }
+    setEmployeeActionLoading(false)
+    await loadEmployeeData()
+  }
+
+  async function completeBpmStep(stepId) {
+    setEmployeeActionLoading(true)
+    const res = await fetch(`${API.bpm}/steps/${stepId}/complete/`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({}),
+    })
+    const data = await toJson(res)
+    if (!res.ok) {
+      setEmployeeError(getErrorMessage(data, 'Не удалось завершить шаг'))
       setEmployeeActionLoading(false)
       return
     }
@@ -733,17 +870,23 @@ function App() {
     setAdminLoading(true)
     setAdminError('')
     try {
-      const [requestsRes, profileRes, notificationsRes, weeklyPlansRes] = await Promise.all([
+      const [requestsRes, profileRes, notificationsRes, weeklyPlansRes, kbReportRes, bpmListRes, metricsTeamRes] = await Promise.all([
         fetch(`${API.regulations}/admin/intern-requests/?status=pending`, { headers: authHeaders }),
         fetch(`${API.accounts}/me/profile/`, { headers: authHeaders }),
         fetch(`${API.common}/notifications/`, { headers: authHeaders }),
         fetch(`${API.schedule}/v1/work-schedules/admin/weekly-plans/?status=${adminWeeklyStatusFilter}`, { headers: authHeaders }),
+        fetch(`${API.kb}/report/`, { headers: authHeaders }),
+        fetch(`${API.bpm}/`, { headers: authHeaders }),
+        fetch(`${API.metrics}/team/`, { headers: authHeaders }),
       ])
-      const [requestsData, profileData, notificationsData, weeklyPlansData] = await Promise.all([
+      const [requestsData, profileData, notificationsData, weeklyPlansData, kbReportData, bpmListData, metricsTeamData] = await Promise.all([
         toJson(requestsRes),
         toJson(profileRes),
         toJson(notificationsRes),
         toJson(weeklyPlansRes),
+        toJson(kbReportRes),
+        toJson(bpmListRes),
+        toJson(metricsTeamRes),
       ])
       if (!requestsRes.ok) throw new Error(getErrorMessage(requestsData, 'Не удалось загрузить заявки стажеров'))
       setAdminRequests(Array.isArray(requestsData) ? requestsData : [])
@@ -751,6 +894,9 @@ function App() {
       const departments = profileData?.department ? [{ id: profileData.department_id, name: profileData.department }] : []
       setAdminDepartments(departments)
       setAdminWeeklyPlans(weeklyPlansRes.ok && Array.isArray(weeklyPlansData) ? weeklyPlansData : [])
+      setAdminKbReport(kbReportRes.ok ? kbReportData : null)
+      setAdminBpmItems(bpmListRes.ok ? (Array.isArray(bpmListData?.items) ? bpmListData.items : []) : [])
+      setAdminMetricsTeam(metricsTeamRes.ok ? metricsTeamData : null)
 
       if (!notificationsRes.ok) {
         setAdminError('Заявки загружены, но уведомления недоступны.')
@@ -771,7 +917,7 @@ function App() {
     })
     const data = await toJson(res)
     if (!res.ok) {
-      setAdminError(getErrorMessage(data, 'Failed to load weekly plans'))
+      setAdminError(getErrorMessage(data, 'Не удалось загрузить недельные планы'))
       setAdminActionLoading(false)
       return
     }
@@ -791,7 +937,7 @@ function App() {
     })
     const data = await toJson(res)
     if (!res.ok) {
-      setAdminError(getErrorMessage(data, 'Failed to process weekly plan'))
+      setAdminError(getErrorMessage(data, 'Не удалось обработать недельный план'))
       setAdminActionLoading(false)
       return
     }
@@ -913,33 +1059,52 @@ function App() {
   function renderEmployeePortal() {
     return (
       <section className="panel">
-        <h2>Кабинет работника</h2>
+        <h2>{isTeamLead ? 'Кабинет тимлида' : 'Кабинет работника'}</h2>
         <p>{employeeHome?.greeting || `Здравствуйте, ${fullName}`}</p>
         {employeeError && <p className="error">{employeeError}</p>}
         {employeeLoading && <p>Загрузка...</p>}
 
         <nav className="tabs">
-          <button className={employeeTab === 'home' ? 'active' : ''} onClick={() => setEmployeeTab('home')}>
-            Главная
-          </button>
-          <button className={employeeTab === 'my_courses' ? 'active' : ''} onClick={() => setEmployeeTab('my_courses')}>
-            Мои курсы
-          </button>
-          <button className={employeeTab === 'catalog' ? 'active' : ''} onClick={() => setEmployeeTab('catalog')}>
-            Каталог курсов
-          </button>
-          <button className={employeeTab === 'reports' ? 'active' : ''} onClick={() => setEmployeeTab('reports')}>
-            Отчеты
-          </button>
+          {!isTeamLead && (
+            <button className={employeeTab === 'home' ? 'active' : ''} onClick={() => setEmployeeTab('home')}>
+              Главная
+            </button>
+          )}
+          {!isTeamLead && (
+            <button className={employeeTab === 'my_courses' ? 'active' : ''} onClick={() => setEmployeeTab('my_courses')}>
+              Мои курсы
+            </button>
+          )}
+          {!isTeamLead && (
+            <button className={employeeTab === 'catalog' ? 'active' : ''} onClick={() => setEmployeeTab('catalog')}>
+              Каталог курсов
+            </button>
+          )}
+          {!isTeamLead && (
+            <button className={employeeTab === 'reports' ? 'active' : ''} onClick={() => setEmployeeTab('reports')}>
+              Отчеты
+            </button>
+          )}
           <button className={employeeTab === 'schedule' ? 'active' : ''} onClick={() => setEmployeeTab('schedule')}>
             График работы
           </button>
           <button className={employeeTab === 'structure' ? 'active' : ''} onClick={() => setEmployeeTab('structure')}>
             Структура компании
           </button>
-        </nav>
+                  <button className={employeeTab === 'tasks' ? 'active' : ''} onClick={() => setEmployeeTab('tasks')}>
+            Задачи
+          </button>
+          <button className={employeeTab === 'kb' ? 'active' : ''} onClick={() => setEmployeeTab('kb')}>
+            База знаний
+          </button>
+          <button className={employeeTab === 'metrics' ? 'active' : ''} onClick={() => setEmployeeTab('metrics')}>
+            Метрики
+          </button>
+          <button className={employeeTab === 'bpm' ? 'active' : ''} onClick={() => setEmployeeTab('bpm')}>
+            Процессы
+          </button></nav>
 
-        {employeeTab === 'home' && (
+        {!isTeamLead && employeeTab === 'home' && (
           <div className="card">
             <p>Мои курсы: {employeeHome?.my_courses_count || 0}</p>
             <p>Завершенные курсы: {employeeHome?.completed_courses_count || 0}</p>
@@ -948,7 +1113,7 @@ function App() {
           </div>
         )}
 
-        {employeeTab === 'my_courses' &&
+        {!isTeamLead && employeeTab === 'my_courses' &&
           employeeCoursesMy.map((item) => (
             <article className="card" key={item.id}>
               <h3>{item.course.title}</h3>
@@ -957,7 +1122,7 @@ function App() {
             </article>
           ))}
 
-        {employeeTab === 'catalog' &&
+        {!isTeamLead && employeeTab === 'catalog' &&
           employeeCoursesCatalog.map((course) => (
             <article className="card" key={course.id}>
               <h3>{course.title}</h3>
@@ -972,7 +1137,7 @@ function App() {
             </article>
           ))}
 
-        {employeeTab === 'reports' && (
+        {!isTeamLead && employeeTab === 'reports' && (
           <div>
             <form className="inline-form" onSubmit={submitDailyReport}>
               <textarea
@@ -994,10 +1159,10 @@ function App() {
         {employeeTab === 'schedule' && (
           <div>
             <article className="card">
-              <h3>Weekly plan calendar</h3>
+              <h3>Календарь недельного плана</h3>
               <form className="inline-form" onSubmit={submitEmployeeWeeklyPlan}>
                 <label>
-                  Week start (Monday)
+                  Начало недели (понедельник)
                   <input
                     type="date"
                     value={employeeWeekStart}
@@ -1012,8 +1177,8 @@ function App() {
                   />
                 </label>
                 <div className="stats">
-                  <span>Offline total: {employeeOfficeHoursTotal}h</span>
-                  <span>Online total: {employeeOnlineHoursTotal}h</span>
+                  <span>Офлайн всего: {employeeOfficeHoursTotal}ч</span>
+                  <span>Онлайн всего: {employeeOnlineHoursTotal}ч</span>
                 </div>
                 <div className="week-grid">
                   {employeeWeekDays.map((shift, index) => (
@@ -1021,7 +1186,7 @@ function App() {
                       <strong>{WEEKDAY_LABELS[index]}</strong>
                       <p className="notice">{shift.date}</p>
                       <label>
-                        From
+                        С
                         <input
                           type="time"
                           step="3600"
@@ -1039,7 +1204,7 @@ function App() {
                         />
                       </label>
                       <label>
-                        To
+                        До
                         <input
                           type="time"
                           step="3600"
@@ -1057,7 +1222,7 @@ function App() {
                         />
                       </label>
                       <label>
-                        Mode
+                        Режим
                         <select
                           value={shift.mode}
                           onChange={(event) =>
@@ -1104,13 +1269,13 @@ function App() {
                             )
                           }
                         >
-                          <option value="office">Offline (office)</option>
-                          <option value="online">Online</option>
-                          <option value="day_off">Day off</option>
+                          <option value="office">Офлайн (офис)</option>
+                          <option value="online">Онлайн</option>
+                          <option value="day_off">Выходной</option>
                         </select>
                       </label>
                       <label>
-                        Shift comment
+                        Комментарий к смене
                         <input
                           value={shift.comment}
                           onChange={(event) =>
@@ -1178,7 +1343,7 @@ function App() {
                                       )
                                     }
                                   >
-                                    Remove
+                                    Удалить
                                   </button>
                                 </div>
                               ))}
@@ -1207,7 +1372,7 @@ function App() {
                                   )
                                 }
                               >
-                                + Add 15-minute break
+                                + Добавить перерыв 15 минут
                               </button>
                             </div>
                           ) : null}
@@ -1251,18 +1416,18 @@ function App() {
                                   )
                                 }
                               >
-                                Clear lunch
+                                Очистить обед
                               </button>
                             </div>
                           ) : null}
                         </div>
                       )}
-                      <p>Hours: {shift.mode === 'day_off' ? '-' : `${getShiftHours(shift)}h`}</p>
+                      <p>Часы: {shift.mode === 'day_off' ? '-' : `${getShiftHours(shift)}ч`}</p>
                     </div>
                   ))}
                 </div>
                 <label>
-                  Explanation (required when offline {'<'} 24h and/or online {'>'} 16h)
+                  Пояснение (обязательно, если офлайн {'<'} 24ч и/или онлайн {'>'} 16ч)
                   <textarea
                     value={employeeOnlineReason}
                     required={employeeNeedsReason}
@@ -1270,40 +1435,40 @@ function App() {
                   />
                 </label>
                 <label>
-                  Employee comment
+                  Комментарий сотрудника
                   <textarea value={employeeWeekComment} onChange={(event) => setEmployeeWeekComment(event.target.value)} />
                 </label>
                 <button type="submit" disabled={employeeActionLoading}>
-                  {employeeActionLoading ? 'Submitting...' : 'Send for admin approval'}
+                  {employeeActionLoading ? 'Отправка...' : 'Отправить на согласование администратору'}
                 </button>
               </form>
             </article>
 
             <article className="card">
-              <h3>My weekly plans</h3>
-              {employeeWeeklyPlans.length === 0 && <p>No weekly plans yet.</p>}
+              <h3>Мои недельные планы</h3>
+              {employeeWeeklyPlans.length === 0 && <p>Недельных планов пока нет.</p>}
               {employeeWeeklyPlans.map((plan) => (
                 <div key={plan.id} className="inline-block">
-                  <p>Week: {plan.week_start}</p>
-                  <p>Status: {plan.status}</p>
-                  <p>Office: {plan.office_hours}h, Online: {plan.online_hours}h</p>
+                  <p>Неделя: {plan.week_start}</p>
+                  <p>Статус: {plan.status}</p>
+                  <p>Офис: {plan.office_hours}ч, Онлайн: {plan.online_hours}ч</p>
                   {Array.isArray(plan.days) && (
                     <div className="week-grid">
                       {plan.days.map((shift, idx) => (
                         <div className="inline-block" key={`${plan.id}-shift-${idx}`}>
                           <p>{shift.date} ({formatShiftWeekday(shift.date)})</p>
-                          <p>{shift.mode === 'day_off' ? 'Day off' : `${shift.start_time} - ${shift.end_time}`}</p>
-                          <p>Mode: {shift.mode}</p>
+                          <p>{shift.mode === 'day_off' ? 'Выходной' : `${shift.start_time} - ${shift.end_time}`}</p>
+                          <p>Режим: {shift.mode}</p>
                           {Array.isArray(shift.breaks) && shift.breaks.length > 0 ? (
-                            <p>Breaks: {shift.breaks.map((part) => `${part.start_time}-${part.end_time}`).join(', ')}</p>
+                            <p>Перерывы: {shift.breaks.map((part) => `${part.start_time}-${part.end_time}`).join(', ')}</p>
                           ) : null}
-                          {shift.lunch_start && shift.lunch_end ? <p>Lunch: {shift.lunch_start}-{shift.lunch_end}</p> : null}
-                          {shift.comment ? <p>Comment: {shift.comment}</p> : null}
+                          {shift.lunch_start && shift.lunch_end ? <p>Обед: {shift.lunch_start}-{shift.lunch_end}</p> : null}
+                          {shift.comment ? <p>Комментарий: {shift.comment}</p> : null}
                         </div>
                       ))}
                     </div>
                   )}
-                  {plan.admin_comment ? <p>Admin comment: {plan.admin_comment}</p> : null}
+                  {plan.admin_comment ? <p>Комментарий администратора: {plan.admin_comment}</p> : null}
                 </div>
               ))}
             </article>
@@ -1321,6 +1486,158 @@ function App() {
                 <p>Руководитель: {department.head?.full_name || department.head?.username || 'Не назначен'}</p>
               </article>
             ))}
+          </div>
+        )}
+
+        {employeeTab === 'tasks' && (
+          <div>
+            {(isTeamLead || isAdminLike) && (
+              <article className="card">
+                <h3>Создать задачу для команды</h3>
+                <form className="inline-form" onSubmit={createTeamTask}>
+                  <input
+                    placeholder="Название"
+                    value={employeeTaskCreate.title}
+                    onChange={(event) => setEmployeeTaskCreate((prev) => ({ ...prev, title: event.target.value }))}
+                  />
+                  <textarea
+                    placeholder="Описание"
+                    value={employeeTaskCreate.description}
+                    onChange={(event) => setEmployeeTaskCreate((prev) => ({ ...prev, description: event.target.value }))}
+                  />
+                  <input
+                    type="number"
+                    placeholder="ID исполнителя"
+                    value={employeeTaskCreate.assignee_id}
+                    onChange={(event) => setEmployeeTaskCreate((prev) => ({ ...prev, assignee_id: event.target.value }))}
+                  />
+                  <button type="submit" disabled={employeeActionLoading}>Создать задачу</button>
+                </form>
+              </article>
+            )}
+            <article className="card">
+              <h3>Мои задачи</h3>
+              {employeeTasksMy.length === 0 && <p>Задач пока нет.</p>}
+              {employeeTasksMy.map((task) => (
+                <div className="inline-block" key={task.id}>
+                  <p><strong>{task.title}</strong></p>
+                  <p>Колонка: {task.column}</p>
+                  <p>Приоритет: {task.priority}</p>
+                  <p>Срок: {task.due_date || '-'}</p>
+                </div>
+              ))}
+            </article>
+            {(isTeamLead || isAdminLike) && (
+              <article className="card">
+                <h3>Задачи команды</h3>
+                {employeeTasksTeam.length === 0 && <p>У команды пока нет задач.</p>}
+                {employeeTasksTeam.map((task) => (
+                  <div className="inline-block" key={task.id}>
+                    <p><strong>{task.title}</strong></p>
+                    <p>Исполнитель: {task.assignee_username}</p>
+                    <p>Колонка: {task.column}</p>
+                  </div>
+                ))}
+                <div className="actions-row">
+                  <input type="number" placeholder="ID задачи" value={selectedTaskId} onChange={(event) => setSelectedTaskId(event.target.value)} />
+                  <input type="number" placeholder="ID колонки" value={selectedTaskColumn} onChange={(event) => setSelectedTaskColumn(event.target.value)} />
+                  <button disabled={employeeActionLoading} onClick={moveTaskColumn}>Переместить задачу</button>
+                </div>
+              </article>
+            )}
+          </div>
+        )}
+
+        {employeeTab === 'kb' && (
+          <div>
+            <article className="card">
+              <h3>Статьи базы знаний</h3>
+              {kbArticles.length === 0 && <p>Статей пока нет.</p>}
+              {kbArticles.map((article) => (
+                <div className="inline-block" key={article.id}>
+                  <p><strong>{article.title}</strong></p>
+                  <p>Видимость: {article.visibility}</p>
+                  <p>Категория: {article.category_name || '-'}</p>
+                </div>
+              ))}
+            </article>
+            {(isTeamLead || isAdminLike) && kbReport && (
+              <article className="card">
+                <h3>Отчет по базе знаний (30 дней)</h3>
+                {(kbReport.top_30_days || []).map((row) => (
+                  <div className="inline-block" key={row.article_id}>
+                    <p><strong>{row.title}</strong></p>
+                    <p>Просмотры: {row.views}</p>
+                    <p>Уникальные: {row.unique_views}</p>
+                    <p>Охват: {row.view_percent}%</p>
+                  </div>
+                ))}
+              </article>
+            )}
+          </div>
+        )}
+
+        {employeeTab === 'metrics' && (
+          <div>
+            <article className="card">
+              <h3>Мои метрики</h3>
+              {!myMetrics && <p>Данных пока нет.</p>}
+              {myMetrics && (
+                <div className="stats">
+                  <span>Создано за 7 дней: {myMetrics.tasks_created_7d}</span>
+                  <span>Закрыто за 7 дней: {myMetrics.tasks_closed_7d}</span>
+                  <span>Просрочено: {myMetrics.tasks_overdue}</span>
+                  <span>Посещаемость: {myMetrics.attendance_percent_month}%</span>
+                  <span>Просмотры БЗ: {myMetrics.kb_views_month}</span>
+                </div>
+              )}
+            </article>
+            {(isTeamLead || isAdminLike) && (
+              <article className="card">
+                <h3>Метрики команды</h3>
+                {!teamMetrics && <p>Данных по команде пока нет.</p>}
+                {teamMetrics && (
+                  <div className="stats">
+                    <span>Размер команды: {teamMetrics.team_size}</span>
+                    <span>Создано за 7 дней: {teamMetrics.tasks_created_7d}</span>
+                    <span>Закрыто за 7 дней: {teamMetrics.tasks_closed_7d}</span>
+                    <span>Просрочено: {teamMetrics.tasks_overdue}</span>
+                    <span>Посещаемость: {teamMetrics.attendance_percent_month}%</span>
+                  </div>
+                )}
+              </article>
+            )}
+          </div>
+        )}
+
+        {employeeTab === 'bpm' && (
+          <div>
+            <article className="card">
+              <h3>Процессы</h3>
+              {bpmItems.length === 0 && <p>Активных процессов нет.</p>}
+              {bpmItems.map((item) => (
+                <div className="inline-block" key={item.id}>
+                  <p><strong>{item.template_name}</strong></p>
+                  <p>Статус: {item.status}</p>
+                  {(item.steps || []).map((step) => (
+                    <div className="actions-row" key={step.id}>
+                      <span>#{step.order} {step.step_name} ({step.status})</span>
+                      {step.status === 'in_progress' && <button onClick={() => completeBpmStep(step.id)}>Завершить шаг</button>}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </article>
+            <article className="card">
+              <h3>Запуск процесса</h3>
+              {(bpmTemplates || []).length === 0 && <p>Нет доступных шаблонов.</p>}
+              {(bpmTemplates || []).map((template) => (
+                <div className="actions-row" key={template.id}>
+                  <span>{template.name}</span>
+                  <button onClick={() => createBpmInstance(template.id)}>Запустить</button>
+                </div>
+              ))}
+            </article>
           </div>
         )}
       </section>
@@ -1362,49 +1679,49 @@ function App() {
           </article>
         ))}
 
-        <h3>Weekly plans from employees</h3>
+        <h3>Недельные планы сотрудников</h3>
         <article className="card">
           <div className="actions-row">
             <label>
-              Status filter
+              Фильтр по статусу
               <select
                 value={adminWeeklyStatusFilter}
                 onChange={(event) => setAdminWeeklyStatusFilter(event.target.value)}
               >
-                <option value="pending">pending</option>
-                <option value="clarification_requested">clarification_requested</option>
-                <option value="approved">approved</option>
-                <option value="rejected">rejected</option>
+                <option value="pending">Ожидает</option>
+                <option value="clarification_requested">Требует уточнений</option>
+                <option value="approved">Одобрен</option>
+                <option value="rejected">Отклонен</option>
               </select>
             </label>
             <button onClick={refreshAdminWeeklyPlans} disabled={adminActionLoading}>
-              {adminActionLoading ? 'Loading...' : 'Refresh'}
+              {adminActionLoading ? 'Загрузка...' : 'Обновить'}
             </button>
           </div>
         </article>
-        {adminWeeklyPlans.length === 0 && <p>No weekly plans for selected status.</p>}
+        {adminWeeklyPlans.length === 0 && <p>Для выбранного статуса заявок нет.</p>}
         {adminWeeklyPlans.map((plan) => (
           <article className="card" key={plan.id}>
-            <p>User: {plan.username}</p>
-            <p>Week: {plan.week_start}</p>
-            <p>Office: {plan.office_hours}h, Online: {plan.online_hours}h</p>
+            <p>Сотрудник: {plan.username}</p>
+            <p>Неделя: {plan.week_start}</p>
+            <p>Офис: {plan.office_hours}ч, Онлайн: {plan.online_hours}ч</p>
             {Array.isArray(plan.days) && (
               <div className="week-grid">
                 {plan.days.map((shift, idx) => (
                   <div className="inline-block" key={`${plan.id}-${idx}`}>
                     <p>{shift.date} ({formatShiftWeekday(shift.date)})</p>
-                    <p>{shift.mode === 'day_off' ? 'Day off' : `${shift.start_time} - ${shift.end_time}`}</p>
-                    <p>Mode: {shift.mode}</p>
+                    <p>{shift.mode === 'day_off' ? 'Выходной' : `${shift.start_time} - ${shift.end_time}`}</p>
+                    <p>Режим: {shift.mode}</p>
                     {Array.isArray(shift.breaks) && shift.breaks.length > 0 ? (
-                      <p>Breaks: {shift.breaks.map((part) => `${part.start_time}-${part.end_time}`).join(', ')}</p>
+                      <p>Перерывы: {shift.breaks.map((part) => `${part.start_time}-${part.end_time}`).join(', ')}</p>
                     ) : null}
-                    {shift.lunch_start && shift.lunch_end ? <p>Lunch: {shift.lunch_start}-{shift.lunch_end}</p> : null}
-                    {shift.comment ? <p>Comment: {shift.comment}</p> : null}
+                    {shift.lunch_start && shift.lunch_end ? <p>Обед: {shift.lunch_start}-{shift.lunch_end}</p> : null}
+                    {shift.comment ? <p>Комментарий: {shift.comment}</p> : null}
                   </div>
                 ))}
               </div>
             )}
-            {plan.online_reason ? <p>Online reason: {plan.online_reason}</p> : null}
+            {plan.online_reason ? <p>Причина онлайна: {plan.online_reason}</p> : null}
             <div className="actions-row">
               <select
                 value={adminWeeklyDecisionById[plan.id]?.action || 'approve'}
@@ -1415,12 +1732,12 @@ function App() {
                   }))
                 }
               >
-                <option value="approve">approve</option>
-                <option value="request_clarification">request_clarification</option>
-                <option value="reject">reject</option>
+                <option value="approve">Одобрить</option>
+                <option value="request_clarification">Запросить уточнение</option>
+                <option value="reject">Отклонить</option>
               </select>
               <input
-                placeholder="Admin comment"
+                placeholder="Комментарий администратора"
                 value={adminWeeklyDecisionById[plan.id]?.admin_comment || ''}
                 onChange={(event) =>
                   setAdminWeeklyDecisionById((prev) => ({
@@ -1430,11 +1747,50 @@ function App() {
                 }
               />
               <button disabled={adminActionLoading} onClick={() => decideAdminWeeklyPlan(plan.id)}>
-                Submit decision
+                Отправить решение
               </button>
             </div>
           </article>
         ))}
+
+        <h3>Метрики команды</h3>
+        <article className="card">
+          {!adminMetricsTeam && <p>Данных по команде пока нет.</p>}
+          {adminMetricsTeam && (
+            <div className="stats">
+              <span>Размер команды: {adminMetricsTeam.team_size}</span>
+              <span>Создано за 7 дней: {adminMetricsTeam.tasks_created_7d}</span>
+              <span>Закрыто за 7 дней: {adminMetricsTeam.tasks_closed_7d}</span>
+              <span>Просрочено: {adminMetricsTeam.tasks_overdue}</span>
+              <span>Посещаемость: {adminMetricsTeam.attendance_percent_month}%</span>
+            </div>
+          )}
+        </article>
+
+        <h3>Отчет по базе знаний (30 дней)</h3>
+        <article className="card">
+          {!adminKbReport && <p>Данных по базе знаний пока нет.</p>}
+          {(adminKbReport?.top_30_days || []).map((row) => (
+            <div className="inline-block" key={`admin-kb-${row.article_id}`}>
+              <p><strong>{row.title}</strong></p>
+              <p>Просмотры: {row.views}</p>
+              <p>Уникальные: {row.unique_views}</p>
+              <p>Охват: {row.view_percent}%</p>
+            </div>
+          ))}
+        </article>
+
+        <h3>Инстансы процессов</h3>
+        <article className="card">
+          {adminBpmItems.length === 0 && <p>Активных инстансов процессов нет.</p>}
+          {adminBpmItems.map((item) => (
+            <div className="inline-block" key={`admin-bpm-${item.id}`}>
+              <p><strong>{item.template_name}</strong></p>
+              <p>Статус: {item.status}</p>
+              <p>Запустил: {item.started_by_username || '-'}</p>
+            </div>
+          ))}
+        </article>
       </section>
     )
   }
@@ -1457,12 +1813,15 @@ function App() {
       {globalError && <p className="error">{globalError}</p>}
       {token && landing === 'intern_portal' && renderInternPortal()}
       {token && landing === 'employee_portal' && renderEmployeePortal()}
+      {token && landing === 'teamlead_portal' && renderEmployeePortal()}
       {token && landing === 'admin_panel' && renderAdminPortal()}
     </main>
   )
 }
 
 export default App
+
+
 
 
 

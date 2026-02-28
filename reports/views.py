@@ -40,6 +40,11 @@ class SubmitOnboardingReportView(APIView):
         )
 
     def post(self, request):
+        if not AccessPolicy.is_intern(request.user):
+            return Response(
+                {"detail": "Only intern can submit onboarding report."},
+                status=drf_status.HTTP_403_FORBIDDEN,
+            )
         serializer = OnboardingReportCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 

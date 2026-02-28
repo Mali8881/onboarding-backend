@@ -51,11 +51,15 @@ class AccessPolicy:
 
     @classmethod
     def is_admin_like(cls, user) -> bool:
-        return cls.is_administrator(user) or cls.is_admin(user)
+        return cls.is_super_admin(user) or cls.is_administrator(user) or cls.is_admin(user)
 
     @classmethod
     def is_employee(cls, user) -> bool:
         return cls._has_role(user) and user.role.name == Role.Name.EMPLOYEE
+
+    @classmethod
+    def is_teamlead(cls, user) -> bool:
+        return cls._has_role(user) and user.role.name == Role.Name.TEAMLEAD
 
     @classmethod
     def is_intern(cls, user) -> bool:
@@ -67,9 +71,17 @@ class AccessPolicy:
             return False
         if actor.pk == target.pk:
             return True
-        if cls.is_admin_like(actor):
-            return target.role.name != Role.Name.SUPER_ADMIN
-        if actor.role.name == Role.Name.EMPLOYEE:
+        if cls.is_super_admin(actor):
+            return True
+        if cls.is_administrator(actor) or cls.is_admin(actor):
+            return target.role.name in {
+                Role.Name.ADMIN,
+                Role.Name.ADMINISTRATOR,
+                Role.Name.TEAMLEAD,
+                Role.Name.EMPLOYEE,
+                Role.Name.INTERN,
+            }
+        if cls.is_teamlead(actor):
             return target.manager_id == actor.id
         return False
 
@@ -77,8 +89,12 @@ class AccessPolicy:
     def can_manage_user(cls, actor, target) -> bool:
         if not cls._has_role(actor):
             return False
-        if cls.is_admin_like(actor):
+        if cls.is_super_admin(actor):
             return target.role.name != Role.Name.SUPER_ADMIN
+        if cls.is_administrator(actor) or cls.is_admin(actor):
+            return target.role.name in {Role.Name.TEAMLEAD, Role.Name.INTERN, Role.Name.EMPLOYEE}
+        if cls.is_teamlead(actor):
+            return target.manager_id == actor.id and target.role.name in {Role.Name.INTERN, Role.Name.EMPLOYEE}
         return False
 
     @classmethod
@@ -87,7 +103,7 @@ class AccessPolicy:
             return False
         if cls.is_admin_like(actor):
             return True
-        return actor.team_members.exists()
+        return cls.is_teamlead(actor)
 
     @classmethod
     def can_manage_org_reference(cls, actor) -> bool:
@@ -96,4 +112,4 @@ class AccessPolicy:
 
     @classmethod
     def can_access_admin_panel(cls, user) -> bool:
-        return bool(user and user.is_authenticated and user.is_staff)
+        return bool(user and user.is_authenticated and cls.is_admin_like(user))

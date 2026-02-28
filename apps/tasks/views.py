@@ -1,17 +1,22 @@
-from django.contrib.auth import get_user_model
+from datetime import timedelta
+
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.models import Role, User
+from onboarding_core.models import OnboardingDay
+from work_schedule.models import WeeklyWorkPlan
 from .audit import TasksAuditService
 from .models import Board, Column, Task
 from .policies import TaskPolicy
 from .serializers import TaskCreateSerializer, TaskMoveSerializer, TaskSerializer
 
 
-User = get_user_model()
+MANDATORY_WEEKLY_PLAN_TASK_TITLE = "Сделать график работы на следующую неделю"
 
 
 def get_user_default_board(user) -> Board:
@@ -28,10 +33,49 @@ def get_user_default_board(user) -> Board:
     return board
 
 
+def _next_monday(today):
+    days_ahead = (7 - today.weekday()) % 7
+    return today + timedelta(days=days_ahead or 7)
+
+
+def _ensure_weekly_plan_task_for_user(*, assignee, reporter):
+    next_week_start = _next_monday(timezone.localdate())
+    has_plan = WeeklyWorkPlan.objects.filter(user=assignee, week_start=next_week_start).exists()
+    if has_plan:
+        return None
+
+    exists_task = Task.objects.filter(
+        assignee=assignee,
+        title=MANDATORY_WEEKLY_PLAN_TASK_TITLE,
+        due_date=next_week_start,
+    ).exists()
+    if exists_task:
+        return None
+
+    board = get_user_default_board(assignee)
+    column = board.columns.order_by("order", "id").first()
+    if column is None:
+        column = Column.objects.create(board=board, name="New", order=1)
+    return Task.objects.create(
+        board=board,
+        column=column,
+        title=MANDATORY_WEEKLY_PLAN_TASK_TITLE,
+        description=f"Заполнить и отправить недельный график на неделю с {next_week_start.isoformat()}",
+        assignee=assignee,
+        reporter=reporter,
+        due_date=next_week_start,
+        priority=Task.Priority.HIGH,
+    )
+
+
 class TaskMyAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        reporter = request.user.manager if request.user.manager_id else request.user
+        auto_task = _ensure_weekly_plan_task_for_user(assignee=request.user, reporter=reporter)
+        if auto_task is not None:
+            TasksAuditService.log_task_created(request, auto_task)
         qs = Task.objects.filter(assignee=request.user).select_related("assignee", "reporter", "column", "board")
         return Response(TaskSerializer(qs, many=True).data)
 
@@ -44,9 +88,19 @@ class TaskTeamAPIView(APIView):
             return Response({"detail": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
 
         if TaskPolicy.is_admin_like(request.user):
+            team_users = User.objects.filter(
+                is_active=True,
+                role__name__in=[Role.Name.TEAMLEAD, Role.Name.EMPLOYEE, Role.Name.INTERN],
+            )
             qs = Task.objects.all()
         else:
+            team_users = request.user.team_members.filter(is_active=True)
             qs = Task.objects.filter(assignee__manager=request.user)
+
+        for user in team_users:
+            auto_task = _ensure_weekly_plan_task_for_user(assignee=user, reporter=request.user)
+            if auto_task is not None:
+                TasksAuditService.log_task_created(request, auto_task)
 
         qs = qs.select_related("assignee", "reporter", "column", "board")
         return Response(TaskSerializer(qs, many=True).data)
@@ -65,6 +119,10 @@ class TaskCreateAPIView(APIView):
 
         board = get_user_default_board(assignee)
         column = board.columns.order_by("order").first()
+        onboarding_day = None
+        onboarding_day_id = serializer.validated_data.get("onboarding_day_id")
+        if onboarding_day_id:
+            onboarding_day = get_object_or_404(OnboardingDay, id=onboarding_day_id)
         task = Task.objects.create(
             board=board,
             column=column,
@@ -72,6 +130,7 @@ class TaskCreateAPIView(APIView):
             description=serializer.validated_data.get("description", ""),
             assignee=assignee,
             reporter=request.user,
+            onboarding_day=onboarding_day,
             due_date=serializer.validated_data.get("due_date"),
             priority=serializer.validated_data.get("priority", Task.Priority.MEDIUM),
         )

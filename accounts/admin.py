@@ -13,6 +13,7 @@ ROLE_BADGE_COLORS = {
     Role.Name.SUPER_ADMIN: "#d97706",
     Role.Name.ADMINISTRATOR: "#0ea5e9",
     Role.Name.ADMIN: "#2563eb",
+    Role.Name.TEAMLEAD: "#0ea5e9",
     Role.Name.EMPLOYEE: "#059669",
     Role.Name.INTERN: "#7c3aed",
 }
@@ -268,12 +269,13 @@ class RoleAdmin(admin.ModelAdmin):
                 Role.Name.SUPER_ADMIN,
                 Role.Name.ADMINISTRATOR,
                 Role.Name.ADMIN,
+                Role.Name.TEAMLEAD,
                 Role.Name.EMPLOYEE,
                 Role.Name.INTERN,
             }
             if value not in allowed:
                 raise forms.ValidationError(
-                    "Допустимы только SUPER_ADMIN, ADMINISTRATOR, ADMIN, EMPLOYEE, INTERN."
+                    "Допустимы только SUPER_ADMIN, ADMINISTRATOR, ADMIN, TEAMLEAD, EMPLOYEE, INTERN."
                 )
             return value
 

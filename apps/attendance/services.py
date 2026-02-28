@@ -67,14 +67,30 @@ def generate_work_calendar_month(year: int, month: int, *, overwrite: bool = Fal
 def attendance_table_queryset(actor, *, include_all_for_admin: bool = True):
     if actor.is_anonymous:
         return User.objects.none()
-    if include_all_for_admin and AccessPolicy.is_admin_like(actor):
+    if include_all_for_admin and AccessPolicy.is_super_admin(actor):
+        return User.objects.filter(is_active=True).exclude(role__name=Role.Name.SUPER_ADMIN).select_related(
+            "position", "department", "role"
+        )
+    if include_all_for_admin and AccessPolicy.is_administrator(actor):
         if not actor.department_id:
             return User.objects.none()
         return User.objects.filter(
             is_active=True,
             department_id=actor.department_id,
-            role__name__in=[Role.Name.EMPLOYEE, Role.Name.INTERN],
+            role__name__in=[Role.Name.ADMIN, Role.Name.TEAMLEAD, Role.Name.EMPLOYEE, Role.Name.INTERN],
         ).select_related("position", "department", "role")
+    if include_all_for_admin and AccessPolicy.is_admin(actor):
+        if not actor.department_id:
+            return User.objects.none()
+        return User.objects.filter(
+            is_active=True,
+            department_id=actor.department_id,
+            role__name__in=[Role.Name.TEAMLEAD, Role.Name.EMPLOYEE, Role.Name.INTERN],
+        ).select_related("position", "department", "role")
+    if AccessPolicy.is_teamlead(actor):
+        return actor.team_members.filter(is_active=True).exclude(role__name=Role.Name.SUPER_ADMIN).select_related(
+            "position", "department", "role"
+        )
     return User.objects.filter(id=actor.id).select_related("position", "department", "role")
 
 

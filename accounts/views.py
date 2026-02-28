@@ -17,6 +17,7 @@ from django.utils import timezone
 from .models import Department, LoginHistory, PasswordResetToken, Position, Role, User
 from .serializers import (
     DepartmentSerializer,
+    PasswordChangeSerializer,
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
     UserSerializer,
@@ -56,6 +57,8 @@ class LoginView(APIView):
             return "admin_panel"
         if role_name == Role.Name.INTERN:
             return "intern_portal"
+        if role_name == Role.Name.TEAMLEAD:
+            return "teamlead_portal"
         return "employee_portal"
 
     def post(self, request):
@@ -179,6 +182,27 @@ class MyProfileAPIView(APIView):
     def get(self, request):
         serializer = UserSerializer(request.user)
         return Response(serializer.data)
+
+
+class MyProfilePasswordAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = PasswordChangeSerializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        request.user.set_password(serializer.validated_data["new_password"])
+        request.user.save(update_fields=["password"])
+        log_event(
+            action=AuditEvents.PASSWORD_RESET_CONFIRMED,
+            actor=request.user,
+            object_type="user",
+            object_id=str(request.user.id),
+            level="info",
+            category="auth",
+            ip_address=LoginView._get_ip(request),
+            metadata={"source": "profile_password_change"},
+        )
+        return Response({"detail": "Password changed successfully."}, status=status.HTTP_200_OK)
 
     def patch(self, request):
         serializer = UserProfileUpdateSerializer(
@@ -521,7 +545,7 @@ class OrgStructureAPIView(APIView):
         result = []
 
         is_admin_like = AccessPolicy.is_admin_like(actor)
-        is_teamlead_like = actor.team_members.exists()
+        is_teamlead_like = AccessPolicy.is_teamlead(actor)
         subordinate_ids = set(actor.team_members.values_list("id", flat=True))
 
         for department in departments:

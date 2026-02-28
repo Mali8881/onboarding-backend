@@ -14,13 +14,13 @@ class TaskPolicy:
             return False
         if cls.is_admin_like(actor):
             return True
-        return actor.team_members.exists()
+        return AccessPolicy.is_teamlead(actor)
 
     @classmethod
     def can_assign_task(cls, actor, assignee) -> bool:
         if cls.is_admin_like(actor):
             return True
-        return assignee.manager_id == actor.id
+        return AccessPolicy.is_teamlead(actor) and assignee.manager_id == actor.id
 
     @classmethod
     def can_view_task(cls, actor, task) -> bool:
@@ -30,7 +30,7 @@ class TaskPolicy:
             return True
         if task.assignee_id == actor.id or task.reporter_id == actor.id:
             return True
-        return task.assignee.manager_id == actor.id
+        return AccessPolicy.is_teamlead(actor) and task.assignee.manager_id == actor.id
 
     @classmethod
     def can_edit_task(cls, actor, task) -> bool:
@@ -40,4 +40,4 @@ class TaskPolicy:
             return True
         if task.reporter_id == actor.id:
             return True
-        return task.assignee.manager_id == actor.id
+        return AccessPolicy.is_teamlead(actor) and task.assignee.manager_id == actor.id

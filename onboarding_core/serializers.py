@@ -5,6 +5,7 @@ from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from .models import OnboardingDay, OnboardingMaterial, OnboardingProgress
+from apps.tasks.models import Task
 
 
 class OnboardingMaterialSerializer(serializers.ModelSerializer):
@@ -32,12 +33,14 @@ class OnboardingDayListSerializer(serializers.ModelSerializer):
             "description",
             "instructions",
             "deadline_time",
+            "task_templates",
         )
 
 
 class OnboardingDayDetailSerializer(serializers.ModelSerializer):
     materials = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
+    tasks = serializers.SerializerMethodField()
 
     class Meta:
         model = OnboardingDay
@@ -51,6 +54,7 @@ class OnboardingDayDetailSerializer(serializers.ModelSerializer):
             "deadline_time",
             "status",
             "materials",
+            "tasks",
         )
 
     def _get_day_status(self, day, user):
@@ -98,6 +102,38 @@ class OnboardingDayDetailSerializer(serializers.ModelSerializer):
         materials = list(day.materials.all())
         materials.sort(key=lambda m: (m.priority, m.position))
         return OnboardingMaterialSerializer(materials, many=True).data
+
+    @extend_schema_field(
+        {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer"},
+                    "title": {"type": "string"},
+                    "description": {"type": "string"},
+                    "column": {"type": "string"},
+                    "priority": {"type": "string"},
+                    "due_date": {"type": "string", "nullable": True},
+                },
+            },
+            "description": "Tasks linked to this onboarding day for current user",
+        }
+    )
+    def get_tasks(self, day):
+        user = self.context["request"].user
+        tasks = Task.objects.filter(assignee=user, onboarding_day=day).select_related("column").order_by("-created_at")
+        return [
+            {
+                "id": task.id,
+                "title": task.title,
+                "description": task.description,
+                "column": task.column.name,
+                "priority": task.priority,
+                "due_date": task.due_date.isoformat() if task.due_date else None,
+            }
+            for task in tasks
+        ]
 
 
 class OnboardingProgressSerializer(serializers.ModelSerializer):
@@ -187,8 +223,25 @@ class AdminOnboardingDaySerializer(serializers.ModelSerializer):
             "deadline_time",
             "is_active",
             "position",
+            "task_templates",
             "materials",
         )
+
+    def validate_task_templates(self, value):
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise serializers.ValidationError("task_templates must be a list.")
+        normalized = []
+        for index, item in enumerate(value):
+            if not isinstance(item, dict):
+                raise serializers.ValidationError(f"task_templates[{index}] must be an object.")
+            title = str(item.get("title", "")).strip()
+            if not title:
+                raise serializers.ValidationError(f"task_templates[{index}].title is required.")
+            description = str(item.get("description", "")).strip()
+            normalized.append({"title": title, "description": description})
+        return normalized
 
     def validate_deadline_time(self, value):
         if value is None:

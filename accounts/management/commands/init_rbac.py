@@ -127,6 +127,12 @@ ROLES = {
         "view_content",
         "view_positions",
     ],
+    Role.Name.TEAMLEAD: [
+        "report_submit",
+        "view_content",
+        "view_positions",
+        "reports_review",
+    ],
     # Legacy operational role kept for backward compatibility.
     Role.Name.ADMIN: [
         "users.view",
@@ -193,6 +199,7 @@ ROLE_LEVELS = {
     Role.Name.INTERN: Role.Level.INTERN,
     Role.Name.EMPLOYEE: Role.Level.EMPLOYEE,
     Role.Name.ADMINISTRATOR: Role.Level.ADMINISTRATOR,
+    Role.Name.TEAMLEAD: Role.Level.TEAMLEAD,
     Role.Name.ADMIN: Role.Level.ADMIN,
     Role.Name.SUPER_ADMIN: Role.Level.SUPER_ADMIN,
 }
