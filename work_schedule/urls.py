@@ -7,6 +7,7 @@ from .views import (
     WorkScheduleAdminDetailAPIView,
     WorkScheduleRequestListAPIView,
     WorkScheduleRequestDecisionAPIView,
+    WorkScheduleAdminAssignAPIView,
     WorkScheduleTemplateUsersAPIView,
     MyScheduleAPIView,
     ScheduleOptionsAPIView,
@@ -32,6 +33,7 @@ urlpatterns = [
     path("v1/work-schedules/admin/templates/<int:schedule_id>/users/", WorkScheduleTemplateUsersAPIView.as_view()),
     path("v1/work-schedules/admin/requests/", WorkScheduleRequestListAPIView.as_view()),
     path("v1/work-schedules/admin/requests/<int:request_id>/decision/", WorkScheduleRequestDecisionAPIView.as_view()),
+    path("v1/work-schedules/admin/assign/", WorkScheduleAdminAssignAPIView.as_view()),
     path("v1/work-schedules/admin/calendar/day/", ProductionCalendarDayAdminAPIView.as_view()),
     path("v1/work-schedules/admin/calendar/generate/", ProductionCalendarMonthGenerateAPIView.as_view()),
 

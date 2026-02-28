@@ -8,6 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.models import User
 from .audit import WorkScheduleAuditService
 from .models import ProductionCalendar, UserWorkSchedule, WeeklyWorkPlan, WorkSchedule
 from .policies import WorkSchedulePolicy
@@ -174,6 +175,38 @@ class WorkScheduleRequestDecisionAPIView(APIView):
         uws.save(update_fields=["approved"])
         WorkScheduleAuditService.log_schedule_request_decision(request, uws, approved=approved)
         return Response(UserWorkScheduleSerializer(uws).data, status=status.HTTP_200_OK)
+
+
+class WorkScheduleAdminAssignAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not WorkSchedulePolicy.can_approve_requests(request.user):
+            raise PermissionDenied("Insufficient permissions.")
+
+        user_id = request.data.get("user_id")
+        schedule_id = request.data.get("schedule_id")
+        if not user_id or not schedule_id:
+            return Response({"detail": "user_id and schedule_id are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = User.objects.filter(id=user_id).first()
+        if not user:
+            return Response({"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        schedule = WorkSchedule.objects.filter(id=schedule_id, is_active=True).first()
+        if not schedule:
+            return Response({"detail": "Schedule not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        approved = bool(request.data.get("approved", True))
+        assignment, _ = UserWorkSchedule.objects.update_or_create(
+            user=user,
+            defaults={
+                "schedule": schedule,
+                "approved": approved,
+            },
+        )
+        WorkScheduleAuditService.log_schedule_request_decision(request, assignment, approved=approved)
+        return Response(UserWorkScheduleSerializer(assignment).data, status=status.HTTP_200_OK)
 
 
 class WorkScheduleTemplateUsersAPIView(APIView):
