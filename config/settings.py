@@ -182,7 +182,7 @@ if HAS_UNFOLD:
             return True
         role = getattr(user, "role", None)
         role_name = getattr(role, "name", "")
-        return role_name in {"SUPER_ADMIN", "ADMIN"}
+        return role_name in {"SUPER_ADMIN", "ADMIN", "DEPARTMENT_HEAD"}
 
     def _is_employee(request):
         user = getattr(request, "user", None)

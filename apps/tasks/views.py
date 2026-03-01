@@ -1,4 +1,4 @@
-from datetime import timedelta
+﻿from datetime import timedelta
 
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -17,6 +17,21 @@ from .serializers import TaskCreateSerializer, TaskMoveSerializer, TaskSerialize
 
 
 MANDATORY_WEEKLY_PLAN_TASK_TITLE = "Сделать график работы на следующую неделю"
+DEFAULT_COLUMNS = (
+    (1, "Новые"),
+    (2, "В работе"),
+    (3, "На проверке"),
+    (4, "Завершенные"),
+)
+
+
+def _ensure_default_columns(board: Board) -> None:
+    for order, name in DEFAULT_COLUMNS:
+        Column.objects.get_or_create(
+            board=board,
+            order=order,
+            defaults={"name": name},
+        )
 
 
 def get_user_default_board(user) -> Board:
@@ -25,11 +40,7 @@ def get_user_default_board(user) -> Board:
         is_personal=True,
         defaults={"name": f"{user.username} board"},
     )
-    Column.objects.get_or_create(
-        board=board,
-        order=1,
-        defaults={"name": "New"},
-    )
+    _ensure_default_columns(board)
     return board
 
 
@@ -55,7 +66,7 @@ def _ensure_weekly_plan_task_for_user(*, assignee, reporter):
     board = get_user_default_board(assignee)
     column = board.columns.order_by("order", "id").first()
     if column is None:
-        column = Column.objects.create(board=board, name="New", order=1)
+        column = Column.objects.create(board=board, name="Новые", order=1)
     return Task.objects.create(
         board=board,
         column=column,
@@ -93,6 +104,10 @@ class TaskTeamAPIView(APIView):
                 role__name__in=[Role.Name.TEAMLEAD, Role.Name.EMPLOYEE, Role.Name.INTERN],
             )
             qs = Task.objects.all()
+            if TaskPolicy.is_department_admin(request.user):
+                if request.user.department_id:
+                    team_users = team_users.filter(department_id=request.user.department_id)
+                    qs = qs.filter(assignee__department_id=request.user.department_id)
         else:
             team_users = request.user.team_members.filter(is_active=True)
             qs = Task.objects.filter(assignee__manager=request.user)
@@ -118,7 +133,7 @@ class TaskCreateAPIView(APIView):
             return Response({"detail": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
 
         board = get_user_default_board(assignee)
-        column = board.columns.order_by("order").first()
+        column = board.columns.order_by("order", "id").first()
         onboarding_day = None
         onboarding_day_id = serializer.validated_data.get("onboarding_day_id")
         if onboarding_day_id:
@@ -182,4 +197,3 @@ class TaskMoveAPIView(APIView):
         task.save(update_fields=["column", "updated_at"])
         TasksAuditService.log_task_moved(request, task, old_column_id, task.column_id)
         return Response(TaskSerializer(task).data)
-

@@ -8,6 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.access_policy import AccessPolicy
 from accounts.models import User
 from .audit import WorkScheduleAuditService
 from .models import (
@@ -36,6 +37,12 @@ from .services import (
     get_month_calendar,
     notify_admins_about_weekly_plan_deadline_miss,
 )
+
+
+def _department_scope_id(user):
+    if AccessPolicy.is_admin(user) and not AccessPolicy.is_super_admin(user):
+        return user.department_id
+    return None
 
 
 def _day_diff(previous_day, current_day):
@@ -198,6 +205,9 @@ class WorkScheduleRequestListAPIView(APIView):
         if not WorkSchedulePolicy.can_approve_requests(request.user):
             raise PermissionDenied("Insufficient permissions.")
         qs = UserWorkSchedule.objects.select_related("user", "schedule").order_by("-requested_at")
+        scope_department_id = _department_scope_id(request.user)
+        if scope_department_id is not None:
+            qs = qs.filter(user__department_id=scope_department_id)
         pending = request.query_params.get("pending")
         if pending == "1":
             qs = qs.filter(approved=False)
@@ -213,6 +223,9 @@ class WorkScheduleRequestDecisionAPIView(APIView):
         uws = UserWorkSchedule.objects.filter(id=request_id).select_related("user", "schedule").first()
         if not uws:
             return Response({"detail": "Request not found."}, status=status.HTTP_404_NOT_FOUND)
+        scope_department_id = _department_scope_id(request.user)
+        if scope_department_id is not None and uws.user.department_id != scope_department_id:
+            raise PermissionDenied("Insufficient permissions for this department.")
 
         serializer = ScheduleRequestDecisionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -238,6 +251,9 @@ class WorkScheduleAdminAssignAPIView(APIView):
         user = User.objects.filter(id=user_id).first()
         if not user:
             return Response({"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+        scope_department_id = _department_scope_id(request.user)
+        if scope_department_id and user.department_id != scope_department_id:
+            raise PermissionDenied("Insufficient permissions for this department.")
 
         schedule = WorkSchedule.objects.filter(id=schedule_id, is_active=True).first()
         if not schedule:
@@ -265,6 +281,9 @@ class WorkScheduleTemplateUsersAPIView(APIView):
         if not schedule:
             return Response({"detail": "Schedule not found."}, status=status.HTTP_404_NOT_FOUND)
         users = schedule.users.select_related("user").order_by("-requested_at")
+        scope_department_id = _department_scope_id(request.user)
+        if scope_department_id is not None:
+            users = users.filter(user__department_id=scope_department_id)
         return Response(UserWorkScheduleSerializer(users, many=True).data)
 
 
@@ -419,6 +438,9 @@ class WeeklyWorkPlanAdminListAPIView(APIView):
 
         notify_admins_about_weekly_plan_deadline_miss()
         qs = WeeklyWorkPlan.objects.select_related("user", "reviewed_by").order_by("-week_start", "-updated_at")
+        scope_department_id = _department_scope_id(request.user)
+        if scope_department_id:
+            qs = qs.filter(user__department_id=scope_department_id)
         status_filter = request.query_params.get("status")
         if status_filter:
             qs = qs.filter(status=status_filter)
@@ -435,6 +457,9 @@ class WeeklyWorkPlanAdminChangesAPIView(APIView):
         plan = WeeklyWorkPlan.objects.filter(id=plan_id).first()
         if not plan:
             return Response({"detail": "Plan not found."}, status=status.HTTP_404_NOT_FOUND)
+        scope_department_id = _department_scope_id(request.user)
+        if scope_department_id and plan.user.department_id != scope_department_id:
+            raise PermissionDenied("Insufficient permissions for this department.")
         logs = (
             WeeklyWorkPlanChangeLog.objects.filter(weekly_plan=plan)
             .select_related("changed_by", "user")
@@ -474,6 +499,9 @@ class WeeklyWorkPlanAdminDecisionAPIView(APIView):
         plan = WeeklyWorkPlan.objects.select_related("user", "reviewed_by").filter(id=plan_id).first()
         if not plan:
             return Response({"detail": "Plan not found."}, status=status.HTTP_404_NOT_FOUND)
+        scope_department_id = _department_scope_id(request.user)
+        if scope_department_id and plan.user.department_id != scope_department_id:
+            raise PermissionDenied("Insufficient permissions for this department.")
 
         serializer = WeeklyWorkPlanDecisionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)

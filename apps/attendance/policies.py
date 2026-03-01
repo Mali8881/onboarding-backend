@@ -9,7 +9,7 @@ from accounts.models import Role
 class AttendancePolicy:
     @staticmethod
     def is_admin_like(user) -> bool:
-        return AccessPolicy.is_admin(user) or AccessPolicy.is_super_admin(user)
+        return AccessPolicy.is_admin(user) or AccessPolicy.is_main_admin(user) or AccessPolicy.is_super_admin(user)
 
     @classmethod
     def can_view_team(cls, actor) -> bool:
@@ -34,7 +34,13 @@ class AttendancePolicy:
     @classmethod
     def is_trackable_user(cls, user) -> bool:
         role_name = cls._role_name(user)
-        return role_name in {Role.Name.ADMIN, Role.Name.TEAMLEAD, Role.Name.EMPLOYEE, Role.Name.INTERN}
+        return role_name in {
+            Role.Name.DEPARTMENT_HEAD,
+            Role.Name.ADMIN,
+            Role.Name.TEAMLEAD,
+            Role.Name.EMPLOYEE,
+            Role.Name.INTERN,
+        }
 
     @classmethod
     def can_delete_mark(cls, actor, target_user) -> bool:
@@ -45,8 +51,16 @@ class AttendancePolicy:
         actor_role = cls._role_name(actor)
         target_role = cls._role_name(target_user)
         if actor_role == Role.Name.SUPER_ADMIN:
-            return target_role in {Role.Name.ADMIN, Role.Name.TEAMLEAD, Role.Name.EMPLOYEE, Role.Name.INTERN}
+            return target_role in {
+                Role.Name.DEPARTMENT_HEAD,
+                Role.Name.ADMIN,
+                Role.Name.TEAMLEAD,
+                Role.Name.EMPLOYEE,
+                Role.Name.INTERN,
+            }
         if actor_role == Role.Name.ADMIN:
+            return target_role in {Role.Name.DEPARTMENT_HEAD, Role.Name.TEAMLEAD, Role.Name.EMPLOYEE, Role.Name.INTERN}
+        if actor_role == Role.Name.DEPARTMENT_HEAD:
             return target_role in {Role.Name.TEAMLEAD, Role.Name.EMPLOYEE, Role.Name.INTERN}
         if actor_role == Role.Name.TEAMLEAD:
             return target_user.manager_id == actor.id and target_role in {Role.Name.EMPLOYEE, Role.Name.INTERN}
@@ -67,10 +81,24 @@ class AttendancePolicy:
         actor_role = cls._role_name(actor)
         target_role = cls._role_name(target_user)
         if actor.id == target_user.id:
-            return actor_role in {Role.Name.ADMIN, Role.Name.TEAMLEAD, Role.Name.EMPLOYEE, Role.Name.INTERN}
+            return actor_role in {
+                Role.Name.DEPARTMENT_HEAD,
+                Role.Name.ADMIN,
+                Role.Name.TEAMLEAD,
+                Role.Name.EMPLOYEE,
+                Role.Name.INTERN,
+            }
         if actor_role == Role.Name.SUPER_ADMIN:
-            return target_role in {Role.Name.ADMIN, Role.Name.TEAMLEAD, Role.Name.EMPLOYEE, Role.Name.INTERN}
+            return target_role in {
+                Role.Name.DEPARTMENT_HEAD,
+                Role.Name.ADMIN,
+                Role.Name.TEAMLEAD,
+                Role.Name.EMPLOYEE,
+                Role.Name.INTERN,
+            }
         if actor_role == Role.Name.ADMIN:
+            return target_role in {Role.Name.DEPARTMENT_HEAD, Role.Name.TEAMLEAD, Role.Name.EMPLOYEE, Role.Name.INTERN}
+        if actor_role == Role.Name.DEPARTMENT_HEAD:
             return target_role in {Role.Name.TEAMLEAD, Role.Name.EMPLOYEE, Role.Name.INTERN}
         if actor_role == Role.Name.TEAMLEAD:
             return target_user.manager_id == actor.id and target_role in {Role.Name.EMPLOYEE, Role.Name.INTERN}
@@ -89,8 +117,16 @@ class AttendancePolicy:
         actor_role = cls._role_name(actor)
         target_role = cls._role_name(target_user)
         if actor_role == Role.Name.SUPER_ADMIN:
-            return target_role in {Role.Name.ADMIN, Role.Name.TEAMLEAD, Role.Name.EMPLOYEE, Role.Name.INTERN}
+            return target_role in {
+                Role.Name.DEPARTMENT_HEAD,
+                Role.Name.ADMIN,
+                Role.Name.TEAMLEAD,
+                Role.Name.EMPLOYEE,
+                Role.Name.INTERN,
+            }
         if actor_role == Role.Name.ADMIN:
+            return target_role in {Role.Name.DEPARTMENT_HEAD, Role.Name.TEAMLEAD, Role.Name.EMPLOYEE, Role.Name.INTERN}
+        if actor_role == Role.Name.DEPARTMENT_HEAD:
             return target_role in {Role.Name.TEAMLEAD, Role.Name.EMPLOYEE, Role.Name.INTERN}
         if actor_role == Role.Name.TEAMLEAD:
             return target_user.manager_id == actor.id and target_role in {Role.Name.EMPLOYEE, Role.Name.INTERN}

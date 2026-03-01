@@ -233,7 +233,7 @@ def notify_admins_about_weekly_plan_deadline_miss(*, now=None):
         }
 
     target_users = User.objects.filter(is_active=True).exclude(
-        role__name__in=[Role.Name.ADMIN, Role.Name.SUPER_ADMIN]
+        role__name__in=[Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN]
     )
     submitted_user_ids = set(
         WeeklyWorkPlan.objects.filter(week_start=week_start).values_list("user_id", flat=True)
@@ -251,7 +251,7 @@ def notify_admins_about_weekly_plan_deadline_miss(*, now=None):
 
     admins = User.objects.filter(
         is_active=True,
-        role__name__in=[Role.Name.ADMIN, Role.Name.SUPER_ADMIN],
+        role__name__in=[Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN],
     ).order_by("id")
     notified_count = 0
 

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from django.contrib.auth import authenticate
 from django.db.models import Q
@@ -33,6 +33,7 @@ def _role_to_front(role: Role | None) -> str:
     mapping = {
         Role.Name.SUPER_ADMIN: "superadmin",
         Role.Name.ADMIN: "admin",
+        Role.Name.DEPARTMENT_HEAD: "department_head",
         Role.Name.TEAMLEAD: "projectmanager",
         Role.Name.EMPLOYEE: "employee",
         Role.Name.INTERN: "intern",
@@ -44,11 +45,12 @@ def _user_to_front_payload(user: User) -> dict:
     full_name = f"{user.first_name} {user.last_name}".strip() or user.username
     role_front = _role_to_front(user.role)
     role_label_map = {
-        "intern": "Стажёр",
+        "intern": "Стажер",
         "employee": "Сотрудник",
-        "projectmanager": "Проект-менеджер",
-        "admin": "Администратор",
-        "superadmin": "Суперадминистратор",
+        "projectmanager": "Тимлид",
+        "department_head": "Руководитель отдела",
+        "admin": "Админ",
+        "superadmin": "Суперадмин",
     }
     return {
         "id": user.id,
@@ -75,7 +77,13 @@ def _user_to_front_payload(user: User) -> dict:
 
 def _ensure_admin_like(user: User):
     if not AccessPolicy.is_admin_like(user):
-        raise PermissionDenied("Only admin/super admin can perform this action.")
+        raise PermissionDenied("Only department head/admin/super admin can perform this action.")
+
+
+def _is_privileged_target(target: User) -> bool:
+    if not getattr(target, "role_id", None):
+        return False
+    return target.role.name in {Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN}
 
 
 def _resolve_role(value: str | None) -> Role | None:
@@ -87,6 +95,8 @@ def _resolve_role(value: str | None) -> Role | None:
         "PROJECT_MANAGER": Role.Name.TEAMLEAD,
         "TEAMLEAD": Role.Name.TEAMLEAD,
         "TEAM_LEAD": Role.Name.TEAMLEAD,
+        "DEPARTMENTHEAD": Role.Name.DEPARTMENT_HEAD,
+        "DEPARTMENT_HEAD": Role.Name.DEPARTMENT_HEAD,
         "ADMIN": Role.Name.ADMIN,
         "SUPERADMIN": Role.Name.SUPER_ADMIN,
         "SUPER_ADMIN": Role.Name.SUPER_ADMIN,
@@ -200,6 +210,11 @@ class FrontendUsersCollectionAPIView(APIView):
     def get(self, request):
         _ensure_admin_like(request.user)
         qs = User.objects.select_related("role", "department", "position").order_by("id")
+        if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
+            qs = qs.filter(
+                Q(role__name=Role.Name.INTERN)
+                | Q(role__name=Role.Name.EMPLOYEE, department_id=request.user.department_id)
+            )
         search = (request.query_params.get("search") or "").strip()
         if search:
             qs = qs.filter(
@@ -220,6 +235,9 @@ class FrontendUsersCollectionAPIView(APIView):
 
         user = User(**validated)
         user.role = _resolve_role(role_name) or Role.objects.filter(name=Role.Name.INTERN).first()
+        if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
+            if user.role and user.role.name in {Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN}:
+                return Response({"detail": "Department head cannot create privileged users."}, status=403)
         if not user.role:
             return Response({"detail": "Default role INTERN not found. Run role seed first."}, status=400)
         if password:
@@ -242,6 +260,9 @@ class FrontendUsersDetailAPIView(APIView):
     def patch(self, request, user_id: int):
         _ensure_admin_like(request.user)
         target = self._get_user(user_id)
+        if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
+            if _is_privileged_target(target):
+                return Response({"detail": "Department head cannot edit privileged users."}, status=403)
         serializer = FrontendUsersSerializer(target, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         validated = dict(serializer.validated_data)
@@ -250,7 +271,11 @@ class FrontendUsersDetailAPIView(APIView):
         for field, value in validated.items():
             setattr(target, field, value)
         if role_name:
-            target.role = _resolve_role(role_name) or target.role
+            next_role = _resolve_role(role_name) or target.role
+            if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
+                if next_role and next_role.name in {Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN}:
+                    return Response({"detail": "Department head cannot assign privileged role."}, status=403)
+            target.role = next_role
         if password:
             target.set_password(password)
         target.save()
@@ -259,6 +284,9 @@ class FrontendUsersDetailAPIView(APIView):
     def delete(self, request, user_id: int):
         _ensure_admin_like(request.user)
         target = self._get_user(user_id)
+        if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
+            if _is_privileged_target(target):
+                return Response({"detail": "Department head cannot delete privileged users."}, status=403)
         target.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -271,6 +299,9 @@ class FrontendUsersToggleStatusAPIView(APIView):
         target = User.objects.filter(id=user_id).first()
         if not target:
             raise NotFound("User not found.")
+        if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
+            if _is_privileged_target(target):
+                return Response({"detail": "Department head cannot change status of privileged users."}, status=403)
         target.is_active = not target.is_active
         target.is_blocked = not target.is_active
         target.save(update_fields=["is_active", "is_blocked"])
@@ -286,9 +317,15 @@ class FrontendUsersSetRoleAPIView(APIView):
         target = User.objects.filter(id=user_id).first()
         if not target:
             raise NotFound("User not found.")
+        if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
+            if _is_privileged_target(target):
+                return Response({"detail": "Department head cannot change role of privileged users."}, status=403)
         role = _resolve_role(request.data.get("role"))
         if not role:
             return Response({"detail": "Invalid role."}, status=400)
+        if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
+            if role.name in {Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN}:
+                return Response({"detail": "Department head cannot assign privileged role."}, status=403)
         target.role = role
         target.save(update_fields=["role"])
         target.refresh_from_db()
@@ -691,7 +728,10 @@ class FrontendOnboardingReportsAPIView(APIView):
 
     def get(self, request):
         qs = OnboardingReport.objects.select_related("day", "user").order_by("-updated_at", "day__day_number")
-        if not AccessPolicy.is_admin_like(request.user):
+        if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
+            if request.user.department_id:
+                qs = qs.filter(user__department_id=request.user.department_id)
+        elif not AccessPolicy.is_admin_like(request.user):
             qs = qs.filter(user=request.user)
         return Response(
             [
@@ -757,6 +797,9 @@ class FrontendOnboardingReportReviewAPIView(APIView):
         report = OnboardingReport.objects.filter(id=report_id).first()
         if not report:
             raise NotFound("Report not found.")
+        if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
+            if request.user.department_id and report.user.department_id != request.user.department_id:
+                raise PermissionDenied("Access denied for this department.")
         status_value = request.data.get("status")
         comment = request.data.get("reviewer_comment") or request.data.get("comment")
         report.set_status(status_value, reviewer=request.user, comment=comment)
@@ -852,3 +895,6 @@ class FrontendFeedbackReplyAPIView(APIView):
         item.is_read = True
         item.save(update_fields=["status", "is_read"])
         return Response({"id": item.id, "status": item.status})
+
+
+

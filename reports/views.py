@@ -5,9 +5,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.views import APIView
+from django.db.models import Q
 from django.utils import timezone
 
 from accounts.access_policy import AccessPolicy
+from accounts.models import Role, User
+from common.models import Notification
 from .models import EmployeeDailyReport, OnboardingReport, OnboardingReportLog, ReportNotification
 from .serializers import (
     EmployeeDailyReportSerializer,
@@ -134,6 +137,15 @@ class AdminOnboardingReportViewSet(ModelViewSet):
     required_permission = "reports_review"
     http_method_names = ["get", "patch"]
 
+    def get_queryset(self):
+        qs = OnboardingReport.objects.select_related("user", "day").all()
+        if AccessPolicy.is_admin(self.request.user) and not AccessPolicy.is_super_admin(self.request.user):
+            if self.request.user.department_id:
+                qs = qs.filter(user__department_id=self.request.user.department_id)
+        elif AccessPolicy.is_main_admin(self.request.user):
+            pass
+        return qs
+
     def partial_update(self, request, *args, **kwargs):
         instance = self.get_object()
         old_status = instance.status
@@ -183,12 +195,29 @@ class EmployeeDailyReportAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        if not (AccessPolicy.is_employee(request.user) or AccessPolicy.is_admin(request.user) or AccessPolicy.is_super_admin(request.user)):
+        if not (
+            AccessPolicy.is_employee(request.user)
+            or AccessPolicy.is_teamlead(request.user)
+            or AccessPolicy.is_admin(request.user)
+            or AccessPolicy.is_main_admin(request.user)
+            or AccessPolicy.is_super_admin(request.user)
+        ):
             return Response({"detail": "Access denied."}, status=drf_status.HTTP_403_FORBIDDEN)
 
         report_date = request.query_params.get("date")
         qs = EmployeeDailyReport.objects.select_related("user")
-        if AccessPolicy.is_employee(request.user):
+        if AccessPolicy.is_super_admin(request.user):
+            pass
+        elif AccessPolicy.is_main_admin(request.user):
+            pass
+        elif AccessPolicy.is_admin(request.user):
+            if request.user.department_id:
+                qs = qs.filter(user__department_id=request.user.department_id)
+            else:
+                qs = qs.none()
+        elif AccessPolicy.is_teamlead(request.user):
+            qs = qs.filter(Q(user__manager_id=request.user.id) | Q(user=request.user))
+        else:
             qs = qs.filter(user=request.user)
         if report_date:
             qs = qs.filter(report_date=report_date)
@@ -197,17 +226,59 @@ class EmployeeDailyReportAPIView(APIView):
         return Response(serializer.data)
 
     def post(self, request):
-        if not AccessPolicy.is_employee(request.user):
-            return Response({"detail": "Only employee can submit report."}, status=drf_status.HTTP_403_FORBIDDEN)
+        if not (AccessPolicy.is_employee(request.user) or AccessPolicy.is_teamlead(request.user)):
+            return Response({"detail": "Only employee/teamlead can submit report."}, status=drf_status.HTTP_403_FORBIDDEN)
 
         report_date = request.data.get("report_date") or timezone.localdate()
+        started_tasks = (request.data.get("started_tasks") or "").strip()
+        taken_tasks = (request.data.get("taken_tasks") or "").strip()
+        completed_tasks = (request.data.get("completed_tasks") or "").strip()
+        blockers = (request.data.get("blockers") or "").strip()
         summary = (request.data.get("summary") or "").strip()
         if not summary:
-            return Response({"detail": "summary is required"}, status=drf_status.HTTP_400_BAD_REQUEST)
+            summary = (
+                f"Начал: {started_tasks or '-'}\n"
+                f"Взял в работу: {taken_tasks or '-'}\n"
+                f"Завершил: {completed_tasks or '-'}\n"
+                f"Проблемы/блокеры: {blockers or '-'}"
+            )
 
         report, _ = EmployeeDailyReport.objects.update_or_create(
             user=request.user,
             report_date=report_date,
-            defaults={"summary": summary},
+            defaults={
+                "summary": summary,
+                "started_tasks": started_tasks,
+                "taken_tasks": taken_tasks,
+                "completed_tasks": completed_tasks,
+                "blockers": blockers,
+            },
+        )
+
+        recipient_ids = set()
+        if request.user.manager_id:
+            recipient_ids.add(request.user.manager_id)
+        admin_qs = User.objects.filter(role__name=Role.Name.DEPARTMENT_HEAD, is_active=True)
+        if request.user.department_id:
+            admin_qs = admin_qs.filter(department_id=request.user.department_id)
+        recipient_ids.update(admin_qs.values_list("id", flat=True))
+        recipient_ids.update(
+            User.objects.filter(role__name=Role.Name.ADMIN, is_active=True).values_list("id", flat=True)
+        )
+        recipient_ids.update(
+            User.objects.filter(role__name=Role.Name.SUPER_ADMIN, is_active=True).values_list("id", flat=True)
+        )
+        recipient_ids.discard(request.user.id)
+
+        Notification.objects.bulk_create(
+            [
+                Notification(
+                    user_id=recipient_id,
+                    title="Ежедневный отчет сотрудника",
+                    message=f"{request.user.username} отправил ежедневный отчет за {report.report_date}.",
+                    type=Notification.Type.INFO,
+                )
+                for recipient_id in recipient_ids
+            ]
         )
         return Response(EmployeeDailyReportSerializer(report).data, status=drf_status.HTTP_201_CREATED)

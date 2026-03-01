@@ -529,7 +529,7 @@ class SubmitInternOnboardingAPIView(APIView):
         request.user.save(update_fields=["intern_onboarding_completed_at"])
 
         admin_qs = User.objects.filter(
-            role__name__in=[Role.Name.ADMIN, Role.Name.SUPER_ADMIN]
+            role__name__in=[Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN]
         ).select_related("role")
         Notification.objects.bulk_create(
             [

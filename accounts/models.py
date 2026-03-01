@@ -35,6 +35,7 @@ class Role(models.Model):
     class Name(models.TextChoices):
         SUPER_ADMIN = "SUPER_ADMIN", "SuperAdmin"
         ADMIN = "ADMIN", "Admin"
+        DEPARTMENT_HEAD = "DEPARTMENT_HEAD", "DepartmentHead"
         TEAMLEAD = "TEAMLEAD", "TeamLead"
         EMPLOYEE = "EMPLOYEE", "Employee"
         INTERN = "INTERN", "Intern"
@@ -43,7 +44,8 @@ class Role(models.Model):
         INTERN = 10, "Intern"
         EMPLOYEE = 20, "Employee"
         TEAMLEAD = 30, "TeamLead"
-        ADMIN = 40, "Admin"
+        DEPARTMENT_HEAD = 40, "DepartmentHead"
+        ADMIN = 45, "Admin"
         SUPER_ADMIN = 50, "SuperAdmin"
 
     name = models.CharField("Название", max_length=50, unique=True)
@@ -180,7 +182,11 @@ class User(AbstractUser):
     def is_admin_like(self) -> bool:
         if not self.role_id:
             return False
-        return self.role.name in {Role.Name.ADMIN, Role.Name.SUPER_ADMIN}
+        return self.role.name in {
+            Role.Name.DEPARTMENT_HEAD,
+            Role.Name.ADMIN,
+            Role.Name.SUPER_ADMIN,
+        }
 
     @property
     def can_manage_team(self) -> bool:

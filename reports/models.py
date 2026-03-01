@@ -179,7 +179,11 @@ class EmployeeDailyReport(models.Model):
         related_name="employee_daily_reports",
     )
     report_date = models.DateField()
-    summary = models.TextField()
+    summary = models.TextField(blank=True, default="")
+    started_tasks = models.TextField(blank=True, default="")
+    taken_tasks = models.TextField(blank=True, default="")
+    completed_tasks = models.TextField(blank=True, default="")
+    blockers = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

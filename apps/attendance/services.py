@@ -70,8 +70,15 @@ def attendance_table_queryset(actor, *, include_all_for_admin: bool = True):
         return User.objects.none()
     if include_all_for_admin and AccessPolicy.is_super_admin(actor):
         return User.objects.filter(is_active=True).select_related("position", "department", "role")
-    if include_all_for_admin and AccessPolicy.is_admin(actor):
+    if include_all_for_admin and AccessPolicy.is_main_admin(actor):
         return User.objects.filter(is_active=True).exclude(role__name=Role.Name.SUPER_ADMIN).select_related(
+            "position", "department", "role"
+        )
+    if include_all_for_admin and AccessPolicy.is_admin(actor):
+        qs = User.objects.filter(is_active=True)
+        if actor.department_id:
+            qs = qs.filter(department_id=actor.department_id)
+        return qs.exclude(role__name__in=[Role.Name.SUPER_ADMIN, Role.Name.ADMIN, Role.Name.DEPARTMENT_HEAD]).select_related(
             "position", "department", "role"
         )
     if AccessPolicy.is_teamlead(actor):

@@ -122,7 +122,8 @@ class TasksApiTests(TestCase):
     def test_move_task_logs_audit(self, log_task_moved):
         board = self._create_default_board(self.subordinate)
         col1 = self._get_new_column(self.subordinate)
-        col2 = Column.objects.create(board=board, name="In progress", order=2)
+        col2 = board.columns.filter(order=2).first()
+        self.assertIsNotNone(col2)
         task = Task.objects.create(
             board=board,
             column=col1,

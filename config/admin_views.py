@@ -35,7 +35,7 @@ def _get_ip(request):
 
 def _landing_for(user):
     role_name = user.role.name if getattr(user, "role", None) else ""
-    if role_name in {Role.Name.ADMIN, Role.Name.SUPER_ADMIN}:
+    if role_name in {Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN}:
         return "admin_panel"
     if role_name == Role.Name.INTERN:
         return "intern_portal"

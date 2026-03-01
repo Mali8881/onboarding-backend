@@ -46,6 +46,16 @@ ROLES = {
         "view_positions",
         "reports_review",
     ],
+    Role.Name.DEPARTMENT_HEAD: [
+        "content_manage",
+        "onboarding_manage",
+        "reports_review",
+        "users_manage",
+        "schedule_manage",
+        "feedback_manage",
+        "view_content",
+        "view_positions",
+    ],
     Role.Name.ADMIN: [
         "content_manage",
         "onboarding_manage",
@@ -53,6 +63,8 @@ ROLES = {
         "users_manage",
         "schedule_manage",
         "feedback_manage",
+        "logs_read",
+        "roles_manage",
         "view_content",
         "view_positions",
     ],
@@ -73,6 +85,7 @@ ROLE_LEVELS = {
     Role.Name.INTERN: Role.Level.INTERN,
     Role.Name.EMPLOYEE: Role.Level.EMPLOYEE,
     Role.Name.TEAMLEAD: Role.Level.TEAMLEAD,
+    Role.Name.DEPARTMENT_HEAD: Role.Level.DEPARTMENT_HEAD,
     Role.Name.ADMIN: Role.Level.ADMIN,
     Role.Name.SUPER_ADMIN: Role.Level.SUPER_ADMIN,
 }

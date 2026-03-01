@@ -12,6 +12,7 @@ from .models import AuditLog, Department, LoginHistory, Permission, Position, Ro
 ROLE_BADGE_COLORS = {
     Role.Name.SUPER_ADMIN: "#d97706",
     Role.Name.ADMIN: "#2563eb",
+    Role.Name.DEPARTMENT_HEAD: "#1d4ed8",
     Role.Name.TEAMLEAD: "#0ea5e9",
     Role.Name.EMPLOYEE: "#059669",
     Role.Name.INTERN: "#7c3aed",
@@ -250,7 +251,7 @@ class RoleAdmin(admin.ModelAdmin):
                 "permissions": "Права доступа",
             }
             help_texts = {
-                "name": "Допустимы только: SUPER_ADMIN, ADMIN, TEAMLEAD, EMPLOYEE, INTERN.",
+                "name": "Допустимы только: SUPER_ADMIN, ADMIN, DEPARTMENT_HEAD, TEAMLEAD, EMPLOYEE, INTERN.",
                 "permissions": "Права назначаются на уровне роли и применяются ко всем пользователям этой роли.",
             }
             widgets = {
@@ -264,12 +265,15 @@ class RoleAdmin(admin.ModelAdmin):
             allowed = {
                 Role.Name.SUPER_ADMIN,
                 Role.Name.ADMIN,
+                Role.Name.DEPARTMENT_HEAD,
                 Role.Name.TEAMLEAD,
                 Role.Name.EMPLOYEE,
                 Role.Name.INTERN,
             }
             if value not in allowed:
-                raise forms.ValidationError("Допустимы только SUPER_ADMIN, ADMIN, TEAMLEAD, EMPLOYEE, INTERN.")
+                raise forms.ValidationError(
+                    "Допустимы только SUPER_ADMIN, ADMIN, DEPARTMENT_HEAD, TEAMLEAD, EMPLOYEE, INTERN."
+                )
             return value
 
     form = RoleAdminForm

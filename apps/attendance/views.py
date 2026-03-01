@@ -241,8 +241,13 @@ class AttendanceTeamAPIView(APIView):
         users_qs = User.objects.none()
         if AccessPolicy.is_super_admin(request.user):
             users_qs = User.objects.filter(is_active=True)
-        elif AccessPolicy.is_admin(request.user):
+        elif AccessPolicy.is_main_admin(request.user):
             users_qs = User.objects.filter(is_active=True).exclude(role__name=Role.Name.SUPER_ADMIN)
+        elif AccessPolicy.is_admin(request.user):
+            users_qs = User.objects.filter(is_active=True)
+            if request.user.department_id:
+                users_qs = users_qs.filter(department_id=request.user.department_id)
+            users_qs = users_qs.exclude(role__name__in=[Role.Name.SUPER_ADMIN, Role.Name.ADMIN, Role.Name.DEPARTMENT_HEAD])
         else:
             users_qs = request.user.team_members.filter(is_active=True).exclude(role__name=Role.Name.SUPER_ADMIN)
 

@@ -43,11 +43,15 @@ class AccessPolicy:
 
     @classmethod
     def is_admin(cls, user) -> bool:
+        return cls._has_role(user) and user.role.name == Role.Name.DEPARTMENT_HEAD
+
+    @classmethod
+    def is_main_admin(cls, user) -> bool:
         return cls._has_role(user) and user.role.name == Role.Name.ADMIN
 
     @classmethod
     def is_admin_like(cls, user) -> bool:
-        return cls.is_admin(user) or cls.is_super_admin(user)
+        return cls.is_admin(user) or cls.is_main_admin(user) or cls.is_super_admin(user)
 
     @classmethod
     def is_employee(cls, user) -> bool:
@@ -69,8 +73,19 @@ class AccessPolicy:
             return True
         if cls.is_super_admin(actor):
             return True
+        if cls.is_main_admin(actor):
+            return target.role.name in {
+                Role.Name.DEPARTMENT_HEAD,
+                Role.Name.TEAMLEAD,
+                Role.Name.INTERN,
+                Role.Name.EMPLOYEE,
+            }
         if cls.is_admin(actor):
-            return target.role.name in {Role.Name.TEAMLEAD, Role.Name.INTERN, Role.Name.EMPLOYEE}
+            return (
+                target.role.name in {Role.Name.TEAMLEAD, Role.Name.INTERN, Role.Name.EMPLOYEE}
+                and actor.department_id
+                and actor.department_id == target.department_id
+            )
         if cls.is_teamlead(actor):
             return target.manager_id == actor.id
         return False
@@ -81,8 +96,19 @@ class AccessPolicy:
             return False
         if cls.is_super_admin(actor):
             return True
+        if cls.is_main_admin(actor):
+            return target.role.name in {
+                Role.Name.DEPARTMENT_HEAD,
+                Role.Name.TEAMLEAD,
+                Role.Name.INTERN,
+                Role.Name.EMPLOYEE,
+            }
         if cls.is_admin(actor):
-            return target.role.name in {Role.Name.TEAMLEAD, Role.Name.INTERN, Role.Name.EMPLOYEE}
+            return (
+                target.role.name in {Role.Name.TEAMLEAD, Role.Name.INTERN, Role.Name.EMPLOYEE}
+                and actor.department_id
+                and actor.department_id == target.department_id
+            )
         if cls.is_teamlead(actor):
             return target.manager_id == actor.id and target.role.name in {Role.Name.INTERN, Role.Name.EMPLOYEE}
         return False

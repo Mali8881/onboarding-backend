@@ -37,7 +37,7 @@ class Regulation(models.Model):
         verbose_name="Файл",
         validators=[
             FileExtensionValidator(
-                allowed_extensions=["pdf", "doc", "docx", "xls", "xlsx", "txt", "ppt", "pptx"]
+                allowed_extensions=["pdf"]
             ),
             validate_regulation_file_size,
         ],
