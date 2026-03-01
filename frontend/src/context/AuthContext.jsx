@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { authAPI } from '../api/auth';
 import { listCustomMockUsers, MOCK_USERS_CHANGED_EVENT } from '../utils/mockUsers';
 
@@ -167,6 +167,7 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(false);
   const [bootstrapped, setBootstrapped] = useState(false);
   const [mockUsers, setMockUsers] = useState(getAllMockUsers());
+  const restoreOnceRef = useRef(false);
 
   useEffect(() => {
     const refresh = () => setMockUsers(getAllMockUsers());
@@ -180,6 +181,9 @@ export function AuthProvider({ children }) {
 
   // Restore session on mount
   useEffect(() => {
+    if (restoreOnceRef.current) return;
+    restoreOnceRef.current = true;
+
     if (USE_MOCK) { setBootstrapped(true); return; }
     const token = localStorage.getItem('access_token');
     if (token) {
