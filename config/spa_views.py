@@ -6,14 +6,18 @@ from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import redirect
 
 
-FRONTEND_DIST_DIR = Path(settings.BASE_DIR).parent / "vpluse_front" / "dist"
+_DIST_CANDIDATES = [
+    Path(settings.BASE_DIR).parent / "vpluse_front" / "dist",
+    Path(settings.BASE_DIR) / "frontend" / "dist",
+]
+FRONTEND_DIST_DIR = next((path for path in _DIST_CANDIDATES if path.exists()), _DIST_CANDIDATES[0])
 FRONTEND_ASSETS_DIR = FRONTEND_DIST_DIR / "assets"
 
 
 def spa_index(request):
     index_path = FRONTEND_DIST_DIR / "index.html"
     if not index_path.exists():
-        raise Http404("Frontend build not found. Run `npm run build` in vpluse_front/.")
+        raise Http404("Frontend build not found. Run `npm run build` in frontend/.")
     return HttpResponse(index_path.read_text(encoding="utf-8"), content_type="text/html; charset=utf-8")
 
 
