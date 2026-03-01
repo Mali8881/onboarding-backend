@@ -1,7 +1,7 @@
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 from rest_framework import status
-from rest_framework.test import APITestCase
+from rest_framework.test import APIClient, APITestCase
 from django.core.files.uploadedfile import SimpleUploadedFile
 
 from accounts.models import Department, Role, User
@@ -9,6 +9,7 @@ from regulations.models import (
     InternOnboardingRequest,
     Regulation,
     RegulationAcknowledgement,
+    RegulationKnowledgeCheck,
     RegulationReadProgress,
 )
 
@@ -220,6 +221,25 @@ class InternOnboardingFlowTests(APITestCase):
             InternOnboardingRequest.objects.filter(
                 user=self.intern,
                 status=InternOnboardingRequest.Status.PENDING,
+            ).exists()
+        )
+
+    def test_intern_can_submit_knowledge_quiz(self):
+        self.client.force_authenticate(self.intern)
+        self.regulation.quiz_expected_answer = "да"
+        self.regulation.save(update_fields=["quiz_expected_answer"])
+
+        response = self.client.post(
+            f"/api/v1/regulations/{self.regulation.id}/quiz/",
+            {"answer": "да"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            RegulationKnowledgeCheck.objects.filter(
+                user=self.intern,
+                regulation=self.regulation,
+                is_passed=True,
             ).exists()
         )
 

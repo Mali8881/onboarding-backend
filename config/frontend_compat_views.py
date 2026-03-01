@@ -12,7 +12,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from accounts.access_policy import AccessPolicy
 from accounts.models import AuditLog, Department, Position, PromotionRequest, Role, User
-from accounts.serializers import UserProfileUpdateSerializer
+from accounts.serializers import PasswordChangeSerializer, UserProfileUpdateSerializer
 from content.models import Feedback, Instruction, News
 from content.serializers import (
     InstructionSerializer,
@@ -67,6 +67,7 @@ def _user_to_front_payload(user: User) -> dict:
         "position_name": user.position.name if user.position_id else (user.custom_position or ""),
         "phone": user.phone or "",
         "telegram": user.telegram or "",
+        "photo": user.photo.url if getattr(user, "photo", None) else "",
         "hire_date": user.date_joined.date().isoformat() if user.date_joined else None,
         "is_active": user.is_active,
     }
@@ -150,6 +151,17 @@ class FrontendMeAPIView(APIView):
         serializer.save()
         request.user.refresh_from_db()
         return Response(_user_to_front_payload(request.user))
+
+
+class FrontendMePasswordAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = PasswordChangeSerializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        request.user.set_password(serializer.validated_data["new_password"])
+        request.user.save(update_fields=["password"])
+        return Response({"detail": "Password changed successfully."}, status=200)
 
 
 class FrontendUsersSerializer(serializers.ModelSerializer):
@@ -591,6 +603,84 @@ class FrontendInstructionsAPIView(APIView):
             qs = qs.filter(language=lang)
         return Response(InstructionSerializer(qs.order_by("-updated_at"), many=True).data)
 
+    def post(self, request):
+        _ensure_admin_like(request.user)
+        language = (request.data.get("language") or "ru").strip().lower()
+        instruction_type = (request.data.get("type") or "text").strip().lower()
+        content = (request.data.get("content") or "").strip()
+        if language not in {"ru", "en", "kg"}:
+            return Response({"language": ["Unsupported language."]}, status=400)
+        if instruction_type not in {"text", "link", "file"}:
+            return Response({"type": ["Unsupported instruction type."]}, status=400)
+        if not content and instruction_type != "file":
+            return Response({"content": ["This field is required."]}, status=400)
+
+        payload = {
+            "language": language,
+            "type": instruction_type,
+            "is_active": bool(request.data.get("is_active", True)),
+        }
+        if instruction_type == "text":
+            payload["text"] = content
+            payload["external_url"] = ""
+        elif instruction_type == "link":
+            payload["text"] = ""
+            payload["external_url"] = content
+        else:
+            payload["text"] = ""
+            payload["external_url"] = ""
+
+        item = Instruction.objects.create(**payload)
+        return Response(InstructionSerializer(item).data, status=201)
+
+
+class FrontendInstructionsDetailAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, instruction_id):
+        _ensure_admin_like(request.user)
+        item = Instruction.objects.filter(id=instruction_id).first()
+        if not item:
+            raise NotFound("Instruction not found.")
+
+        if "language" in request.data:
+            language = (request.data.get("language") or "").strip().lower()
+            if language not in {"ru", "en", "kg"}:
+                return Response({"language": ["Unsupported language."]}, status=400)
+            item.language = language
+
+        if "type" in request.data:
+            instruction_type = (request.data.get("type") or "").strip().lower()
+            if instruction_type not in {"text", "link", "file"}:
+                return Response({"type": ["Unsupported instruction type."]}, status=400)
+            item.type = instruction_type
+
+        if "is_active" in request.data:
+            item.is_active = bool(request.data.get("is_active"))
+
+        if "content" in request.data:
+            content = (request.data.get("content") or "").strip()
+            if item.type == "text":
+                item.text = content
+                item.external_url = ""
+            elif item.type == "link":
+                item.text = ""
+                item.external_url = content
+            else:
+                item.text = ""
+                item.external_url = ""
+
+        item.save()
+        return Response(InstructionSerializer(item).data)
+
+    def delete(self, request, instruction_id):
+        _ensure_admin_like(request.user)
+        item = Instruction.objects.filter(id=instruction_id).first()
+        if not item:
+            raise NotFound("Instruction not found.")
+        item.delete()
+        return Response(status=204)
+
 
 class FrontendOnboardingMyAPIView(OnboardingOverviewView):
     permission_classes = [IsAuthenticated]
@@ -697,6 +787,20 @@ class FrontendSchedulesHolidaysAPIView(APIView):
 class FrontendFeedbackTicketsAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @staticmethod
+    def _to_bool(value, default=True):
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "off"}:
+                return False
+        return bool(value)
+
     def get(self, request):
         _ensure_admin_like(request.user)
         qs = Feedback.objects.all().order_by("-created_at")
@@ -707,6 +811,9 @@ class FrontendFeedbackTicketsAPIView(APIView):
                     "type": item.type,
                     "text": item.text,
                     "status": item.status,
+                    "is_anonymous": item.is_anonymous,
+                    "full_name": item.full_name,
+                    "contact": item.contact,
                     "is_read": item.is_read,
                     "created_at": item.created_at,
                 }
@@ -722,7 +829,7 @@ class FrontendFeedbackTicketsAPIView(APIView):
         item = Feedback.objects.create(
             type=feedback_type,
             text=text,
-            is_anonymous=bool(request.data.get("is_anonymous", True)),
+            is_anonymous=self._to_bool(request.data.get("is_anonymous"), default=True),
             full_name=request.data.get("full_name"),
             contact=request.data.get("contact"),
         )

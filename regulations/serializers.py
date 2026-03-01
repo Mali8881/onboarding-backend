@@ -1,10 +1,11 @@
-from rest_framework import serializers
+﻿from rest_framework import serializers
 
 from .models import (
     InternOnboardingRequest,
     Regulation,
     RegulationAcknowledgement,
     RegulationFeedback,
+    RegulationKnowledgeCheck,
     RegulationReadProgress,
 )
 
@@ -14,6 +15,10 @@ class RegulationSerializer(serializers.ModelSerializer):
     action = serializers.SerializerMethodField()
     is_acknowledged = serializers.SerializerMethodField()
     acknowledged_at = serializers.SerializerMethodField()
+    has_feedback = serializers.SerializerMethodField()
+    has_passed_quiz = serializers.SerializerMethodField()
+    is_read = serializers.SerializerMethodField()
+    read_at = serializers.SerializerMethodField()
 
     class Meta:
         model = Regulation
@@ -28,6 +33,11 @@ class RegulationSerializer(serializers.ModelSerializer):
             "is_acknowledged",
             "acknowledged_at",
             "position",
+            "quiz_question",
+            "has_feedback",
+            "has_passed_quiz",
+            "is_read",
+            "read_at",
         )
 
     def get_content(self, obj):
@@ -63,6 +73,58 @@ class RegulationSerializer(serializers.ModelSerializer):
         ack = self._ack(obj)
         return ack.acknowledged_at if ack else None
 
+    def get_has_feedback(self, obj):
+        feedback_map = self.context.get("feedback_map")
+        if feedback_map is not None:
+            return bool(feedback_map.get(obj.id))
+
+        request = self.context.get("request")
+        if not request or not request.user.is_authenticated:
+            return False
+        return RegulationFeedback.objects.filter(user=request.user, regulation=obj).exists()
+
+    def get_has_passed_quiz(self, obj):
+        knowledge_map = self.context.get("knowledge_map")
+        if knowledge_map is not None:
+            return bool(knowledge_map.get(obj.id))
+
+        request = self.context.get("request")
+        if not request or not request.user.is_authenticated:
+            return False
+        return RegulationKnowledgeCheck.objects.filter(
+            user=request.user,
+            regulation=obj,
+            is_passed=True,
+        ).exists()
+
+    def get_is_read(self, obj):
+        read_map = self.context.get("read_map")
+        if read_map is not None:
+            return bool(read_map.get(obj.id))
+
+        request = self.context.get("request")
+        if not request or not request.user.is_authenticated:
+            return False
+        return RegulationReadProgress.objects.filter(
+            user=request.user,
+            regulation=obj,
+            is_read=True,
+        ).exists()
+
+    def get_read_at(self, obj):
+        read_at_map = self.context.get("read_at_map")
+        if read_at_map is not None:
+            return read_at_map.get(obj.id)
+
+        request = self.context.get("request")
+        if not request or not request.user.is_authenticated:
+            return None
+        progress = RegulationReadProgress.objects.filter(
+            user=request.user,
+            regulation=obj,
+        ).first()
+        return progress.read_at if progress and progress.is_read else None
+
 
 class RegulationAdminSerializer(serializers.ModelSerializer):
     class Meta:
@@ -77,6 +139,9 @@ class RegulationAdminSerializer(serializers.ModelSerializer):
             "position",
             "is_active",
             "is_mandatory_on_day_one",
+            "language",
+            "quiz_question",
+            "quiz_expected_answer",
             "created_at",
             "updated_at",
         )
@@ -90,14 +155,14 @@ class RegulationAdminSerializer(serializers.ModelSerializer):
         if reg_type == Regulation.RegulationType.LINK:
             if not external_url:
                 raise serializers.ValidationError(
-                    {"external_url": "Для типа 'link' ссылка обязательна."}
+                    {"external_url": "For type 'link' external_url is required."}
                 )
             attrs["file"] = None
 
         if reg_type == Regulation.RegulationType.FILE:
             if not file:
                 raise serializers.ValidationError(
-                    {"file": "Для типа 'file' файл обязателен."}
+                    {"file": "For type 'file' file is required."}
                 )
             attrs["external_url"] = None
 
@@ -132,6 +197,10 @@ class RegulationFeedbackCreateSerializer(serializers.ModelSerializer):
         fields = ("text",)
 
 
+class RegulationQuizSubmitSerializer(serializers.Serializer):
+    answer = serializers.CharField(allow_blank=False, trim_whitespace=True)
+
+
 class InternOnboardingRequestSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source="user.username", read_only=True)
 
@@ -148,4 +217,3 @@ class InternOnboardingRequestSerializer(serializers.ModelSerializer):
             "reviewed_by",
         )
         read_only_fields = ("requested_at", "reviewed_at", "reviewed_by")
-

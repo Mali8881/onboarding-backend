@@ -10,11 +10,18 @@ from rest_framework.views import APIView
 
 from accounts.models import User
 from .audit import WorkScheduleAuditService
-from .models import ProductionCalendar, UserWorkSchedule, WeeklyWorkPlan, WorkSchedule
+from .models import (
+    ProductionCalendar,
+    UserWorkSchedule,
+    WeeklyWorkPlan,
+    WeeklyWorkPlanChangeLog,
+    WorkSchedule,
+)
 from .policies import WorkSchedulePolicy
 from .serializers import (
     CalendarDaySerializer,
     ScheduleRequestDecisionSerializer,
+    WeeklyWorkPlanChangeLogSerializer,
     WeeklyWorkPlanDecisionSerializer,
     WeeklyWorkPlanSerializer,
     WeeklyWorkPlanUpsertSerializer,
@@ -27,7 +34,46 @@ from .services import (
     ensure_user_schedule_for_approved_weekly_plan,
     generate_production_calendar_month,
     get_month_calendar,
+    notify_admins_about_weekly_plan_deadline_miss,
 )
+
+
+def _day_diff(previous_day, current_day):
+    before = previous_day or {}
+    after = current_day or {}
+    if before == after:
+        return None
+    return {"before": before, "after": after}
+
+
+def _build_weekly_plan_changes(previous_plan, defaults):
+    if previous_plan is None:
+        return []
+
+    changes = []
+    simple_fields = ("office_hours", "online_hours", "online_reason", "employee_comment")
+    for field in simple_fields:
+        before = getattr(previous_plan, field)
+        after = defaults.get(field)
+        if before != after:
+            changes.append({"field": field, "before": before, "after": after})
+
+    previous_days = {
+        str(item.get("date")): item
+        for item in (previous_plan.days or [])
+        if isinstance(item, dict) and item.get("date")
+    }
+    current_days = {
+        str(item.get("date")): item
+        for item in (defaults.get("days") or [])
+        if isinstance(item, dict) and item.get("date")
+    }
+    for day in sorted(set(previous_days) | set(current_days)):
+        diff = _day_diff(previous_days.get(day), current_days.get(day))
+        if diff:
+            changes.append({"field": f"day:{day}", **diff})
+
+    return changes
 
 
 class WorkScheduleListAPIView(APIView):
@@ -341,12 +387,22 @@ class WeeklyWorkPlanMyAPIView(APIView):
             "reviewed_by": None,
             "reviewed_at": None,
         }
+        existing_plan = WeeklyWorkPlan.objects.filter(user=request.user, week_start=week_start).first()
+        changes = _build_weekly_plan_changes(existing_plan, defaults)
 
         plan, created = WeeklyWorkPlan.objects.update_or_create(
             user=request.user,
             week_start=week_start,
             defaults=defaults,
         )
+        if changes:
+            WeeklyWorkPlanChangeLog.objects.create(
+                weekly_plan=plan,
+                user=request.user,
+                changed_by=request.user,
+                week_start=week_start,
+                changes=changes,
+            )
         WorkScheduleAuditService.log_weekly_plan_submitted(request, plan, was_created=created)
         return Response(
             WeeklyWorkPlanSerializer(plan).data,
@@ -361,11 +417,51 @@ class WeeklyWorkPlanAdminListAPIView(APIView):
         if not WorkSchedulePolicy.can_view_weekly_plan_requests(request.user):
             raise PermissionDenied("Insufficient permissions.")
 
+        notify_admins_about_weekly_plan_deadline_miss()
         qs = WeeklyWorkPlan.objects.select_related("user", "reviewed_by").order_by("-week_start", "-updated_at")
         status_filter = request.query_params.get("status")
         if status_filter:
             qs = qs.filter(status=status_filter)
         return Response(WeeklyWorkPlanSerializer(qs, many=True).data)
+
+
+class WeeklyWorkPlanAdminChangesAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, plan_id: int):
+        if not WorkSchedulePolicy.can_view_weekly_plan_requests(request.user):
+            raise PermissionDenied("Insufficient permissions.")
+
+        plan = WeeklyWorkPlan.objects.filter(id=plan_id).first()
+        if not plan:
+            return Response({"detail": "Plan not found."}, status=status.HTTP_404_NOT_FOUND)
+        logs = (
+            WeeklyWorkPlanChangeLog.objects.filter(weekly_plan=plan)
+            .select_related("changed_by", "user")
+            .order_by("-created_at")
+        )
+        return Response(WeeklyWorkPlanChangeLogSerializer(logs, many=True).data)
+
+
+class WeeklyWorkPlanMyChangesAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not WorkSchedulePolicy.can_submit_weekly_plan(request.user):
+            raise PermissionDenied("Insufficient permissions.")
+
+        qs = (
+            WeeklyWorkPlanChangeLog.objects.filter(user=request.user)
+            .select_related("changed_by", "weekly_plan")
+            .order_by("-created_at")
+        )
+        plan_id = request.query_params.get("plan_id")
+        week_start = request.query_params.get("week_start")
+        if plan_id:
+            qs = qs.filter(weekly_plan_id=plan_id)
+        if week_start:
+            qs = qs.filter(week_start=week_start)
+        return Response(WeeklyWorkPlanChangeLogSerializer(qs, many=True).data)
 
 
 class WeeklyWorkPlanAdminDecisionAPIView(APIView):

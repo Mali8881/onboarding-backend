@@ -1,10 +1,13 @@
-from datetime import date
+from datetime import date, datetime
 
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from accounts.models import Role, User
-from work_schedule.models import WeeklyWorkPlan
+from common.models import Notification
+from work_schedule.models import WeeklyWorkPlan, WeeklyWorkPlanChangeLog, WeeklyWorkPlanDeadlineAlert
+from work_schedule.services import notify_admins_about_weekly_plan_deadline_miss
 
 
 class WeeklyWorkPlanApiTests(TestCase):
@@ -201,3 +204,99 @@ class WeeklyWorkPlanApiTests(TestCase):
         self.assertEqual(plan.status, WeeklyWorkPlan.Status.PENDING)
         self.assertEqual(plan.admin_comment, "")
         self.assertIsNone(plan.reviewed_by)
+
+    def test_resubmit_writes_change_logs(self):
+        WeeklyWorkPlan.objects.create(
+            user=self.employee,
+            week_start=self.week_start,
+            days=self._shifts_payload(),
+            office_hours=24,
+            online_hours=0,
+            online_reason="",
+        )
+        self.client.force_authenticate(self.employee)
+        changed = self._shifts_payload()
+        changed[0]["end_time"] = "14:00"
+        response = self.client.post(
+            "/api/v1/work-schedules/weekly-plans/my/",
+            {
+                "week_start": str(self.week_start),
+                "days": changed,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        logs = WeeklyWorkPlanChangeLog.objects.filter(user=self.employee, week_start=self.week_start)
+        self.assertEqual(logs.count(), 1)
+        self.assertTrue(any(item.get("field") == "day:2026-03-02" for item in logs.first().changes))
+
+    def test_deadline_notification_is_sent_once_after_monday_noon(self):
+        _ = User.objects.create_user(
+            username="weekly_employee_2",
+            password="StrongPass123!",
+            role=self.employee_role,
+        )
+        monday_noon = timezone.make_aware(datetime(2026, 3, 2, 12, 1, 0))
+        result_1 = notify_admins_about_weekly_plan_deadline_miss(now=monday_noon)
+        result_2 = notify_admins_about_weekly_plan_deadline_miss(now=monday_noon)
+
+        self.assertTrue(result_1["created"])
+        self.assertEqual(result_2["reason"], "already_sent")
+        self.assertEqual(WeeklyWorkPlanDeadlineAlert.objects.filter(week_start=date(2026, 3, 2)).count(), 1)
+        self.assertGreaterEqual(Notification.objects.filter(user=self.admin).count(), 1)
+
+    def test_deadline_notification_not_sent_before_noon(self):
+        monday_morning = timezone.make_aware(datetime(2026, 3, 2, 11, 59, 0))
+        result = notify_admins_about_weekly_plan_deadline_miss(now=monday_morning)
+        self.assertFalse(result["created"])
+        self.assertEqual(result["reason"], "too_early")
+        self.assertEqual(WeeklyWorkPlanDeadlineAlert.objects.count(), 0)
+
+    def test_deadline_notification_not_sent_on_non_monday(self):
+        tuesday = timezone.make_aware(datetime(2026, 3, 3, 12, 10, 0))
+        result = notify_admins_about_weekly_plan_deadline_miss(now=tuesday)
+        self.assertFalse(result["created"])
+        self.assertEqual(result["reason"], "not_monday")
+        self.assertEqual(WeeklyWorkPlanDeadlineAlert.objects.count(), 0)
+
+    def test_admin_can_view_weekly_plan_changes(self):
+        plan = WeeklyWorkPlan.objects.create(
+            user=self.employee,
+            week_start=self.week_start,
+            days=self._shifts_payload(),
+            office_hours=24,
+            online_hours=0,
+            online_reason="",
+        )
+        WeeklyWorkPlanChangeLog.objects.create(
+            weekly_plan=plan,
+            user=self.employee,
+            changed_by=self.employee,
+            week_start=self.week_start,
+            changes=[{"field": "day:2026-03-02", "before": {"end_time": "13:00"}, "after": {"end_time": "14:00"}}],
+        )
+        self.client.force_authenticate(self.admin)
+        response = self.client.get(f"/api/v1/work-schedules/admin/weekly-plans/{plan.id}/changes/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 1)
+
+    def test_employee_can_view_own_weekly_plan_changes(self):
+        plan = WeeklyWorkPlan.objects.create(
+            user=self.employee,
+            week_start=self.week_start,
+            days=self._shifts_payload(),
+            office_hours=24,
+            online_hours=0,
+            online_reason="",
+        )
+        WeeklyWorkPlanChangeLog.objects.create(
+            weekly_plan=plan,
+            user=self.employee,
+            changed_by=self.employee,
+            week_start=self.week_start,
+            changes=[{"field": "day:2026-03-02", "before": {"end_time": "13:00"}, "after": {"end_time": "14:00"}}],
+        )
+        self.client.force_authenticate(self.employee)
+        response = self.client.get("/api/v1/work-schedules/weekly-plans/my/changes/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 1)

@@ -21,6 +21,21 @@ class RegulationAdmin(admin.ModelAdmin):
         "is_mandatory_on_day_one",
     )
     search_fields = ("title", "description")
+    fields = (
+        "title",
+        "description",
+        "type",
+        "external_url",
+        "file",
+        "language",
+        "position",
+        "is_active",
+        "is_mandatory_on_day_one",
+        "quiz_question",
+        "quiz_expected_answer",
+        "created_at",
+        "updated_at",
+    )
     ordering = ("position",)
     readonly_fields = ("created_at", "updated_at")
 

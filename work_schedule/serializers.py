@@ -3,7 +3,7 @@ from datetime import timedelta
 
 from rest_framework import serializers
 
-from .models import WeeklyWorkPlan, WorkSchedule, UserWorkSchedule
+from .models import WeeklyWorkPlan, WeeklyWorkPlanChangeLog, WorkSchedule, UserWorkSchedule
 
 
 class CalendarDaySerializer(serializers.Serializer):
@@ -353,3 +353,20 @@ class WeeklyWorkPlanDecisionSerializer(serializers.Serializer):
                 {"admin_comment": "admin_comment is required for clarification or reject."}
             )
         return attrs
+
+
+class WeeklyWorkPlanChangeLogSerializer(serializers.ModelSerializer):
+    changed_by_username = serializers.CharField(source="changed_by.username", read_only=True)
+
+    class Meta:
+        model = WeeklyWorkPlanChangeLog
+        fields = (
+            "id",
+            "weekly_plan",
+            "user",
+            "week_start",
+            "changes",
+            "changed_by",
+            "changed_by_username",
+            "created_at",
+        )

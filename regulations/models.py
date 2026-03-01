@@ -1,4 +1,4 @@
-import uuid
+﻿import uuid
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -54,6 +54,11 @@ class Regulation(models.Model):
         default=Language.RU,
         verbose_name="Язык",
     )
+    quiz_question = models.TextField(blank=True)
+    quiz_expected_answer = models.TextField(
+        blank=True,
+        help_text="If empty, non-empty user answer is enough to pass knowledge check.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True, null=True)
 
@@ -86,7 +91,7 @@ class Regulation(models.Model):
 
 class RegulationAcknowledgement(models.Model):
     user = models.ForeignKey(
-        "accounts.User",
+        settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name="regulation_acknowledgements",
         verbose_name="Пользователь",
@@ -147,6 +152,25 @@ class RegulationFeedback(models.Model):
         ordering = ["-created_at"]
 
 
+class RegulationKnowledgeCheck(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="regulation_knowledge_checks",
+    )
+    regulation = models.ForeignKey(
+        Regulation,
+        on_delete=models.CASCADE,
+        related_name="knowledge_checks",
+    )
+    answer = models.TextField()
+    is_passed = models.BooleanField(default=False)
+    submitted_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("user", "regulation")
+
+
 class InternOnboardingRequest(models.Model):
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
@@ -176,4 +200,3 @@ class InternOnboardingRequest(models.Model):
 
     class Meta:
         ordering = ["-requested_at"]
-
