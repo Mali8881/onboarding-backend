@@ -10,6 +10,9 @@ User = get_user_model()
 class TaskSerializer(serializers.ModelSerializer):
     assignee_username = serializers.CharField(source="assignee.username", read_only=True)
     reporter_username = serializers.CharField(source="reporter.username", read_only=True)
+    column_name = serializers.CharField(source="column.name", read_only=True)
+    column_order = serializers.IntegerField(source="column.order", read_only=True)
+    board_columns = serializers.SerializerMethodField()
 
     class Meta:
         model = Task
@@ -26,10 +29,19 @@ class TaskSerializer(serializers.ModelSerializer):
             "due_date",
             "priority",
             "onboarding_day",
+            "column_name",
+            "column_order",
+            "board_columns",
             "created_at",
             "updated_at",
         )
         read_only_fields = ("reporter", "created_at", "updated_at")
+
+    def get_board_columns(self, obj):
+        return [
+            {"id": col.id, "name": col.name, "order": col.order}
+            for col in obj.board.columns.order_by("order", "id")
+        ]
 
 
 class TaskCreateSerializer(serializers.Serializer):

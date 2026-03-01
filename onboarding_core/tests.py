@@ -1,10 +1,20 @@
+from datetime import timedelta
+
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
 from unittest.mock import patch
 
 from accounts.models import Permission, Role, User
+from apps.tasks.models import Task
 from onboarding_core.models import OnboardingDay, OnboardingProgress
-from regulations.models import Regulation, RegulationAcknowledgement
+from regulations.models import (
+    Regulation,
+    RegulationAcknowledgement,
+    RegulationFeedback,
+    RegulationKnowledgeCheck,
+    RegulationReadProgress,
+)
 
 
 class OnboardingFlowTests(TestCase):
@@ -59,8 +69,52 @@ class OnboardingFlowTests(TestCase):
             user_full_name="intern",
             regulation_title=reg.title,
         )
+        RegulationReadProgress.objects.create(
+            user=self.user,
+            regulation=reg,
+            is_read=True,
+        )
+        RegulationFeedback.objects.create(
+            user=self.user,
+            regulation=reg,
+            text="ok",
+        )
+        RegulationKnowledgeCheck.objects.create(
+            user=self.user,
+            regulation=reg,
+            answer="ok",
+            is_passed=True,
+        )
         response = self.client.post(f"/api/v1/onboarding/days/{self.day1.id}/complete/")
         self.assertEqual(response.status_code, 200)
+
+    def test_cannot_complete_first_day_until_read_feedback_and_quiz_done(self):
+        reg = Regulation.objects.create(
+            title="Day 1 flow",
+            type=Regulation.RegulationType.LINK,
+            external_url="https://example.com/day1-flow",
+            language=Regulation.Language.RU,
+            is_active=True,
+            is_mandatory_on_day_one=True,
+        )
+        self.day1.regulations.add(reg)
+        RegulationAcknowledgement.objects.create(
+            user=self.user,
+            regulation=reg,
+            user_full_name="intern",
+            regulation_title=reg.title,
+        )
+
+        response = self.client.post(f"/api/v1/onboarding/days/{self.day1.id}/complete/")
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("missing_steps", response.data)
+
+        RegulationReadProgress.objects.create(user=self.user, regulation=reg, is_read=True)
+        RegulationFeedback.objects.create(user=self.user, regulation=reg, text="ok")
+        RegulationKnowledgeCheck.objects.create(user=self.user, regulation=reg, answer="ok", is_passed=True)
+
+        second = self.client.post(f"/api/v1/onboarding/days/{self.day1.id}/complete/")
+        self.assertEqual(second.status_code, 200)
 
     def test_complete_day_is_idempotent(self):
         first = self.client.post(f"/api/v1/onboarding/days/{self.day1.id}/complete/")
@@ -141,3 +195,43 @@ class OnboardingAdminAuditTests(TestCase):
         log_progress_viewed_admin.assert_called_once()
         args, _ = log_progress_viewed_admin.call_args
         self.assertEqual(args[1]["status"], "in_progress")
+
+
+class OnboardingDayDetailTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.role, _ = Role.objects.get_or_create(
+            name=Role.Name.INTERN,
+            defaults={"level": Role.Level.INTERN},
+        )
+        self.user = User.objects.create_user(
+            username="intern_detail",
+            password="StrongPass123!",
+            role=self.role,
+        )
+        self.day1 = OnboardingDay.objects.create(day_number=1, title="Day 1", is_active=True)
+        self.reg = Regulation.objects.create(
+            title="Reg Day 1",
+            type=Regulation.RegulationType.LINK,
+            external_url="https://example.com/day1-reg",
+            language=Regulation.Language.RU,
+            is_active=True,
+            is_mandatory_on_day_one=True,
+        )
+        self.day1.regulations.add(self.reg)
+        self.client.force_authenticate(user=self.user)
+
+    def test_day_detail_returns_regulations_for_day(self):
+        response = self.client.get(f"/api/v1/onboarding/days/{self.day1.id}/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("regulations", response.data)
+        self.assertEqual(len(response.data["regulations"]), 1)
+        self.assertEqual(str(self.reg.id), str(response.data["regulations"][0]["id"]))
+
+    def test_day_one_detail_creates_onboarding_task_with_next_day_deadline(self):
+        response = self.client.get(f"/api/v1/onboarding/days/{self.day1.id}/")
+        self.assertEqual(response.status_code, 200)
+
+        task = Task.objects.get(assignee=self.user, onboarding_day=self.day1)
+        self.assertEqual(task.title, "День 1: Ознакомление с регламентами компании")
+        self.assertEqual(task.due_date, timezone.localdate() + timedelta(days=1))

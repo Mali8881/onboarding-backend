@@ -1,8 +1,21 @@
 import calendar
 from datetime import date
 from datetime import time as dt_time
+from datetime import timedelta
 
-from .models import WorkSchedule, ProductionCalendar, UserWorkSchedule
+from django.db import transaction
+from django.utils import timezone
+
+from accounts.models import Role, User
+from common.models import Notification
+
+from .models import (
+    ProductionCalendar,
+    UserWorkSchedule,
+    WeeklyWorkPlan,
+    WeeklyWorkPlanDeadlineAlert,
+    WorkSchedule,
+)
 
 
 def get_user_work_schedule(user):
@@ -194,3 +207,86 @@ def _build_schedule_from_weekly_plan(plan):
         is_default=False,
         is_active=True,
     )
+
+
+def notify_admins_about_weekly_plan_deadline_miss(*, now=None):
+    """
+    Monday 12:00 control:
+    - if employees didn't submit plan for current week, notify admin-like users.
+    - idempotent per week_start via WeeklyWorkPlanDeadlineAlert record.
+    """
+    local_now = timezone.localtime(now or timezone.now())
+    local_date = local_now.date()
+    week_start = local_date - timedelta(days=local_date.weekday())
+
+    if local_date.weekday() != 0:
+        return {"created": False, "reason": "not_monday", "week_start": week_start, "missing_count": 0}
+    if local_now.hour < 12:
+        return {"created": False, "reason": "too_early", "week_start": week_start, "missing_count": 0}
+    if WeeklyWorkPlanDeadlineAlert.objects.filter(week_start=week_start).exists():
+        alert = WeeklyWorkPlanDeadlineAlert.objects.filter(week_start=week_start).first()
+        return {
+            "created": False,
+            "reason": "already_sent",
+            "week_start": week_start,
+            "missing_count": len(alert.missing_users or []),
+        }
+
+    target_users = User.objects.filter(is_active=True).exclude(
+        role__name__in=[Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN]
+    )
+    submitted_user_ids = set(
+        WeeklyWorkPlan.objects.filter(week_start=week_start).values_list("user_id", flat=True)
+    )
+    missing_qs = target_users.exclude(id__in=submitted_user_ids).select_related("role").order_by("username")
+    missing_users = [
+        {
+            "id": user.id,
+            "username": user.username,
+            "full_name": user.get_full_name().strip(),
+            "role": getattr(user.role, "name", ""),
+        }
+        for user in missing_qs
+    ]
+
+    admins = User.objects.filter(
+        is_active=True,
+        role__name__in=[Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN],
+    ).order_by("id")
+    notified_count = 0
+
+    with transaction.atomic():
+        WeeklyWorkPlanDeadlineAlert.objects.create(
+            week_start=week_start,
+            missing_users=missing_users,
+            notified_admins=admins.count() if missing_users else 0,
+        )
+        if missing_users:
+            names = ", ".join(
+                (item["full_name"] or item["username"]) for item in missing_users[:10]
+            )
+            suffix = "" if len(missing_users) <= 10 else f" и еще {len(missing_users) - 10}"
+            message = (
+                f"На {week_start.isoformat()} не заполнен недельный план до понедельника 12:00. "
+                f"Не отправили: {names}{suffix}."
+            )
+            Notification.objects.bulk_create(
+                [
+                    Notification(
+                        user=admin,
+                        title="Не заполнен недельный график до дедлайна",
+                        message=message,
+                        type=Notification.Type.SYSTEM,
+                    )
+                    for admin in admins
+                ]
+            )
+            notified_count = admins.count()
+
+    return {
+        "created": True,
+        "reason": "sent" if missing_users else "no_missing",
+        "week_start": week_start,
+        "missing_count": len(missing_users),
+        "notified_admins": notified_count,
+    }

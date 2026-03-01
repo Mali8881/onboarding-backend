@@ -17,7 +17,13 @@ try:
 except Exception:
     ModelAdmin = admin.ModelAdmin
 
-from .models import UserWorkSchedule, WeeklyWorkPlan, WorkSchedule
+from .models import (
+    UserWorkSchedule,
+    WeeklyWorkPlan,
+    WeeklyWorkPlanChangeLog,
+    WeeklyWorkPlanDeadlineAlert,
+    WorkSchedule,
+)
 from .services import ensure_user_schedule_for_approved_weekly_plan
 
 
@@ -647,5 +653,52 @@ class WeeklyWorkPlanAdmin(ModelAdmin):
         super().save_model(request, obj, form, change)
         if AccessPolicy.is_admin_like(request.user) and obj.status == WeeklyWorkPlan.Status.APPROVED:
             ensure_user_schedule_for_approved_weekly_plan(obj)
+
+
+@admin.register(WeeklyWorkPlanChangeLog)
+class WeeklyWorkPlanChangeLogAdmin(ModelAdmin):
+    list_display = ("id", "weekly_plan", "user", "changed_by", "week_start", "created_at")
+    list_filter = ("week_start", "created_at")
+    search_fields = ("user__username", "changed_by__username", "weekly_plan__id")
+    ordering = ("-created_at",)
+    readonly_fields = ("weekly_plan", "user", "changed_by", "week_start", "changes", "created_at")
+
+    def has_module_permission(self, request):
+        return AccessPolicy.is_admin_like(request.user)
+
+    def has_view_permission(self, request, obj=None):
+        return AccessPolicy.is_admin_like(request.user)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return AccessPolicy.is_super_admin(request.user)
+
+
+@admin.register(WeeklyWorkPlanDeadlineAlert)
+class WeeklyWorkPlanDeadlineAlertAdmin(ModelAdmin):
+    list_display = ("week_start", "notified_admins", "created_at")
+    search_fields = ("week_start",)
+    ordering = ("-week_start",)
+    readonly_fields = ("week_start", "missing_users", "notified_admins", "created_at")
+
+    def has_module_permission(self, request):
+        return AccessPolicy.is_admin_like(request.user)
+
+    def has_view_permission(self, request, obj=None):
+        return AccessPolicy.is_admin_like(request.user)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return AccessPolicy.is_super_admin(request.user)
 
 

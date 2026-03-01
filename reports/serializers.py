@@ -169,6 +169,7 @@ class ReportNotificationSerializer(serializers.ModelSerializer):
 
 class EmployeeDailyReportSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source="user.username", read_only=True)
+    user_full_name = serializers.SerializerMethodField()
 
     class Meta:
         model = EmployeeDailyReport
@@ -176,9 +177,18 @@ class EmployeeDailyReportSerializer(serializers.ModelSerializer):
             "id",
             "user",
             "username",
+            "user_full_name",
             "report_date",
             "summary",
+            "started_tasks",
+            "taken_tasks",
+            "completed_tasks",
+            "blockers",
             "created_at",
             "updated_at",
         )
         read_only_fields = ("user", "username", "created_at", "updated_at")
+
+    def get_user_full_name(self, obj):
+        full_name = f"{obj.user.first_name} {obj.user.last_name}".strip()
+        return full_name or obj.user.username

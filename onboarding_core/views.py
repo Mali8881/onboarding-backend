@@ -1,3 +1,5 @@
+﻿from datetime import timedelta
+
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_spectacular.utils import OpenApiResponse, extend_schema
@@ -11,7 +13,14 @@ from rest_framework.views import APIView
 from accounts.permissions import HasPermission
 from accounts.models import Role
 from apps.audit import AuditEvents, log_event
-from regulations.models import Regulation, RegulationAcknowledgement
+from apps.tasks.models import Board, Column, Task
+from regulations.models import (
+    Regulation,
+    RegulationAcknowledgement,
+    RegulationFeedback,
+    RegulationKnowledgeCheck,
+    RegulationReadProgress,
+)
 
 from .models import OnboardingDay, OnboardingMaterial, OnboardingProgress
 from .audit import OnboardingAuditService
@@ -23,6 +32,70 @@ from .serializers import (
     OnboardingDayListSerializer,
 )
 
+
+def _get_user_default_board(user) -> Board:
+    board, _ = Board.objects.get_or_create(
+        created_by=user,
+        is_personal=True,
+        defaults={"name": f"{user.username} board"},
+    )
+    Column.objects.get_or_create(
+        board=board,
+        order=1,
+        defaults={"name": "New"},
+    )
+    return board
+
+
+def _get_day_one_regulations_queryset(day):
+    if day.day_number == 1:
+        return Regulation.objects.filter(is_active=True).order_by("position", "-created_at")
+    return day.regulations.filter(is_active=True).order_by("position", "-created_at")
+
+
+def _ensure_day_one_onboarding_task_for_intern(*, user, day):
+    if not (getattr(user, "role_id", None) and user.role.name == Role.Name.INTERN):
+        return
+    if day.day_number != 1:
+        return
+
+    existing = Task.objects.filter(assignee=user, onboarding_day=day).first()
+    if existing is not None:
+        return
+
+    board = _get_user_default_board(user)
+    column = board.columns.order_by("order", "id").first()
+    if column is None:
+        column = Column.objects.create(board=board, name="New", order=1)
+
+    today = timezone.localdate()
+    due_date = today + timedelta(days=1)
+    regulation_titles = list(_get_day_one_regulations_queryset(day).values_list("title", flat=True))
+    regulations_block = (
+        "\n".join(f"- {title}" for title in regulation_titles)
+        if regulation_titles
+        else "- Регламенты будут добавлены администратором."
+    )
+    description = (
+        "Цель этого дня: ознакомление с регламентами компании.\n"
+        "Дедлайн: один день (до следующего дня с момента открытия задачи).\n\n"
+        "Задача: прочитать все регламенты.\n\n"
+        "Регламенты:\n"
+        f"{regulations_block}\n\n"
+        "После ознакомления отправьте отчет (стендап) во вкладке отчета."
+    )
+
+    Task.objects.create(
+        board=board,
+        column=column,
+        title="День 1: Ознакомление с регламентами компании",
+        description=description,
+        assignee=user,
+        reporter=user.manager if user.manager_id else user,
+        onboarding_day=day,
+        due_date=due_date,
+        priority=Task.Priority.HIGH,
+    )
 
 class OnboardingDayListView(ListAPIView):
     permission_classes = [IsAuthenticated]
@@ -45,11 +118,17 @@ class OnboardingDayDetailView(RetrieveAPIView):
         return (
             OnboardingDay.objects
             .filter(is_active=True)
-            .prefetch_related("materials")
+            .prefetch_related("materials", "regulations")
         )
 
     def get_serializer_context(self):
         return {"request": self.request}
+
+    def retrieve(self, request, *args, **kwargs):
+        day = self.get_object()
+        _ensure_day_one_onboarding_task_for_intern(user=request.user, day=day)
+        serializer = self.get_serializer(day)
+        return Response(serializer.data)
 
 
 class CompleteOnboardingDayView(APIView):
@@ -108,6 +187,57 @@ class CompleteOnboardingDayView(APIView):
                                 {"id": str(item["id"]), "title": item["title"]}
                                 for item in missing_docs
                             ],
+                        },
+                        status=drf_status.HTTP_409_CONFLICT,
+                    )
+
+            day_regs = list(_get_day_one_regulations_queryset(day))
+            if day_regs:
+                reg_ids = [reg.id for reg in day_regs]
+                read_ids = set(
+                    RegulationReadProgress.objects.filter(
+                        user=request.user,
+                        regulation_id__in=reg_ids,
+                        is_read=True,
+                    ).values_list("regulation_id", flat=True)
+                )
+                feedback_ids = set(
+                    RegulationFeedback.objects.filter(
+                        user=request.user,
+                        regulation_id__in=reg_ids,
+                    ).values_list("regulation_id", flat=True)
+                )
+                quiz_ids = set(
+                    RegulationKnowledgeCheck.objects.filter(
+                        user=request.user,
+                        regulation_id__in=reg_ids,
+                        is_passed=True,
+                    ).values_list("regulation_id", flat=True)
+                )
+
+                missing_steps = []
+                for reg in day_regs:
+                    steps = []
+                    if reg.id not in read_ids:
+                        steps.append("read")
+                    if reg.id not in feedback_ids:
+                        steps.append("feedback")
+                    if reg.id not in quiz_ids:
+                        steps.append("quiz")
+                    if steps:
+                        missing_steps.append(
+                            {
+                                "id": str(reg.id),
+                                "title": reg.title,
+                                "missing": steps,
+                            }
+                        )
+
+                if missing_steps:
+                    return Response(
+                        {
+                            "detail": "Нельзя завершить 1-й день: для каждого регламента нужны шаги 'прочитал', 'фидбек' и 'тест'.",
+                            "missing_steps": missing_steps,
                         },
                         status=drf_status.HTTP_409_CONFLICT,
                     )
@@ -313,3 +443,4 @@ class AdminOnboardingProgressViewSet(ModelViewSet):
             qs = qs.filter(day__day_number=day_number)
 
         return qs
+

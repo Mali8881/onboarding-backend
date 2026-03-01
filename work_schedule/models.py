@@ -380,3 +380,58 @@ class WeeklyWorkPlan(models.Model):
 
     def __str__(self):
         return f"{self.user} - {self.week_start} ({self.status})"
+
+
+class WeeklyWorkPlanChangeLog(models.Model):
+    weekly_plan = models.ForeignKey(
+        WeeklyWorkPlan,
+        on_delete=models.CASCADE,
+        related_name="change_logs",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="weekly_plan_change_logs",
+    )
+    changed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="changed_weekly_plans_logs",
+    )
+    week_start = models.DateField()
+    changes = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Weekly work plan change log"
+        verbose_name_plural = "Weekly work plan change logs"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["week_start"]),
+            models.Index(fields=["user", "week_start"]),
+            models.Index(fields=["weekly_plan", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"Plan #{self.weekly_plan_id} changes at {self.created_at:%Y-%m-%d %H:%M:%S}"
+
+
+class WeeklyWorkPlanDeadlineAlert(models.Model):
+    week_start = models.DateField(unique=True)
+    missing_users = models.JSONField(default=list)
+    notified_admins = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Weekly plan deadline alert"
+        verbose_name_plural = "Weekly plan deadline alerts"
+        ordering = ["-week_start"]
+        indexes = [
+            models.Index(fields=["week_start"]),
+            models.Index(fields=["created_at"]),
+        ]
+
+    def __str__(self):
+        return f"Deadline alert for week {self.week_start}"

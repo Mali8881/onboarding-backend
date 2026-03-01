@@ -3,9 +3,18 @@ from urllib.parse import urlparse
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
+from accounts.access_policy import AccessPolicy
 
 from .models import OnboardingDay, OnboardingMaterial, OnboardingProgress
 from apps.tasks.models import Task
+from regulations.serializers import RegulationSerializer
+from regulations.models import (
+    Regulation,
+    RegulationAcknowledgement,
+    RegulationFeedback,
+    RegulationKnowledgeCheck,
+    RegulationReadProgress,
+)
 
 
 class OnboardingMaterialSerializer(serializers.ModelSerializer):
@@ -40,6 +49,7 @@ class OnboardingDayListSerializer(serializers.ModelSerializer):
 class OnboardingDayDetailSerializer(serializers.ModelSerializer):
     materials = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
+    regulations = serializers.SerializerMethodField()
     tasks = serializers.SerializerMethodField()
 
     class Meta:
@@ -54,6 +64,7 @@ class OnboardingDayDetailSerializer(serializers.ModelSerializer):
             "deadline_time",
             "status",
             "materials",
+            "regulations",
             "tasks",
         )
 
@@ -102,6 +113,71 @@ class OnboardingDayDetailSerializer(serializers.ModelSerializer):
         materials = list(day.materials.all())
         materials.sort(key=lambda m: (m.priority, m.position))
         return OnboardingMaterialSerializer(materials, many=True).data
+
+    @extend_schema_field(
+        {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "format": "uuid"},
+                    "title": {"type": "string"},
+                    "description": {"type": "string"},
+                    "type": {"type": "string", "enum": ["link", "file"]},
+                    "content": {"type": "string"},
+                    "action": {"type": "string", "enum": ["open", "download"]},
+                    "is_mandatory_on_day_one": {"type": "boolean"},
+                    "is_acknowledged": {"type": "boolean"},
+                    "acknowledged_at": {"type": "string", "nullable": True},
+                },
+            },
+            "description": "Regulations linked to this onboarding day",
+        }
+    )
+    def get_regulations(self, day):
+        user = self.context["request"].user
+        if AccessPolicy.is_intern(user) and day.day_number == 1:
+            regulations_qs = Regulation.objects.filter(is_active=True).order_by("position", "-created_at")
+        else:
+            regulations_qs = day.regulations.filter(is_active=True).order_by("position", "-created_at")
+        ack_map = {
+            ack.regulation_id: ack
+            for ack in RegulationAcknowledgement.objects.filter(user=user, regulation__in=regulations_qs)
+        }
+        feedback_map = {
+            regulation_id: True
+            for regulation_id in RegulationFeedback.objects.filter(
+                user=user,
+                regulation__in=regulations_qs,
+            ).values_list("regulation_id", flat=True)
+        }
+        knowledge_map = {
+            regulation_id: True
+            for regulation_id in RegulationKnowledgeCheck.objects.filter(
+                user=user,
+                regulation__in=regulations_qs,
+                is_passed=True,
+            ).values_list("regulation_id", flat=True)
+        }
+        read_progress = RegulationReadProgress.objects.filter(
+            user=user,
+            regulation__in=regulations_qs,
+            is_read=True,
+        )
+        read_map = {item.regulation_id: True for item in read_progress}
+        read_at_map = {item.regulation_id: item.read_at for item in read_progress}
+        return RegulationSerializer(
+            regulations_qs,
+            many=True,
+            context={
+                "request": self.context["request"],
+                "ack_map": ack_map,
+                "feedback_map": feedback_map,
+                "knowledge_map": knowledge_map,
+                "read_map": read_map,
+                "read_at_map": read_at_map,
+            },
+        ).data
 
     @extend_schema_field(
         {
