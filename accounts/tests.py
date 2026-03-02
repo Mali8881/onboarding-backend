@@ -151,3 +151,35 @@ class LoginLandingTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["landing"], "admin_panel")
+
+
+class TeamleadManagerCleanupTests(TestCase):
+    def test_demoting_teamlead_clears_manager_for_team_members(self):
+        teamlead_role, _ = Role.objects.get_or_create(
+            name=Role.Name.TEAMLEAD,
+            defaults={"level": Role.Level.TEAMLEAD},
+        )
+        employee_role, _ = Role.objects.get_or_create(
+            name=Role.Name.EMPLOYEE,
+            defaults={"level": Role.Level.EMPLOYEE},
+        )
+
+        teamlead = User.objects.create_user(
+            username="teamlead_cleanup",
+            password="StrongPass123!",
+            role=teamlead_role,
+        )
+        employee = User.objects.create_user(
+            username="employee_cleanup",
+            password="StrongPass123!",
+            role=employee_role,
+            manager=teamlead,
+        )
+
+        self.assertEqual(employee.manager_id, teamlead.id)
+
+        teamlead.role = employee_role
+        teamlead.save(update_fields=["role"])
+
+        employee.refresh_from_db()
+        self.assertIsNone(employee.manager_id)
