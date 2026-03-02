@@ -346,8 +346,8 @@ class _OrgAdminMixin:
 
     @staticmethod
     def _ensure_can_manage(request):
-        if not AccessPolicy.can_manage_org_reference(request.user):
-            raise PermissionDenied("Недостаточно прав для управления справочниками.")
+        if not (AccessPolicy.is_super_admin(request.user) or AccessPolicy.is_administrator(request.user)):
+            raise PermissionDenied("Only administrator/super admin can edit company structure.")
 
     @staticmethod
     def _ip(request):
@@ -656,27 +656,37 @@ class CompanyStructureAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        users_qs = User.objects.select_related("department", "position", "role").filter(is_active=True)
+        users_by_department = {}
+        for user in users_qs:
+            users_by_department.setdefault(user.department_id, []).append(
+                {
+                    "id": user.id,
+                    "username": user.username,
+                    "full_name": f"{user.first_name} {user.last_name}".strip() or user.username,
+                    "position": user.position.name if user.position_id else (user.custom_position or ""),
+                    "role": user.role.name if user.role_id else "",
+                }
+            )
+
         departments = []
-        for department in Department.objects.filter(is_active=True):
-            head = (
-                User.objects.filter(department=department, manager__isnull=True)
-                .exclude(role__name=Role.Name.INTERN)
-                .order_by("id")
-                .first()
+        for department in Department.objects.filter(is_active=True).select_related("parent").order_by("name"):
+            members = users_by_department.get(department.id, [])
+            head = next(
+                (
+                    m
+                    for m in members
+                    if m["role"] in {Role.Name.SUPER_ADMIN, Role.Name.ADMINISTRATOR, Role.Name.ADMIN, Role.Name.TEAMLEAD}
+                ),
+                members[0] if members else None,
             )
             departments.append(
                 {
                     "id": department.id,
                     "name": department.name,
-                    "head": (
-                        {
-                            "id": head.id,
-                            "username": head.username,
-                            "full_name": f"{head.first_name} {head.last_name}".strip(),
-                        }
-                        if head
-                        else None
-                    ),
+                    "parent_id": department.parent_id,
+                    "head": head,
+                    "members": members,
                 }
             )
 

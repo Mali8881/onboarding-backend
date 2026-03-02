@@ -258,7 +258,7 @@ class AttendanceDailyCheckInAPIView(APIView):
 
     def post(self, request):
         role_name = getattr(getattr(request.user, "role", None), "name", "")
-        if role_name not in {"ADMIN", "EMPLOYEE", "INTERN"}:
+        if role_name not in {"SUPER_ADMIN", "ADMINISTRATOR", "ADMIN", "EMPLOYEE", "INTERN"}:
             return Response(
                 {"detail": "Check-in is available only for trackable users."},
                 status=status.HTTP_403_FORBIDDEN,
