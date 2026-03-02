@@ -1,4 +1,5 @@
 from datetime import date
+from datetime import timedelta
 
 from django.db.models import Count
 from django.utils import timezone
@@ -43,6 +44,13 @@ def _department_scope_id(user):
     if AccessPolicy.is_admin(user) and not AccessPolicy.is_super_admin(user):
         return user.department_id
     return None
+
+
+def _week_start_from_dt(dt_value):
+    if not dt_value:
+        return None
+    local_date = timezone.localtime(dt_value).date()
+    return local_date - timedelta(days=local_date.weekday())
 
 
 def _day_diff(previous_day, current_day):
@@ -192,7 +200,9 @@ class ChooseScheduleAPIView(APIView):
         if not created:
             uws.schedule = schedule
             uws.approved = False
-            uws.save(update_fields=["schedule", "approved"])
+            # Treat schedule selection as a request for a specific week.
+            uws.requested_at = timezone.now()
+            uws.save(update_fields=["schedule", "approved", "requested_at"])
 
         WorkScheduleAuditService.log_schedule_selected_for_approval(request, schedule, was_created=created)
         return Response({"detail": "Schedule was sent for approval."}, status=status.HTTP_200_OK)
@@ -260,13 +270,19 @@ class WorkScheduleAdminAssignAPIView(APIView):
             return Response({"detail": "Schedule not found."}, status=status.HTTP_404_NOT_FOUND)
 
         approved = bool(request.data.get("approved", True))
-        assignment, _ = UserWorkSchedule.objects.update_or_create(
-            user=user,
-            defaults={
-                "schedule": schedule,
-                "approved": approved,
-            },
-        )
+        assignment = UserWorkSchedule.objects.filter(user=user).first()
+        if assignment:
+            assignment.schedule = schedule
+            assignment.approved = approved
+            # Each manual assignment is effective for the week it was assigned.
+            assignment.requested_at = timezone.now()
+            assignment.save(update_fields=["schedule", "approved", "requested_at"])
+        else:
+            assignment = UserWorkSchedule.objects.create(
+                user=user,
+                schedule=schedule,
+                approved=approved,
+            )
         WorkScheduleAuditService.log_schedule_request_decision(request, assignment, approved=approved)
         return Response(UserWorkScheduleSerializer(assignment).data, status=status.HTTP_200_OK)
 
@@ -441,10 +457,88 @@ class WeeklyWorkPlanAdminListAPIView(APIView):
         scope_department_id = _department_scope_id(request.user)
         if scope_department_id:
             qs = qs.filter(user__department_id=scope_department_id)
+        week_start_filter = request.query_params.get("week_start")
+        if week_start_filter:
+            qs = qs.filter(week_start=week_start_filter)
         status_filter = request.query_params.get("status")
         if status_filter:
             qs = qs.filter(status=status_filter)
-        return Response(WeeklyWorkPlanSerializer(qs, many=True).data)
+        payload = list(WeeklyWorkPlanSerializer(qs, many=True).data)
+
+        # Include approved template assignments as synthetic approved weekly plans
+        # for the week of request/assignment, when explicit weekly plan is absent.
+        has_real_plan = {
+            (int(plan.user_id), plan.week_start.isoformat())
+            for plan in qs
+        }
+        assignment_qs = UserWorkSchedule.objects.select_related("user", "schedule").filter(approved=True)
+        if scope_department_id:
+            assignment_qs = assignment_qs.filter(user__department_id=scope_department_id)
+
+        synthetic_items = []
+        for assignment in assignment_qs:
+            effective_week_start = _week_start_from_dt(assignment.requested_at)
+            if not effective_week_start:
+                continue
+            effective_week_start_iso = effective_week_start.isoformat()
+            if week_start_filter and effective_week_start_iso != week_start_filter:
+                continue
+            if status_filter and status_filter != WeeklyWorkPlan.Status.APPROVED:
+                continue
+
+            key = (int(assignment.user_id), effective_week_start_iso)
+            if key in has_real_plan:
+                continue
+
+            duration_hours = 0
+            if assignment.schedule.start_time and assignment.schedule.end_time:
+                start_minutes = assignment.schedule.start_time.hour * 60 + assignment.schedule.start_time.minute
+                end_minutes = assignment.schedule.end_time.hour * 60 + assignment.schedule.end_time.minute
+                if end_minutes > start_minutes:
+                    duration_hours = (end_minutes - start_minutes) // 60
+            office_hours = len(assignment.schedule.work_days or []) * max(duration_hours, 0)
+
+            days = []
+            for offset in range(7):
+                day_date = effective_week_start + timedelta(days=offset)
+                is_workday = offset in (assignment.schedule.work_days or [])
+                days.append(
+                    {
+                        "date": day_date.isoformat(),
+                        "mode": "office" if is_workday else "day_off",
+                        "start_time": assignment.schedule.start_time.strftime("%H:%M") if is_workday else None,
+                        "end_time": assignment.schedule.end_time.strftime("%H:%M") if is_workday else None,
+                        "comment": "Сформировано из шаблона графика.",
+                        "breaks": [],
+                        "lunch_start": None,
+                        "lunch_end": None,
+                    }
+                )
+
+            synthetic_items.append(
+                {
+                    "id": f"template-{assignment.id}-{effective_week_start_iso}",
+                    "user": assignment.user_id,
+                    "username": assignment.user.username,
+                    "week_start": effective_week_start_iso,
+                    "days": days,
+                    "office_hours": office_hours,
+                    "online_hours": 0,
+                    "online_reason": "",
+                    "employee_comment": "Шаблон графика (на одну неделю).",
+                    "status": WeeklyWorkPlan.Status.APPROVED,
+                    "admin_comment": "Сформировано из утвержденного шаблона.",
+                    "reviewed_by": None,
+                    "reviewed_by_username": "",
+                    "submitted_at": assignment.requested_at,
+                    "updated_at": assignment.requested_at,
+                    "reviewed_at": assignment.requested_at,
+                }
+            )
+
+        payload.extend(synthetic_items)
+        payload.sort(key=lambda item: (str(item.get("week_start", "")), str(item.get("updated_at", ""))), reverse=True)
+        return Response(payload)
 
 
 class WeeklyWorkPlanAdminChangesAPIView(APIView):

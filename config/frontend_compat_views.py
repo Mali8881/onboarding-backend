@@ -26,32 +26,18 @@ from reports.models import OnboardingReport
 from work_schedule.models import ProductionCalendar
 from work_schedule.views import MyScheduleAPIView, WorkScheduleListAPIView
 
-ROLE_SUPER_ADMIN = getattr(Role.Name, "SUPER_ADMIN", "SUPER_ADMIN")
-ROLE_ADMIN = getattr(Role.Name, "ADMIN", "ADMIN")
-ROLE_ADMINISTRATOR = getattr(Role.Name, "ADMINISTRATOR", "ADMINISTRATOR")
-ROLE_DEPARTMENT_HEAD = getattr(Role.Name, "DEPARTMENT_HEAD", None)
-ROLE_TEAMLEAD = getattr(Role.Name, "TEAMLEAD", "TEAMLEAD")
-ROLE_EMPLOYEE = getattr(Role.Name, "EMPLOYEE", "EMPLOYEE")
-ROLE_INTERN = getattr(Role.Name, "INTERN", "INTERN")
-
-PRIVILEGED_ROLE_NAMES = {ROLE_SUPER_ADMIN, ROLE_ADMIN, ROLE_ADMINISTRATOR}
-if ROLE_DEPARTMENT_HEAD:
-    PRIVILEGED_ROLE_NAMES.add(ROLE_DEPARTMENT_HEAD)
-
 
 def _role_to_front(role: Role | None) -> str:
     if not role:
         return ""
     mapping = {
-        ROLE_SUPER_ADMIN: "superadmin",
-        ROLE_ADMIN: "admin",
-        ROLE_ADMINISTRATOR: "administrator",
-        ROLE_TEAMLEAD: "projectmanager",
-        ROLE_EMPLOYEE: "employee",
-        ROLE_INTERN: "intern",
+        Role.Name.SUPER_ADMIN: "superadmin",
+        Role.Name.ADMIN: "admin",
+        Role.Name.DEPARTMENT_HEAD: "department_head",
+        Role.Name.TEAMLEAD: "projectmanager",
+        Role.Name.EMPLOYEE: "employee",
+        Role.Name.INTERN: "intern",
     }
-    if ROLE_DEPARTMENT_HEAD:
-        mapping[ROLE_DEPARTMENT_HEAD] = "department_head"
     return mapping.get(role.name, role.name.lower())
 
 
@@ -63,7 +49,6 @@ def _user_to_front_payload(user: User) -> dict:
         "employee": "Сотрудник",
         "projectmanager": "Тимлид",
         "department_head": "Руководитель отдела",
-        "administrator": "Администратор",
         "admin": "Админ",
         "superadmin": "Суперадмин",
     }
@@ -82,6 +67,12 @@ def _user_to_front_payload(user: User) -> dict:
         "subdivision_name": user.department.name if user.department_id else "",
         "position": user.position_id,
         "position_name": user.position.name if user.position_id else (user.custom_position or ""),
+        "manager": user.manager_id,
+        "manager_name": (
+            f"{user.manager.first_name} {user.manager.last_name}".strip() or user.manager.username
+            if user.manager_id
+            else ""
+        ),
         "phone": user.phone or "",
         "telegram": user.telegram or "",
         "photo": user.photo.url if getattr(user, "photo", None) else "",
@@ -95,10 +86,15 @@ def _ensure_admin_like(user: User):
         raise PermissionDenied("Only department head/admin/super admin can perform this action.")
 
 
+def _ensure_content_manager(user: User):
+    if not (AccessPolicy.is_main_admin(user) or AccessPolicy.is_super_admin(user)):
+        raise PermissionDenied("Only admin/super admin can manage content.")
+
+
 def _is_privileged_target(target: User) -> bool:
     if not getattr(target, "role_id", None):
         return False
-    return target.role.name in PRIVILEGED_ROLE_NAMES
+    return target.role.name in {Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN}
 
 
 def _resolve_role(value: str | None) -> Role | None:
@@ -106,21 +102,17 @@ def _resolve_role(value: str | None) -> Role | None:
         return None
     normalized = str(value).strip().upper()
     aliases = {
-        "PROJECTMANAGER": ROLE_TEAMLEAD,
-        "PROJECT_MANAGER": ROLE_TEAMLEAD,
-        "TEAMLEAD": ROLE_TEAMLEAD,
-        "TEAM_LEAD": ROLE_TEAMLEAD,
-        "DEPARTMENTHEAD": ROLE_DEPARTMENT_HEAD or ROLE_ADMIN,
-        "DEPARTMENT_HEAD": ROLE_DEPARTMENT_HEAD or ROLE_ADMIN,
-        "ADMIN": ROLE_ADMIN,
-        "ADMINISTRATOR": ROLE_ADMINISTRATOR,
-        "SYSTEMADMIN": ROLE_ADMINISTRATOR,
-        "SYSTEM_ADMIN": ROLE_ADMINISTRATOR,
-        "SYSTEM_ADMINISTRATOR": ROLE_ADMINISTRATOR,
-        "SUPERADMIN": ROLE_SUPER_ADMIN,
-        "SUPER_ADMIN": ROLE_SUPER_ADMIN,
-        "EMPLOYEE": ROLE_EMPLOYEE,
-        "INTERN": ROLE_INTERN,
+        "PROJECTMANAGER": Role.Name.TEAMLEAD,
+        "PROJECT_MANAGER": Role.Name.TEAMLEAD,
+        "TEAMLEAD": Role.Name.TEAMLEAD,
+        "TEAM_LEAD": Role.Name.TEAMLEAD,
+        "DEPARTMENTHEAD": Role.Name.DEPARTMENT_HEAD,
+        "DEPARTMENT_HEAD": Role.Name.DEPARTMENT_HEAD,
+        "ADMIN": Role.Name.ADMIN,
+        "SUPERADMIN": Role.Name.SUPER_ADMIN,
+        "SUPER_ADMIN": Role.Name.SUPER_ADMIN,
+        "EMPLOYEE": Role.Name.EMPLOYEE,
+        "INTERN": Role.Name.INTERN,
     }
     role_name = aliases.get(normalized)
     if not role_name:
@@ -206,6 +198,7 @@ class FrontendUsersSerializer(serializers.ModelSerializer):
             "last_name",
             "department",
             "position",
+            "manager",
             "custom_position",
             "telegram",
             "phone",
@@ -226,23 +219,14 @@ class FrontendUsersSerializer(serializers.ModelSerializer):
 class FrontendUsersCollectionAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
-    @staticmethod
-    def _inject_names_from_full_name(payload: dict) -> dict:
-        data = dict(payload)
-        full_name = (data.get("full_name") or data.get("name") or "").strip()
-        if full_name and not (data.get("first_name") or data.get("last_name")):
-            parts = full_name.split()
-            data["first_name"] = parts[0]
-            data["last_name"] = " ".join(parts[1:]) if len(parts) > 1 else ""
-        return data
-
     def get(self, request):
         _ensure_admin_like(request.user)
-        qs = User.objects.select_related("role", "department", "position").order_by("id")
+        qs = User.objects.select_related("role", "department", "position", "manager").order_by("id")
         if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
             qs = qs.filter(
-                Q(role__name=ROLE_INTERN)
-                | Q(role__name=ROLE_EMPLOYEE, department_id=request.user.department_id)
+                Q(role__name=Role.Name.INTERN)
+                | Q(role__name=Role.Name.EMPLOYEE, department_id=request.user.department_id)
+                | Q(role__name=Role.Name.TEAMLEAD, department_id=request.user.department_id)
             )
         search = (request.query_params.get("search") or "").strip()
         if search:
@@ -256,17 +240,38 @@ class FrontendUsersCollectionAPIView(APIView):
 
     def post(self, request):
         _ensure_admin_like(request.user)
-        incoming = self._inject_names_from_full_name(request.data)
-        serializer = FrontendUsersSerializer(data=incoming)
+        serializer = FrontendUsersSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         validated = dict(serializer.validated_data)
         password = validated.pop("password", None)
         role_name = validated.pop("role", None)
 
         user = User(**validated)
-        user.role = _resolve_role(role_name) or Role.objects.filter(name=ROLE_INTERN).first()
+        user.role = _resolve_role(role_name) or Role.objects.filter(name=Role.Name.INTERN).first()
         if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
-            if user.role and user.role.name in PRIVILEGED_ROLE_NAMES:
+            # Department head can create employees/teamleads only in own department.
+            # Interns must be created without department.
+            if user.role and user.role.name in {Role.Name.EMPLOYEE, Role.Name.TEAMLEAD}:
+                if not request.user.department_id:
+                    return Response({"detail": "Department head must belong to a department."}, status=400)
+                user.department_id = request.user.department_id
+            elif user.role and user.role.name == Role.Name.INTERN:
+                user.department = None
+
+        if user.role and user.role.name == Role.Name.TEAMLEAD and user.manager_id:
+            return Response({"detail": "Teamlead cannot have a manager."}, status=400)
+        if user.manager_id:
+            manager = User.objects.select_related("role").filter(id=user.manager_id).first()
+            if not manager or manager.role.name != Role.Name.TEAMLEAD:
+                return Response({"detail": "Manager must be a teamlead."}, status=400)
+            if (
+                AccessPolicy.is_admin(request.user)
+                and request.user.department_id
+                and manager.department_id != request.user.department_id
+            ):
+                return Response({"detail": "Department head can assign only teamleads from own department."}, status=403)
+        if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
+            if user.role and user.role.name in {Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN}:
                 return Response({"detail": "Department head cannot create privileged users."}, status=403)
         if not user.role:
             return Response({"detail": "Default role INTERN not found. Run role seed first."}, status=400)
@@ -282,7 +287,7 @@ class FrontendUsersDetailAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def _get_user(self, user_id: int) -> User:
-        user = User.objects.select_related("role", "department", "position").filter(id=user_id).first()
+        user = User.objects.select_related("role", "department", "position", "manager").filter(id=user_id).first()
         if not user:
             raise NotFound("User not found.")
         return user
@@ -293,20 +298,38 @@ class FrontendUsersDetailAPIView(APIView):
         if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
             if _is_privileged_target(target):
                 return Response({"detail": "Department head cannot edit privileged users."}, status=403)
-        incoming = FrontendUsersCollectionAPIView._inject_names_from_full_name(request.data)
-        serializer = FrontendUsersSerializer(target, data=incoming, partial=True)
+        serializer = FrontendUsersSerializer(target, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         validated = dict(serializer.validated_data)
         role_name = validated.pop("role", None)
         password = validated.pop("password", None)
+        next_role = _resolve_role(role_name) if role_name else target.role
+        if role_name and AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
+            if next_role and next_role.name in {Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN}:
+                return Response({"detail": "Department head cannot assign privileged role."}, status=403)
+
+        if next_role and next_role.name == Role.Name.TEAMLEAD:
+            if "manager" in validated and validated.get("manager"):
+                return Response({"detail": "Teamlead cannot have a manager."}, status=400)
+            validated["manager"] = None
+        if "manager" in validated:
+            manager = validated.get("manager")
+            if manager:
+                manager = User.objects.select_related("role").filter(id=manager.id).first()
+                if not manager or manager.role.name != Role.Name.TEAMLEAD:
+                    return Response({"detail": "Manager must be a teamlead."}, status=400)
+                if (
+                    AccessPolicy.is_admin(request.user)
+                    and request.user.department_id
+                    and manager.department_id != request.user.department_id
+                ):
+                    return Response({"detail": "Department head can assign only teamleads from own department."}, status=403)
         for field, value in validated.items():
             setattr(target, field, value)
         if role_name:
-            next_role = _resolve_role(role_name) or target.role
-            if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
-                if next_role and next_role.name in PRIVILEGED_ROLE_NAMES:
-                    return Response({"detail": "Department head cannot assign privileged role."}, status=403)
             target.role = next_role
+            if next_role and next_role.name == Role.Name.TEAMLEAD:
+                target.manager = None
         if password:
             target.set_password(password)
         target.save()
@@ -355,10 +378,14 @@ class FrontendUsersSetRoleAPIView(APIView):
         if not role:
             return Response({"detail": "Invalid role."}, status=400)
         if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
-            if role.name in PRIVILEGED_ROLE_NAMES:
+            if role.name in {Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN}:
                 return Response({"detail": "Department head cannot assign privileged role."}, status=403)
         target.role = role
-        target.save(update_fields=["role"])
+        if role.name == Role.Name.TEAMLEAD:
+            target.manager = None
+            target.save(update_fields=["role", "manager"])
+        else:
+            target.save(update_fields=["role"])
         target.refresh_from_db()
         return Response(_user_to_front_payload(target))
 
@@ -539,7 +566,7 @@ class FrontendNewsCollectionAPIView(APIView):
         return Response(NewsListSerializer(qs, many=True).data)
 
     def post(self, request):
-        _ensure_admin_like(request.user)
+        _ensure_content_manager(request.user)
         serializer = NewsDetailSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         news = News.objects.create(
@@ -565,7 +592,7 @@ class FrontendNewsDetailAPIView(APIView):
         return Response(NewsDetailSerializer(item).data)
 
     def patch(self, request, news_id):
-        _ensure_admin_like(request.user)
+        _ensure_content_manager(request.user)
         item = News.objects.filter(id=news_id).first()
         if not item:
             raise NotFound("News not found.")
@@ -575,7 +602,7 @@ class FrontendNewsDetailAPIView(APIView):
         return Response(NewsDetailSerializer(item).data)
 
     def delete(self, request, news_id):
-        _ensure_admin_like(request.user)
+        _ensure_content_manager(request.user)
         item = News.objects.filter(id=news_id).first()
         if not item:
             raise NotFound("News not found.")
@@ -589,6 +616,11 @@ class FrontendAuditListAPIView(APIView):
     def get(self, request):
         _ensure_admin_like(request.user)
         qs = AuditLog.objects.select_related("user").order_by("-created_at")
+        if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
+            if request.user.department_id:
+                qs = qs.filter(user__department_id=request.user.department_id)
+            else:
+                qs = qs.none()
         level = request.query_params.get("level")
         if level:
             qs = qs.filter(level=level)
@@ -624,7 +656,7 @@ class FrontendRegulationsCollectionAPIView(APIView):
         return Response(serializer.data)
 
     def post(self, request):
-        _ensure_admin_like(request.user)
+        _ensure_content_manager(request.user)
         serializer = RegulationAdminSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         instance = serializer.save()
@@ -643,7 +675,7 @@ class FrontendRegulationsDetailAPIView(APIView):
         return Response(serializer.data)
 
     def patch(self, request, regulation_id):
-        _ensure_admin_like(request.user)
+        _ensure_content_manager(request.user)
         item = Regulation.objects.filter(id=regulation_id).first()
         if not item:
             raise NotFound("Regulation not found.")
@@ -653,7 +685,7 @@ class FrontendRegulationsDetailAPIView(APIView):
         return Response(serializer.data)
 
     def delete(self, request, regulation_id):
-        _ensure_admin_like(request.user)
+        _ensure_content_manager(request.user)
         item = Regulation.objects.filter(id=regulation_id).first()
         if not item:
             raise NotFound("Regulation not found.")
@@ -672,7 +704,7 @@ class FrontendInstructionsAPIView(APIView):
         return Response(InstructionSerializer(qs.order_by("-updated_at"), many=True).data)
 
     def post(self, request):
-        _ensure_admin_like(request.user)
+        _ensure_content_manager(request.user)
         language = (request.data.get("language") or "ru").strip().lower()
         instruction_type = (request.data.get("type") or "text").strip().lower()
         content = (request.data.get("content") or "").strip()
@@ -706,7 +738,7 @@ class FrontendInstructionsDetailAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def patch(self, request, instruction_id):
-        _ensure_admin_like(request.user)
+        _ensure_content_manager(request.user)
         item = Instruction.objects.filter(id=instruction_id).first()
         if not item:
             raise NotFound("Instruction not found.")
@@ -742,7 +774,7 @@ class FrontendInstructionsDetailAPIView(APIView):
         return Response(InstructionSerializer(item).data)
 
     def delete(self, request, instruction_id):
-        _ensure_admin_like(request.user)
+        _ensure_content_manager(request.user)
         item = Instruction.objects.filter(id=instruction_id).first()
         if not item:
             raise NotFound("Instruction not found.")

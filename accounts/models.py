@@ -199,6 +199,24 @@ class User(AbstractUser):
             return False
         return self.role.name == Role.Name.TEAMLEAD
 
+    def save(self, *args, **kwargs):
+        previous_role_name = None
+        if self.pk:
+            previous_role_name = (
+                type(self)
+                .objects.filter(pk=self.pk)
+                .values_list("role__name", flat=True)
+                .first()
+            )
+
+        super().save(*args, **kwargs)
+
+        # If a teamlead is demoted to another role, clear manager for their team.
+        if previous_role_name == Role.Name.TEAMLEAD and (
+            not self.role_id or self.role.name != Role.Name.TEAMLEAD
+        ):
+            type(self).objects.filter(manager_id=self.pk).update(manager=None)
+
 
 # ================= Security =================
 class AuditLog(models.Model):
