@@ -20,6 +20,7 @@ class PayrollRecalculateSerializer(MonthQuerySerializer):
 
 class PayrollRecordSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source="user.username", read_only=True)
+    is_calculated = serializers.BooleanField(read_only=True, default=True)
 
     class Meta:
         model = PayrollRecord
@@ -34,10 +35,9 @@ class PayrollRecordSerializer(serializers.ModelSerializer):
             "status",
             "calculated_at",
             "paid_at",
-            "created_at",
-            "updated_at",
+            "is_calculated",
         )
-        read_only_fields = ("calculated_at", "paid_at", "created_at", "updated_at")
+        read_only_fields = ("calculated_at", "paid_at", "is_calculated")
 
 
 class PayrollRecordStatusSerializer(serializers.Serializer):
@@ -48,6 +48,23 @@ class HourlyRateUpdateSerializer(serializers.Serializer):
     user_id = serializers.IntegerField(min_value=1)
     rate = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=0)
     start_date = serializers.DateField(required=False)
+
+    def to_internal_value(self, data):
+        payload = dict(data)
+
+        if "user_id" not in payload:
+            for key in ("userId", "user", "employee_id"):
+                if key in data and data.get(key) not in (None, ""):
+                    payload["user_id"] = data.get(key)
+                    break
+
+        if "rate" not in payload:
+            for key in ("hourly_rate", "hourlyRate"):
+                if key in data and data.get(key) not in (None, ""):
+                    payload["rate"] = data.get(key)
+                    break
+
+        return super().to_internal_value(payload)
 
     def validate_user_id(self, value: int):
         if not User.objects.filter(id=value, is_active=True).exists():
@@ -67,6 +84,38 @@ class PayrollCompensationUpdateSerializer(serializers.Serializer):
     minute_rate = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=0, required=False)
     fixed_salary = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=0, required=False)
     start_date = serializers.DateField(required=False)
+
+    def to_internal_value(self, data):
+        payload = dict(data)
+
+        if "user_id" not in payload:
+            for key in ("userId", "user", "employee_id"):
+                if key in data and data.get(key) not in (None, ""):
+                    payload["user_id"] = data.get(key)
+                    break
+
+        if "pay_type" not in payload:
+            for key in ("payModel", "pay_model", "model", "type"):
+                if key in data and data.get(key) not in (None, ""):
+                    payload["pay_type"] = data.get(key)
+                    break
+
+        if "hourly_rate" not in payload and "hourlyRate" in data:
+            payload["hourly_rate"] = data.get("hourlyRate")
+        if "minute_rate" not in payload and "minuteRate" in data:
+            payload["minute_rate"] = data.get("minuteRate")
+        if "fixed_salary" not in payload and "fixedSalary" in data:
+            payload["fixed_salary"] = data.get("fixedSalary")
+
+        if "pay_type" not in payload or payload.get("pay_type") in (None, ""):
+            if payload.get("fixed_salary") not in (None, ""):
+                payload["pay_type"] = PayrollCompensation.PayType.FIXED_SALARY
+            elif payload.get("minute_rate") not in (None, ""):
+                payload["pay_type"] = PayrollCompensation.PayType.MINUTE
+            elif payload.get("hourly_rate") not in (None, ""):
+                payload["pay_type"] = PayrollCompensation.PayType.HOURLY
+
+        return super().to_internal_value(payload)
 
     def validate_user_id(self, value: int):
         if not User.objects.filter(id=value, is_active=True).exists():

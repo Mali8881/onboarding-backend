@@ -8,6 +8,8 @@ from .models import Role
 class AccessPolicy:
     """Centralized access checks for role/permission/object rules."""
 
+    LEGACY_SYSTEM_ADMIN_NAMES = {"SYSTEMADMIN", "SYSTEM_ADMIN", "SYSTEM_ADMINISTRATOR"}
+
     @staticmethod
     def _has_role(user) -> bool:
         return bool(user and user.is_authenticated and getattr(user, "role", None))
@@ -43,7 +45,9 @@ class AccessPolicy:
 
     @classmethod
     def is_administrator(cls, user) -> bool:
-        return cls._has_role(user) and user.role.name == Role.Name.ADMINISTRATOR
+        if not cls._has_role(user):
+            return False
+        return user.role.name == Role.Name.ADMINISTRATOR or user.role.name in cls.LEGACY_SYSTEM_ADMIN_NAMES
 
     @classmethod
     def is_admin(cls, user) -> bool:

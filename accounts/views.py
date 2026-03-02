@@ -183,6 +183,30 @@ class MyProfileAPIView(APIView):
         serializer = UserSerializer(request.user)
         return Response(serializer.data)
 
+    def patch(self, request):
+        serializer = UserProfileUpdateSerializer(
+            request.user,
+            data=request.data,
+            partial=True
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        changed_fields = sorted(serializer.validated_data.keys())
+        log_event(
+            action=AuditEvents.PROFILE_UPDATED,
+            actor=request.user,
+            object_type="user_profile",
+            object_id=str(request.user.id),
+            level="info",
+            category="user",
+            ip_address=LoginView._get_ip(request),
+            metadata={
+                "actor_id": request.user.id,
+                "changed_fields": changed_fields,
+            },
+        )
+        return Response(serializer.data)
+
 
 class MyProfilePasswordAPIView(APIView):
     permission_classes = [IsAuthenticated]

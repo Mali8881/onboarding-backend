@@ -26,18 +26,32 @@ from reports.models import OnboardingReport
 from work_schedule.models import ProductionCalendar
 from work_schedule.views import MyScheduleAPIView, WorkScheduleListAPIView
 
+ROLE_SUPER_ADMIN = getattr(Role.Name, "SUPER_ADMIN", "SUPER_ADMIN")
+ROLE_ADMIN = getattr(Role.Name, "ADMIN", "ADMIN")
+ROLE_ADMINISTRATOR = getattr(Role.Name, "ADMINISTRATOR", "ADMINISTRATOR")
+ROLE_DEPARTMENT_HEAD = getattr(Role.Name, "DEPARTMENT_HEAD", None)
+ROLE_TEAMLEAD = getattr(Role.Name, "TEAMLEAD", "TEAMLEAD")
+ROLE_EMPLOYEE = getattr(Role.Name, "EMPLOYEE", "EMPLOYEE")
+ROLE_INTERN = getattr(Role.Name, "INTERN", "INTERN")
+
+PRIVILEGED_ROLE_NAMES = {ROLE_SUPER_ADMIN, ROLE_ADMIN, ROLE_ADMINISTRATOR}
+if ROLE_DEPARTMENT_HEAD:
+    PRIVILEGED_ROLE_NAMES.add(ROLE_DEPARTMENT_HEAD)
+
 
 def _role_to_front(role: Role | None) -> str:
     if not role:
         return ""
     mapping = {
-        Role.Name.SUPER_ADMIN: "superadmin",
-        Role.Name.ADMIN: "admin",
-        Role.Name.DEPARTMENT_HEAD: "department_head",
-        Role.Name.TEAMLEAD: "projectmanager",
-        Role.Name.EMPLOYEE: "employee",
-        Role.Name.INTERN: "intern",
+        ROLE_SUPER_ADMIN: "superadmin",
+        ROLE_ADMIN: "admin",
+        ROLE_ADMINISTRATOR: "administrator",
+        ROLE_TEAMLEAD: "projectmanager",
+        ROLE_EMPLOYEE: "employee",
+        ROLE_INTERN: "intern",
     }
+    if ROLE_DEPARTMENT_HEAD:
+        mapping[ROLE_DEPARTMENT_HEAD] = "department_head"
     return mapping.get(role.name, role.name.lower())
 
 
@@ -49,6 +63,7 @@ def _user_to_front_payload(user: User) -> dict:
         "employee": "Сотрудник",
         "projectmanager": "Тимлид",
         "department_head": "Руководитель отдела",
+        "administrator": "Администратор",
         "admin": "Админ",
         "superadmin": "Суперадмин",
     }
@@ -83,7 +98,7 @@ def _ensure_admin_like(user: User):
 def _is_privileged_target(target: User) -> bool:
     if not getattr(target, "role_id", None):
         return False
-    return target.role.name in {Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN}
+    return target.role.name in PRIVILEGED_ROLE_NAMES
 
 
 def _resolve_role(value: str | None) -> Role | None:
@@ -91,17 +106,21 @@ def _resolve_role(value: str | None) -> Role | None:
         return None
     normalized = str(value).strip().upper()
     aliases = {
-        "PROJECTMANAGER": Role.Name.TEAMLEAD,
-        "PROJECT_MANAGER": Role.Name.TEAMLEAD,
-        "TEAMLEAD": Role.Name.TEAMLEAD,
-        "TEAM_LEAD": Role.Name.TEAMLEAD,
-        "DEPARTMENTHEAD": Role.Name.DEPARTMENT_HEAD,
-        "DEPARTMENT_HEAD": Role.Name.DEPARTMENT_HEAD,
-        "ADMIN": Role.Name.ADMIN,
-        "SUPERADMIN": Role.Name.SUPER_ADMIN,
-        "SUPER_ADMIN": Role.Name.SUPER_ADMIN,
-        "EMPLOYEE": Role.Name.EMPLOYEE,
-        "INTERN": Role.Name.INTERN,
+        "PROJECTMANAGER": ROLE_TEAMLEAD,
+        "PROJECT_MANAGER": ROLE_TEAMLEAD,
+        "TEAMLEAD": ROLE_TEAMLEAD,
+        "TEAM_LEAD": ROLE_TEAMLEAD,
+        "DEPARTMENTHEAD": ROLE_DEPARTMENT_HEAD or ROLE_ADMIN,
+        "DEPARTMENT_HEAD": ROLE_DEPARTMENT_HEAD or ROLE_ADMIN,
+        "ADMIN": ROLE_ADMIN,
+        "ADMINISTRATOR": ROLE_ADMINISTRATOR,
+        "SYSTEMADMIN": ROLE_ADMINISTRATOR,
+        "SYSTEM_ADMIN": ROLE_ADMINISTRATOR,
+        "SYSTEM_ADMINISTRATOR": ROLE_ADMINISTRATOR,
+        "SUPERADMIN": ROLE_SUPER_ADMIN,
+        "SUPER_ADMIN": ROLE_SUPER_ADMIN,
+        "EMPLOYEE": ROLE_EMPLOYEE,
+        "INTERN": ROLE_INTERN,
     }
     role_name = aliases.get(normalized)
     if not role_name:
@@ -207,13 +226,23 @@ class FrontendUsersSerializer(serializers.ModelSerializer):
 class FrontendUsersCollectionAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @staticmethod
+    def _inject_names_from_full_name(payload: dict) -> dict:
+        data = dict(payload)
+        full_name = (data.get("full_name") or data.get("name") or "").strip()
+        if full_name and not (data.get("first_name") or data.get("last_name")):
+            parts = full_name.split()
+            data["first_name"] = parts[0]
+            data["last_name"] = " ".join(parts[1:]) if len(parts) > 1 else ""
+        return data
+
     def get(self, request):
         _ensure_admin_like(request.user)
         qs = User.objects.select_related("role", "department", "position").order_by("id")
         if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
             qs = qs.filter(
-                Q(role__name=Role.Name.INTERN)
-                | Q(role__name=Role.Name.EMPLOYEE, department_id=request.user.department_id)
+                Q(role__name=ROLE_INTERN)
+                | Q(role__name=ROLE_EMPLOYEE, department_id=request.user.department_id)
             )
         search = (request.query_params.get("search") or "").strip()
         if search:
@@ -227,16 +256,17 @@ class FrontendUsersCollectionAPIView(APIView):
 
     def post(self, request):
         _ensure_admin_like(request.user)
-        serializer = FrontendUsersSerializer(data=request.data)
+        incoming = self._inject_names_from_full_name(request.data)
+        serializer = FrontendUsersSerializer(data=incoming)
         serializer.is_valid(raise_exception=True)
         validated = dict(serializer.validated_data)
         password = validated.pop("password", None)
         role_name = validated.pop("role", None)
 
         user = User(**validated)
-        user.role = _resolve_role(role_name) or Role.objects.filter(name=Role.Name.INTERN).first()
+        user.role = _resolve_role(role_name) or Role.objects.filter(name=ROLE_INTERN).first()
         if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
-            if user.role and user.role.name in {Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN}:
+            if user.role and user.role.name in PRIVILEGED_ROLE_NAMES:
                 return Response({"detail": "Department head cannot create privileged users."}, status=403)
         if not user.role:
             return Response({"detail": "Default role INTERN not found. Run role seed first."}, status=400)
@@ -263,7 +293,8 @@ class FrontendUsersDetailAPIView(APIView):
         if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
             if _is_privileged_target(target):
                 return Response({"detail": "Department head cannot edit privileged users."}, status=403)
-        serializer = FrontendUsersSerializer(target, data=request.data, partial=True)
+        incoming = FrontendUsersCollectionAPIView._inject_names_from_full_name(request.data)
+        serializer = FrontendUsersSerializer(target, data=incoming, partial=True)
         serializer.is_valid(raise_exception=True)
         validated = dict(serializer.validated_data)
         role_name = validated.pop("role", None)
@@ -273,7 +304,7 @@ class FrontendUsersDetailAPIView(APIView):
         if role_name:
             next_role = _resolve_role(role_name) or target.role
             if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
-                if next_role and next_role.name in {Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN}:
+                if next_role and next_role.name in PRIVILEGED_ROLE_NAMES:
                     return Response({"detail": "Department head cannot assign privileged role."}, status=403)
             target.role = next_role
         if password:
@@ -324,7 +355,7 @@ class FrontendUsersSetRoleAPIView(APIView):
         if not role:
             return Response({"detail": "Invalid role."}, status=400)
         if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
-            if role.name in {Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN}:
+            if role.name in PRIVILEGED_ROLE_NAMES:
                 return Response({"detail": "Department head cannot assign privileged role."}, status=403)
         target.role = role
         target.save(update_fields=["role"])

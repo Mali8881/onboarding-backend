@@ -56,6 +56,9 @@ urlpatterns = [
     path("api/v1/kb/", include("apps.kb.urls")),
     path("api/v1/metrics/", include("apps.metrics.urls")),
     path("api/v1/bpm/", include("apps.bpm.urls")),
+    # Frontend compatibility endpoints are also exposed under /api/v1/*
+    # to support clients using the versioned prefix.
+    path("api/v1/", include("config.frontend_compat_urls")),
     path("api/", include("work_schedule.urls")),
     path("api/", include("config.frontend_compat_urls")),
 

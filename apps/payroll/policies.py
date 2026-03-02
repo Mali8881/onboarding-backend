@@ -63,19 +63,25 @@ class PayrollPolicy:
 
     @staticmethod
     def can_edit_compensation_for_user(actor, target_user) -> bool:
+        return PayrollPolicy.compensation_edit_denial_reason(actor, target_user) is None
+
+    @staticmethod
+    def compensation_edit_denial_reason(actor, target_user) -> str | None:
         if not PayrollPolicy.can_edit_compensation(actor):
-            return False
+            return "Недостаточно прав для редактирования компенсаций."
         if not PayrollPolicy.is_salary_enabled_user(target_user):
-            return False
+            return "Для выбранной роли сотрудника расчет зарплаты недоступен."
         if actor.id == target_user.id:
-            return False
+            return "Нельзя изменять собственную зарплату."
         if AccessPolicy.is_super_admin(actor) or AccessPolicy.is_administrator(actor):
-            return True
+            return None
         if not AccessPolicy.is_admin(actor):
-            return False
+            return "Недостаточно прав для редактирования выбранного сотрудника."
         if not getattr(actor, "department_id", None) or not getattr(target_user, "department_id", None):
-            return False
+            return "У сотрудника или администратора не указан отдел."
         if actor.department_id != target_user.department_id:
-            return False
+            return "Можно изменять только сотрудников своего отдела."
         target_role = getattr(getattr(target_user, "role", None), "name", None)
-        return target_role == Role.Name.EMPLOYEE
+        if target_role != Role.Name.EMPLOYEE:
+            return "Администратор может изменять только сотрудников с ролью EMPLOYEE."
+        return None

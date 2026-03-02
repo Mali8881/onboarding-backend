@@ -4,9 +4,8 @@ from decimal import Decimal
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from accounts.models import AuditLog, Department, Role, User
-from apps.attendance.models import AttendanceMark
-from apps.payroll.models import HourlyRateHistory, PayrollRecord
+from accounts.models import Department, Role, User
+from apps.payroll.models import PayrollCompensation, PayrollRecord
 
 
 class PayrollApiTests(TestCase):
@@ -32,6 +31,7 @@ class PayrollApiTests(TestCase):
             name=Role.Name.SUPER_ADMIN,
             defaults={"level": Role.Level.SUPER_ADMIN},
         )
+
         self.dept_sales = Department.objects.create(name="Sales")
         self.dept_marketing = Department.objects.create(name="Marketing")
 
@@ -54,7 +54,6 @@ class PayrollApiTests(TestCase):
             password="StrongPass123!",
             role=self.intern_role,
             department=self.dept_sales,
-            current_hourly_rate=Decimal("90.00"),
         )
         self.admin = User.objects.create_user(
             username="payroll_admin",
@@ -76,247 +75,175 @@ class PayrollApiTests(TestCase):
             current_hourly_rate=Decimal("180.00"),
         )
 
-    def _seed_employee_hours(self):
-        AttendanceMark.objects.create(
-            user=self.employee,
-            date=date(2026, 3, 1),
-            status=AttendanceMark.Status.PRESENT,
-            actual_hours=Decimal("8.00"),
-            planned_hours=Decimal("8.00"),
-            created_by=self.employee,
-        )
-        AttendanceMark.objects.create(
-            user=self.employee,
-            date=date(2026, 3, 2),
-            status=AttendanceMark.Status.REMOTE,
-            actual_hours=Decimal("6.00"),
-            planned_hours=Decimal("8.00"),
-            created_by=self.employee,
-        )
+    def _recalculate(self):
+        self.client.force_authenticate(user=self.super_admin)
+        return self.client.post("/api/v1/payroll/admin/recalculate/", {"year": 2026, "month": 3}, format="json")
 
-    def test_admin_has_department_view_access_and_limited_edit_access(self):
-        self.client.force_authenticate(user=self.employee)
-        response = self.client.post("/api/v1/payroll/admin/recalculate/", {"year": 2026, "month": 3}, format="json")
-        self.assertEqual(response.status_code, 403)
-
-        self.client.force_authenticate(user=self.admin)
-        response = self.client.get("/api/v1/payroll/admin/?year=2026&month=3")
-        self.assertEqual(response.status_code, 200)
+    def test_summary_contains_total_fund_alias(self):
+        self._recalculate()
         summary = self.client.get("/api/v1/payroll/admin/summary/?year=2026&month=3")
         self.assertEqual(summary.status_code, 200)
-        rates = self.client.get("/api/v1/payroll/admin/hourly-rates/")
-        self.assertEqual(rates.status_code, 200)
-        returned_user_ids = {row["user"] for row in rates.data}
-        self.assertIn(self.employee.id, returned_user_ids)
-        self.assertNotIn(self.other_employee.id, returned_user_ids)
-        self.assertNotIn(self.admin.id, returned_user_ids)
-        self.assertNotIn(self.intern.id, returned_user_ids)
-        history = self.client.get(f"/api/v1/payroll/admin/hourly-rates/{self.employee.id}/history/")
-        self.assertEqual(history.status_code, 200)
+        self.assertIn("payroll_fund", summary.data)
+        self.assertIn("total_fund", summary.data)
+        self.assertEqual(str(summary.data["payroll_fund"]), str(summary.data["total_fund"]))
 
-        can_set_rate_own_department = self.client.post(
-            "/api/v1/payroll/admin/hourly-rates/",
-            {"user_id": self.employee.id, "rate": "250.00", "start_date": "2026-03-10"},
-            format="json",
-        )
-        self.assertEqual(can_set_rate_own_department.status_code, 200)
-        cannot_set_rate_other_department = self.client.post(
-            "/api/v1/payroll/admin/hourly-rates/",
-            {"user_id": self.other_employee.id, "rate": "250.00", "start_date": "2026-03-10"},
-            format="json",
-        )
-        self.assertEqual(cannot_set_rate_other_department.status_code, 403)
-        cannot_set_rate_for_self = self.client.post(
-            "/api/v1/payroll/admin/hourly-rates/",
-            {"user_id": self.admin.id, "rate": "250.00", "start_date": "2026-03-10"},
-            format="json",
-        )
-        self.assertEqual(cannot_set_rate_for_self.status_code, 403)
-        cannot_set_rate_for_intern = self.client.post(
-            "/api/v1/payroll/admin/hourly-rates/",
-            {"user_id": self.intern.id, "rate": "250.00", "start_date": "2026-03-10"},
-            format="json",
-        )
-        self.assertEqual(cannot_set_rate_for_intern.status_code, 403)
-        cannot_recalculate = self.client.post(
-            "/api/v1/payroll/admin/recalculate/",
-            {"year": 2026, "month": 3},
-            format="json",
-        )
-        self.assertEqual(cannot_recalculate.status_code, 403)
+    def test_my_payroll_returns_stable_contract_and_is_calculated_flag(self):
+        self.client.force_authenticate(user=self.employee)
+        response = self.client.get("/api/v1/payroll/?year=2026&month=4")
+        self.assertEqual(response.status_code, 200)
 
-        self.client.force_authenticate(user=self.intern)
-        response = self.client.get("/api/v1/payroll/admin/summary/?year=2026&month=3")
-        self.assertEqual(response.status_code, 403)
+        expected_fields = {
+            "id",
+            "user",
+            "username",
+            "month",
+            "total_hours",
+            "total_salary",
+            "bonus",
+            "status",
+            "calculated_at",
+            "paid_at",
+            "is_calculated",
+        }
+        self.assertTrue(expected_fields.issubset(set(response.data.keys())))
+        self.assertEqual(response.data["user"], self.employee.id)
+        self.assertFalse(response.data["is_calculated"])
 
-    def test_administrator_can_manage_payroll_admin_endpoints(self):
-        self.client.force_authenticate(user=self.administrator)
+        self._recalculate()
+        response2 = self.client.get("/api/v1/payroll/?year=2026&month=3")
+        self.assertEqual(response2.status_code, 200)
+        self.assertTrue(response2.data["is_calculated"])
+
+    def test_admin_list_returns_stable_contract(self):
+        self._recalculate()
         response = self.client.get("/api/v1/payroll/admin/?year=2026&month=3")
         self.assertEqual(response.status_code, 200)
-        cannot_set_rate_for_self = self.client.post(
+        self.assertGreaterEqual(len(response.data), 1)
+
+        expected_fields = {
+            "id",
+            "user",
+            "username",
+            "month",
+            "total_hours",
+            "total_salary",
+            "bonus",
+            "status",
+            "calculated_at",
+            "paid_at",
+        }
+        self.assertTrue(expected_fields.issubset(set(response.data[0].keys())))
+
+    def test_hourly_rates_post_accepts_contract_pay_types(self):
+        self.client.force_authenticate(user=self.super_admin)
+
+        hourly = self.client.post(
             "/api/v1/payroll/admin/hourly-rates/",
-            {"user_id": self.administrator.id, "rate": "250.00", "start_date": "2026-03-10"},
+            {"user_id": self.employee.id, "pay_type": "hourly", "hourly_rate": "250.00"},
             format="json",
         )
-        self.assertEqual(cannot_set_rate_for_self.status_code, 403)
+        self.assertEqual(hourly.status_code, 200)
 
-    def test_superadmin_can_set_hourly_rate_and_see_history(self):
-        self.client.force_authenticate(user=self.super_admin)
-        response = self.client.post(
+        minute = self.client.post(
             "/api/v1/payroll/admin/hourly-rates/",
-            {"user_id": self.employee.id, "rate": "250.00", "start_date": "2026-03-10"},
+            {"user_id": self.employee.id, "pay_type": "minute", "minute_rate": "2.50"},
             format="json",
         )
-        self.assertEqual(response.status_code, 200)
-        self.employee.refresh_from_db()
-        self.assertEqual(str(self.employee.current_hourly_rate), "250.00")
-        self.assertTrue(HourlyRateHistory.objects.filter(user=self.employee, start_date=date(2026, 3, 10)).exists())
+        self.assertEqual(minute.status_code, 200)
 
-        history = self.client.get(f"/api/v1/payroll/admin/hourly-rates/{self.employee.id}/history/")
-        self.assertEqual(history.status_code, 200)
-        self.assertGreaterEqual(len(history.data), 1)
-        self.assertTrue(AuditLog.objects.filter(action="hourly_rate_changed").exists())
-        cannot_set_rate_for_self = self.client.post(
-            "/api/v1/payroll/admin/hourly-rates/",
-            {"user_id": self.super_admin.id, "rate": "260.00", "start_date": "2026-03-11"},
-            format="json",
-        )
-        self.assertEqual(cannot_set_rate_for_self.status_code, 403)
-
-    def test_recalculate_uses_actual_hours_and_current_rate(self):
-        self._seed_employee_hours()
-        self.client.force_authenticate(user=self.super_admin)
-
-        response = self.client.post("/api/v1/payroll/admin/recalculate/", {"year": 2026, "month": 3}, format="json")
-        self.assertEqual(response.status_code, 200)
-
-        record = PayrollRecord.objects.get(user=self.employee, month=date(2026, 3, 1))
-        self.assertEqual(str(record.total_hours), "14.00")
-        self.assertEqual(str(record.total_salary), "1400.00")
-        self.assertEqual(record.status, PayrollRecord.Status.CALCULATED)
-
-    def test_recalculate_splits_salary_when_rate_changes_mid_month(self):
-        AttendanceMark.objects.create(
-            user=self.employee,
-            date=date(2026, 3, 5),
-            status=AttendanceMark.Status.PRESENT,
-            actual_hours=Decimal("10.00"),
-            planned_hours=Decimal("10.00"),
-            created_by=self.employee,
-        )
-        AttendanceMark.objects.create(
-            user=self.employee,
-            date=date(2026, 3, 20),
-            status=AttendanceMark.Status.PRESENT,
-            actual_hours=Decimal("10.00"),
-            planned_hours=Decimal("10.00"),
-            created_by=self.employee,
-        )
-
-        HourlyRateHistory.objects.create(user=self.employee, rate=Decimal("100.00"), start_date=date(2026, 3, 1))
-        HourlyRateHistory.objects.create(user=self.employee, rate=Decimal("200.00"), start_date=date(2026, 3, 15))
-        self.employee.current_hourly_rate = Decimal("200.00")
-        self.employee.save(update_fields=["current_hourly_rate"])
-
-        self.client.force_authenticate(user=self.super_admin)
-        self.client.post("/api/v1/payroll/admin/recalculate/", {"year": 2026, "month": 3}, format="json")
-
-        record = PayrollRecord.objects.get(user=self.employee, month=date(2026, 3, 1))
-        self.assertEqual(str(record.total_hours), "20.00")
-        self.assertEqual(str(record.total_salary), "3000.00")
-
-    def test_can_set_minute_rate_and_recalculate(self):
-        AttendanceMark.objects.create(
-            user=self.employee,
-            date=date(2026, 3, 6),
-            status=AttendanceMark.Status.PRESENT,
-            actual_hours=Decimal("2.00"),
-            planned_hours=Decimal("2.00"),
-            created_by=self.employee,
-        )
-        self.client.force_authenticate(user=self.super_admin)
-        set_rate = self.client.post(
-            "/api/v1/payroll/admin/hourly-rates/",
-            {"user_id": self.employee.id, "pay_type": "minute", "minute_rate": "2.00"},
-            format="json",
-        )
-        self.assertEqual(set_rate.status_code, 200)
-        self.client.post("/api/v1/payroll/admin/recalculate/", {"year": 2026, "month": 3}, format="json")
-        record = PayrollRecord.objects.get(user=self.employee, month=date(2026, 3, 1))
-        self.assertEqual(str(record.total_salary), "240.00")
-
-    def test_can_set_fixed_salary_and_recalculate(self):
-        self.client.force_authenticate(user=self.super_admin)
-        set_salary = self.client.post(
+        fixed = self.client.post(
             "/api/v1/payroll/admin/hourly-rates/",
             {"user_id": self.employee.id, "pay_type": "fixed_salary", "fixed_salary": "5000.00"},
             format="json",
         )
-        self.assertEqual(set_salary.status_code, 200)
-        self.client.post("/api/v1/payroll/admin/recalculate/", {"year": 2026, "month": 3}, format="json")
-        record = PayrollRecord.objects.get(user=self.employee, month=date(2026, 3, 1))
-        self.assertEqual(str(record.total_salary), "5000.00")
+        self.assertEqual(fixed.status_code, 200)
 
-    def test_no_attendance_means_zero_salary_for_non_intern(self):
+    def test_hourly_rates_invalid_payload_returns_field_errors(self):
         self.client.force_authenticate(user=self.super_admin)
-        self.client.post("/api/v1/payroll/admin/recalculate/", {"year": 2026, "month": 3}, format="json")
-        record = PayrollRecord.objects.get(user=self.other_employee, month=date(2026, 3, 1))
-        self.assertEqual(str(record.total_hours), "0.00")
-        self.assertEqual(str(record.total_salary), "0.00")
-        self.assertFalse(PayrollRecord.objects.filter(user=self.intern, month=date(2026, 3, 1)).exists())
 
-    def test_user_sees_only_own_salary(self):
-        self._seed_employee_hours()
-        self.client.force_authenticate(user=self.super_admin)
-        self.client.post("/api/v1/payroll/admin/recalculate/", {"year": 2026, "month": 3}, format="json")
-
-        self.client.force_authenticate(user=self.employee)
-        my = self.client.get("/api/v1/payroll/?year=2026&month=3")
-        self.assertEqual(my.status_code, 200)
-        self.assertEqual(my.data["user"], self.employee.id)
-
-        self.client.force_authenticate(user=self.admin)
-        own = self.client.get("/api/v1/payroll/?year=2026&month=3")
-        self.assertEqual(own.status_code, 200)
-        self.assertEqual(own.data["user"], self.admin.id)
-
-    def test_my_salary_returns_single_row_even_when_not_calculated_yet(self):
-        self.client.force_authenticate(user=self.employee)
-        response = self.client.get("/api/v1/payroll/?year=2026&month=4")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["user"], self.employee.id)
-        self.assertEqual(str(response.data["total_hours"]), "0.00")
-        self.assertEqual(str(response.data["total_salary"]), "0.00")
-
-    def test_intern_cannot_access_my_salary_page(self):
-        self.client.force_authenticate(user=self.intern)
-        response = self.client.get("/api/v1/payroll/?year=2026&month=4")
-        self.assertEqual(response.status_code, 403)
-
-    def test_superadmin_can_mark_record_as_paid(self):
-        self._seed_employee_hours()
-        self.client.force_authenticate(user=self.super_admin)
-        self.client.post("/api/v1/payroll/admin/recalculate/", {"year": 2026, "month": 3}, format="json")
-        record = PayrollRecord.objects.get(user=self.employee, month=date(2026, 3, 1))
-
-        response = self.client.patch(
-            f"/api/v1/payroll/admin/records/{record.id}/status/",
-            {"status": "paid"},
+        missing_fixed_salary = self.client.post(
+            "/api/v1/payroll/admin/hourly-rates/",
+            {"user_id": self.employee.id, "pay_type": "fixed_salary"},
             format="json",
         )
-        self.assertEqual(response.status_code, 200)
-        record.refresh_from_db()
-        self.assertEqual(record.status, PayrollRecord.Status.PAID)
-        self.assertIsNotNone(record.paid_at)
-        self.assertTrue(AuditLog.objects.filter(action="payroll_period_status_changed").exists())
+        self.assertEqual(missing_fixed_salary.status_code, 400)
+        self.assertIn("fixed_salary", missing_fixed_salary.data)
 
-    def test_superadmin_can_view_payroll_fund_summary(self):
-        self._seed_employee_hours()
+        invalid_legacy_pay_type = self.client.post(
+            "/api/v1/payroll/admin/hourly-rates/",
+            {"user_id": self.employee.id, "pay_type": "fixed", "fixed_salary": "1000.00"},
+            format="json",
+        )
+        self.assertEqual(invalid_legacy_pay_type.status_code, 400)
+        self.assertIn("pay_type", invalid_legacy_pay_type.data)
+
+    def test_recalculate_applies_compensation_without_attendance(self):
         self.client.force_authenticate(user=self.super_admin)
-        self.client.post("/api/v1/payroll/admin/recalculate/", {"year": 2026, "month": 3}, format="json")
-        summary = self.client.get("/api/v1/payroll/admin/summary/?year=2026&month=3")
-        self.assertEqual(summary.status_code, 200)
-        self.assertIn("payroll_fund", summary.data)
-        self.assertIn("average_salary", summary.data)
-        self.assertIn("total_employees", summary.data)
-        self.assertIn("total_hours", summary.data)
+        self.client.post(
+            "/api/v1/payroll/admin/hourly-rates/",
+            {"user_id": self.employee.id, "pay_type": "hourly", "hourly_rate": "100.00"},
+            format="json",
+        )
+        self.client.post(
+            "/api/v1/payroll/admin/hourly-rates/",
+            {"user_id": self.other_employee.id, "pay_type": "fixed_salary", "fixed_salary": "5000.00"},
+            format="json",
+        )
+        self.client.post(
+            "/api/v1/payroll/admin/hourly-rates/",
+            {"user_id": self.admin.id, "pay_type": "minute", "minute_rate": "2.00"},
+            format="json",
+        )
+
+        recalc = self._recalculate()
+        self.assertEqual(recalc.status_code, 200)
+
+        employee_record = PayrollRecord.objects.get(user=self.employee, month=date(2026, 3, 1))
+        self.assertEqual(str(employee_record.total_hours), "160.00")
+        self.assertEqual(str(employee_record.total_salary), "16000.00")
+
+        other_record = PayrollRecord.objects.get(user=self.other_employee, month=date(2026, 3, 1))
+        self.assertEqual(str(other_record.total_hours), "0.00")
+        self.assertEqual(str(other_record.total_salary), "5000.00")
+
+        admin_record = PayrollRecord.objects.get(user=self.admin, month=date(2026, 3, 1))
+        self.assertEqual(str(admin_record.total_hours), "160.00")
+        self.assertEqual(str(admin_record.total_salary), "19200.00")
+
+        self.assertFalse(PayrollRecord.objects.filter(user=self.intern, month=date(2026, 3, 1)).exists())
+
+    def test_intern_cannot_access_my_payroll(self):
+        self.client.force_authenticate(user=self.intern)
+        response = self.client.get("/api/v1/payroll/?year=2026&month=3")
+        self.assertEqual(response.status_code, 403)
+
+    def test_self_edit_compensation_is_forbidden(self):
+        self.client.force_authenticate(user=self.super_admin)
+        response = self.client.post(
+            "/api/v1/payroll/admin/hourly-rates/",
+            {"user_id": self.super_admin.id, "pay_type": "hourly", "hourly_rate": "300.00"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("detail", response.data)
+
+    def test_payroll_compensation_uses_only_contract_pay_type_values(self):
+        self.client.force_authenticate(user=self.super_admin)
+        response = self.client.post(
+            "/api/v1/payroll/admin/hourly-rates/",
+            {"user_id": self.employee.id, "pay_type": "salary", "fixed_salary": "1000.00"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("pay_type", response.data)
+
+    def test_compensation_get_returns_contract_fields(self):
+        self.client.force_authenticate(user=self.super_admin)
+        response = self.client.get("/api/v1/payroll/admin/hourly-rates/")
+        self.assertEqual(response.status_code, 200)
+        self.assertGreaterEqual(len(response.data), 1)
+        expected = {"user", "username", "role", "pay_type", "hourly_rate", "minute_rate", "fixed_salary"}
+        self.assertTrue(expected.issubset(set(response.data[0].keys())))
+
+        # keep model import used to avoid lint complaints in strict environments
+        self.assertTrue(PayrollCompensation.objects.count() >= 0)

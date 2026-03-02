@@ -1,7 +1,7 @@
 from datetime import date
 
 from django.contrib.auth import get_user_model
-from django.db.models import Avg, Count, Sum
+from django.db.models import Avg, Count, DecimalField, Sum, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 from accounts.models import Role
@@ -38,7 +38,7 @@ class PayrollMyAPIView(APIView):
         query.is_valid(raise_exception=True)
         period = date(query.validated_data["year"], query.validated_data["month"], 1)
 
-        record, _ = PayrollRecord.objects.get_or_create(
+        record, was_created = PayrollRecord.objects.get_or_create(
             user=request.user,
             month=period,
             defaults={
@@ -48,7 +48,9 @@ class PayrollMyAPIView(APIView):
                 "status": PayrollRecord.Status.CALCULATED,
             },
         )
-        return Response(PayrollRecordSerializer(record).data, status=status.HTTP_200_OK)
+        payload = PayrollRecordSerializer(record).data
+        payload["is_calculated"] = not was_created
+        return Response(payload, status=status.HTTP_200_OK)
 
 
 class PayrollAdminAPIView(APIView):
@@ -81,9 +83,21 @@ class PayrollFundSummaryAPIView(APIView):
         if not PayrollPolicy.can_manage_payroll(request.user):
             qs = qs.filter(user__department_id=request.user.department_id).exclude(user=request.user)
         aggregated = qs.aggregate(
-            payroll_fund=Coalesce(Sum("total_salary"), 0),
-            average_salary=Coalesce(Avg("total_salary"), 0),
-            total_hours=Coalesce(Sum("total_hours"), 0),
+            payroll_fund=Coalesce(
+                Sum("total_salary"),
+                Value(0),
+                output_field=DecimalField(max_digits=12, decimal_places=2),
+            ),
+            average_salary=Coalesce(
+                Avg("total_salary"),
+                Value(0),
+                output_field=DecimalField(max_digits=12, decimal_places=2),
+            ),
+            total_hours=Coalesce(
+                Sum("total_hours"),
+                Value(0),
+                output_field=DecimalField(max_digits=8, decimal_places=2),
+            ),
             total_employees=Count("id"),
         )
 
@@ -92,6 +106,7 @@ class PayrollFundSummaryAPIView(APIView):
                 "year": year,
                 "month": month,
                 "payroll_fund": aggregated["payroll_fund"],
+                "total_fund": aggregated["payroll_fund"],
                 "average_salary": aggregated["average_salary"],
                 "total_employees": aggregated["total_employees"],
                 "total_hours": aggregated["total_hours"],
@@ -162,7 +177,7 @@ class HourlyRateAdminAPIView(APIView):
             users_qs = users_qs.exclude(id=request.user.id)
         else:
             users_qs = users_qs.filter(department_id=request.user.department_id).exclude(id=request.user.id)
-        users = list(users_qs.order_by("id"))
+        users = [u for u in users_qs.order_by("id") if PayrollPolicy.can_edit_compensation_for_user(request.user, u)]
         comp_by_user = {
             comp.user_id: comp
             for comp in PayrollCompensation.objects.filter(user__in=users).select_related("user")
@@ -182,12 +197,15 @@ class HourlyRateAdminAPIView(APIView):
         return Response(payload, status=status.HTTP_200_OK)
 
     def post(self, request):
-        if "rate" in request.data and "pay_type" not in request.data:
+        has_legacy_rate = any(key in request.data for key in ("rate", "hourly_rate", "hourlyRate"))
+        has_pay_type = any(key in request.data for key in ("pay_type", "payModel", "pay_model", "model", "type"))
+        if has_legacy_rate and not has_pay_type:
             serializer = HourlyRateUpdateSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             user = User.objects.get(id=serializer.validated_data["user_id"])
-            if not PayrollPolicy.can_edit_compensation_for_user(request.user, user):
-                return Response({"detail": "You cannot edit payroll for this user."}, status=status.HTTP_403_FORBIDDEN)
+            reason = PayrollPolicy.compensation_edit_denial_reason(request.user, user)
+            if reason:
+                return Response({"detail": reason}, status=status.HTTP_403_FORBIDDEN)
             rate = serializer.validated_data["rate"]
             start_date = serializer.validated_data.get("start_date") or date.today()
             history = PayrollService.set_hourly_rate(user=user, rate=rate, start_date=start_date)
@@ -197,8 +215,9 @@ class HourlyRateAdminAPIView(APIView):
         serializer = PayrollCompensationUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = User.objects.get(id=serializer.validated_data["user_id"])
-        if not PayrollPolicy.can_edit_compensation_for_user(request.user, user):
-            return Response({"detail": "You cannot edit payroll for this user."}, status=status.HTTP_403_FORBIDDEN)
+        reason = PayrollPolicy.compensation_edit_denial_reason(request.user, user)
+        if reason:
+            return Response({"detail": reason}, status=status.HTTP_403_FORBIDDEN)
         pay_type = serializer.validated_data["pay_type"]
         comp = PayrollService.get_or_create_compensation(user=user)
         comp.pay_type = pay_type

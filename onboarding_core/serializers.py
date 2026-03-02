@@ -12,7 +12,7 @@ from regulations.models import (
     Regulation,
     RegulationAcknowledgement,
     RegulationFeedback,
-    RegulationKnowledgeCheck,
+    RegulationQuizAttempt,
     RegulationReadProgress,
 )
 
@@ -153,11 +153,11 @@ class OnboardingDayDetailSerializer(serializers.ModelSerializer):
         }
         knowledge_map = {
             regulation_id: True
-            for regulation_id in RegulationKnowledgeCheck.objects.filter(
+            for regulation_id in RegulationQuizAttempt.objects.filter(
                 user=user,
-                regulation__in=regulations_qs,
-                is_passed=True,
-            ).values_list("regulation_id", flat=True)
+                quiz__regulation__in=regulations_qs,
+                passed=True,
+            ).values_list("quiz__regulation_id", flat=True)
         }
         read_progress = RegulationReadProgress.objects.filter(
             user=user,

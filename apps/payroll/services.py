@@ -8,17 +8,15 @@ from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from django.db.models import DecimalField, ExpressionWrapper, F, Sum, Value
-from django.db.models.functions import Coalesce
 
 from accounts.models import Role
-from apps.attendance.models import AttendanceMark
 
 from .models import HourlyRateHistory, PayrollCompensation, PayrollRecord
 
 
 User = get_user_model()
 ZERO = Decimal("0.00")
+DEFAULT_MONTH_HOURS = Decimal("160.00")
 
 
 def month_start(year: int, month: int) -> date:
@@ -126,47 +124,14 @@ class PayrollService:
     def _salary_for_month(cls, *, user, period_start: date, period_end: date) -> tuple[Decimal, Decimal]:
         compensation = cls.get_or_create_compensation(user=user)
         if compensation.pay_type == PayrollCompensation.PayType.FIXED_SALARY:
-            total_hours = AttendanceMark.objects.filter(user=user, date__range=(period_start, period_end)).aggregate(
-                hours=Coalesce(Sum("actual_hours"), ZERO)
-            )["hours"]
-            return total_hours, compensation.fixed_salary
+            return ZERO, compensation.fixed_salary
 
         if compensation.pay_type == PayrollCompensation.PayType.MINUTE:
-            values = AttendanceMark.objects.filter(user=user, date__range=(period_start, period_end)).annotate(
-                row_salary=ExpressionWrapper(
-                    F("actual_hours") * Value(Decimal("60.00")) * Value(compensation.minute_rate),
-                    output_field=DecimalField(max_digits=14, decimal_places=2),
-                )
-            ).aggregate(
-                hours=Coalesce(Sum("actual_hours"), ZERO),
-                salary=Coalesce(Sum("row_salary"), ZERO),
-            )
-            return values["hours"], values["salary"]
+            total_salary = DEFAULT_MONTH_HOURS * Decimal("60.00") * compensation.minute_rate
+            return DEFAULT_MONTH_HOURS, total_salary
 
-        segments = cls._rate_segments(
-            user=user,
-            period_start=period_start,
-            period_end=period_end,
-            base_hourly_rate=compensation.hourly_rate,
-        )
-        total_hours = ZERO
-        total_salary = ZERO
-
-        for seg_start, seg_end, rate in segments:
-            qs = AttendanceMark.objects.filter(user=user, date__range=(seg_start, seg_end))
-            values = qs.annotate(
-                row_salary=ExpressionWrapper(
-                    F("actual_hours") * Value(rate),
-                    output_field=DecimalField(max_digits=14, decimal_places=2),
-                )
-            ).aggregate(
-                hours=Coalesce(Sum("actual_hours"), ZERO),
-                salary=Coalesce(Sum("row_salary"), ZERO),
-            )
-            total_hours += values["hours"]
-            total_salary += values["salary"]
-
-        return total_hours, total_salary
+        # Hourly model is now decoupled from attendance and uses fixed monthly norm.
+        return DEFAULT_MONTH_HOURS, compensation.hourly_rate * DEFAULT_MONTH_HOURS
 
     @classmethod
     @transaction.atomic
@@ -174,21 +139,11 @@ class PayrollService:
         period_start, period_end = month_bounds(year, month)
         users = User.objects.filter(is_active=True).exclude(role__name=Role.Name.INTERN).select_related("role")
 
-        totals_by_user = {
-            row["user_id"]: row["total_hours"]
-            for row in AttendanceMark.objects.filter(date__range=(period_start, period_end))
-            .values("user_id")
-            .annotate(total_hours=Coalesce(Sum(F("actual_hours")), ZERO))
-        }
-
         created = 0
         updated = 0
 
         for user in users:
             total_hours, rate_salary = cls._salary_for_month(user=user, period_start=period_start, period_end=period_end)
-            if user.id not in totals_by_user:
-                total_hours = ZERO
-                rate_salary = ZERO
 
             record, was_created = PayrollRecord.objects.get_or_create(
                 user=user,

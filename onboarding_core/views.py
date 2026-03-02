@@ -18,7 +18,7 @@ from regulations.models import (
     Regulation,
     RegulationAcknowledgement,
     RegulationFeedback,
-    RegulationKnowledgeCheck,
+    RegulationQuizAttempt,
     RegulationReadProgress,
 )
 
@@ -208,11 +208,11 @@ class CompleteOnboardingDayView(APIView):
                     ).values_list("regulation_id", flat=True)
                 )
                 quiz_ids = set(
-                    RegulationKnowledgeCheck.objects.filter(
+                    RegulationQuizAttempt.objects.filter(
                         user=request.user,
-                        regulation_id__in=reg_ids,
-                        is_passed=True,
-                    ).values_list("regulation_id", flat=True)
+                        quiz__regulation_id__in=reg_ids,
+                        passed=True,
+                    ).values_list("quiz__regulation_id", flat=True)
                 )
 
                 missing_steps = []

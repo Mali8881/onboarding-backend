@@ -1,6 +1,12 @@
 from django.urls import path
 from .views import *
 from .views import MyProfileAPIView, MyProfilePasswordAPIView
+from config.frontend_compat_views import (
+    FrontendUsersCollectionAPIView,
+    FrontendUsersDetailAPIView,
+    FrontendUsersSetRoleAPIView,
+    FrontendUsersToggleStatusAPIView,
+)
 
 
 
@@ -18,5 +24,10 @@ urlpatterns = [
     path("org/positions/", PositionListCreateAPIView.as_view(), name="org-position-list-create"),
     path("org/positions/<int:pk>/", PositionDetailAPIView.as_view(), name="org-position-detail"),
     path("org/structure/", OrgStructureAPIView.as_view(), name="org-structure"),
+    # Frontend compatibility aliases for admin users management in /accounts/org/*
+    path("org/users/", FrontendUsersCollectionAPIView.as_view(), name="org-users-list-create"),
+    path("org/users/<int:user_id>/", FrontendUsersDetailAPIView.as_view(), name="org-users-detail"),
+    path("org/users/<int:user_id>/toggle-status/", FrontendUsersToggleStatusAPIView.as_view(), name="org-users-toggle-status"),
+    path("org/users/<int:user_id>/set-role/", FrontendUsersSetRoleAPIView.as_view(), name="org-users-set-role"),
 ]
 

@@ -55,6 +55,10 @@ class Regulation(models.Model):
         default=Language.RU,
         verbose_name="Язык",
     )
+    # Legacy inline quiz fields kept for DB compatibility with old schema.
+    # New quiz flow uses RegulationQuiz* models below.
+    quiz_question = models.TextField(blank=True, default="")
+    quiz_expected_answer = models.TextField(blank=True, default="")
     read_deadline_at = models.DateTimeField(null=True, blank=True, verbose_name="Дедлайн прочтения")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True, null=True)
