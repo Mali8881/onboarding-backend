@@ -183,3 +183,50 @@ class TeamleadManagerCleanupTests(TestCase):
 
         employee.refresh_from_db()
         self.assertIsNone(employee.manager_id)
+
+
+class TeamleadOrgUsersAccessTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.teamlead_role, _ = Role.objects.get_or_create(
+            name=Role.Name.TEAMLEAD,
+            defaults={"level": Role.Level.TEAMLEAD},
+        )
+        self.employee_role, _ = Role.objects.get_or_create(
+            name=Role.Name.EMPLOYEE,
+            defaults={"level": Role.Level.EMPLOYEE},
+        )
+
+        self.teamlead = User.objects.create_user(
+            username="teamlead_users_list",
+            password="StrongPass123!",
+            role=self.teamlead_role,
+        )
+        self.subordinate = User.objects.create_user(
+            username="team_member_1",
+            password="StrongPass123!",
+            role=self.employee_role,
+            manager=self.teamlead,
+        )
+        self.other_user = User.objects.create_user(
+            username="outside_member",
+            password="StrongPass123!",
+            role=self.employee_role,
+        )
+
+    def test_teamlead_sees_only_direct_subordinates_in_org_users(self):
+        self.client.force_authenticate(self.teamlead)
+        response = self.client.get("/api/v1/accounts/org/users/")
+        self.assertEqual(response.status_code, 200)
+        usernames = {item["username"] for item in response.data}
+        self.assertIn(self.subordinate.username, usernames)
+        self.assertNotIn(self.other_user.username, usernames)
+        self.assertNotIn(self.teamlead.username, usernames)
+
+    def test_teamlead_can_access_me_team_endpoint(self):
+        self.client.force_authenticate(self.teamlead)
+        response = self.client.get("/api/v1/accounts/me/team/")
+        self.assertEqual(response.status_code, 200)
+        ids = {item["id"] for item in response.data}
+        self.assertIn(self.subordinate.id, ids)
+        self.assertNotIn(self.other_user.id, ids)

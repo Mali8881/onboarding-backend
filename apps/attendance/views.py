@@ -258,7 +258,7 @@ class AttendanceDailyCheckInAPIView(APIView):
 
     def post(self, request):
         role_name = getattr(getattr(request.user, "role", None), "name", "")
-        if role_name not in {"SUPER_ADMIN", "ADMINISTRATOR", "ADMIN", "EMPLOYEE", "INTERN"}:
+        if role_name not in {"SUPER_ADMIN", "ADMINISTRATOR", "ADMIN", "DEPARTMENT_HEAD", "DEPARTMENTHEAD", "EMPLOYEE", "INTERN"}:
             return Response(
                 {"detail": "Check-in is available only for trackable users."},
                 status=status.HTTP_403_FORBIDDEN,
@@ -270,8 +270,9 @@ class AttendanceDailyCheckInAPIView(APIView):
         today = date.today()
 
         planned_mode = planned_work_mode_for_date(user=request.user, target_date=today)
+        # Demo-friendly fallback: allow check-in without approved weekly plan.
         if planned_mode is None:
-            return Response({"detail": "No approved schedule for today."}, status=status.HTTP_409_CONFLICT)
+            planned_mode = work_mode
         if planned_mode == "day_off":
             return Response(
                 {"detail": "Today is marked as day off in your approved schedule."},

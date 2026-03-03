@@ -10,6 +10,7 @@ from regulations.models import (
     InternOnboardingRequest,
     Regulation,
     RegulationAcknowledgement,
+    RegulationQuizAttempt,
     RegulationReadReport,
     RegulationQuiz,
     RegulationQuizOption,
@@ -333,3 +334,95 @@ class InternOnboardingFlowTests(APITestCase):
         self.assertEqual(self.intern.role.name, self.employee_role.name)
         self.assertEqual(self.intern.department_id, self.department.id)
         self.assertEqual(request_obj.status, InternOnboardingRequest.Status.APPROVED)
+
+
+class FrontendCompatRegulationsQuizTests(APITestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.super_admin_role, _ = Role.objects.get_or_create(
+            name=Role.Name.SUPER_ADMIN,
+            defaults={"level": Role.Level.ADMIN},
+        )
+        self.intern_role, _ = Role.objects.get_or_create(
+            name=Role.Name.INTERN,
+            defaults={"level": Role.Level.INTERN},
+        )
+        self.super_admin = User.objects.create_user(
+            username="compat_superadmin",
+            password="StrongPass123!",
+            role=self.super_admin_role,
+        )
+        self.intern = User.objects.create_user(
+            username="compat_intern",
+            password="StrongPass123!",
+            role=self.intern_role,
+        )
+        self.regulation = Regulation.objects.create(
+            title="Compat quiz regulation",
+            description="desc",
+            type=Regulation.RegulationType.LINK,
+            external_url="https://example.com/compat",
+            is_active=True,
+        )
+
+    def test_admin_can_configure_quiz_via_frontend_compat_patch(self):
+        self.client.force_authenticate(self.super_admin)
+        response = self.client.patch(
+            f"/api/v1/content/regulations/{self.regulation.id}/",
+            {
+                "quiz_required": True,
+                "quiz_question": "What is 2+2?",
+                "quiz_options": ["3", "4", "5"],
+                "quiz_expected_answer": "4",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["quiz_required"])
+        self.assertEqual(response.data["quiz_question"], "What is 2+2?")
+        self.assertEqual(response.data["quiz_options"], ["3", "4", "5"])
+
+    def test_intern_can_pass_compat_quiz_after_acknowledge(self):
+        self.client.force_authenticate(self.super_admin)
+        self.client.patch(
+            f"/api/v1/content/regulations/{self.regulation.id}/",
+            {
+                "quiz_required": True,
+                "quiz_question": "Choose A",
+                "quiz_options": ["A", "B"],
+                "quiz_expected_answer": "A",
+            },
+            format="json",
+        )
+
+        self.client.force_authenticate(self.intern)
+        ack = self.client.post(f"/api/v1/content/regulations/{self.regulation.id}/acknowledge/", {}, format="json")
+        self.assertEqual(ack.status_code, 200)
+
+        submit = self.client.post(
+            f"/api/v1/content/regulations/{self.regulation.id}/quiz/",
+            {"answer": "A"},
+            format="json",
+        )
+        self.assertEqual(submit.status_code, 201)
+        self.assertTrue(submit.data["result"]["passed"])
+        self.assertTrue(RegulationQuizAttempt.objects.filter(user=self.intern, passed=True).exists())
+
+    def test_get_quiz_contract_hides_expected_answer(self):
+        self.client.force_authenticate(self.super_admin)
+        self.client.patch(
+            f"/api/v1/content/regulations/{self.regulation.id}/",
+            {
+                "quiz_required": True,
+                "quiz_question": "Q?",
+                "quiz_options": ["A", "B"],
+                "quiz_expected_answer": "A",
+            },
+            format="json",
+        )
+        self.client.force_authenticate(self.intern)
+        response = self.client.get(f"/api/v1/content/regulations/{self.regulation.id}/quiz/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["question"], "Q?")
+        self.assertEqual(response.data["options"], ["A", "B"])
+        self.assertNotIn("quiz_expected_answer", response.data)

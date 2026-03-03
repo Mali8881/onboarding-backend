@@ -17,6 +17,7 @@ from .models import (
 
 class RegulationSerializer(serializers.ModelSerializer):
     content = serializers.SerializerMethodField()
+    file_url = serializers.SerializerMethodField()
     action = serializers.SerializerMethodField()
     is_acknowledged = serializers.SerializerMethodField()
     acknowledged_at = serializers.SerializerMethodField()
@@ -34,6 +35,7 @@ class RegulationSerializer(serializers.ModelSerializer):
             "description",
             "type",
             "content",
+            "file_url",
             "action",
             "is_mandatory_on_day_one",
             "read_deadline_at",
@@ -51,6 +53,17 @@ class RegulationSerializer(serializers.ModelSerializer):
         if obj.type == Regulation.RegulationType.LINK:
             return obj.external_url
         if obj.type == Regulation.RegulationType.FILE and obj.file:
+            request = self.context.get("request")
+            if request:
+                return request.build_absolute_uri(obj.file.url)
+            return obj.file.url
+        return None
+
+    def get_file_url(self, obj):
+        if obj.type == Regulation.RegulationType.FILE and obj.file:
+            request = self.context.get("request")
+            if request:
+                return request.build_absolute_uri(obj.file.url)
             return obj.file.url
         return None
 
@@ -124,6 +137,8 @@ class RegulationSerializer(serializers.ModelSerializer):
 
 
 class RegulationAdminSerializer(serializers.ModelSerializer):
+    file_url = serializers.SerializerMethodField(read_only=True)
+
     class Meta:
         model = Regulation
         fields = (
@@ -133,6 +148,7 @@ class RegulationAdminSerializer(serializers.ModelSerializer):
             "type",
             "external_url",
             "file",
+            "file_url",
             "position",
             "is_active",
             "is_mandatory_on_day_one",
@@ -141,6 +157,14 @@ class RegulationAdminSerializer(serializers.ModelSerializer):
             "updated_at",
         )
         read_only_fields = ("id", "created_at", "updated_at")
+
+    def get_file_url(self, obj):
+        if obj.type == Regulation.RegulationType.FILE and obj.file:
+            request = self.context.get("request")
+            if request:
+                return request.build_absolute_uri(obj.file.url)
+            return obj.file.url
+        return None
 
     def validate(self, attrs):
         reg_type = attrs.get("type", getattr(self.instance, "type", None))

@@ -1,15 +1,21 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from accounts.access_policy import AccessPolicy
 from accounts.models import Role
 
 
 class PayrollPolicy:
+    LEGACY_DEPARTMENT_HEAD_NAMES = {"DEPARTMENT_HEAD", "DEPARTMENTHEAD"}
+
     @staticmethod
     def _role_name(user) -> str | None:
         if not user or not getattr(user, "role_id", None):
             return None
-        return user.role.name
+        return str(user.role.name).upper()
+
+    @classmethod
+    def _is_department_head(cls, user) -> bool:
+        return cls._role_name(user) in cls.LEGACY_DEPARTMENT_HEAD_NAMES
 
     @staticmethod
     def is_salary_enabled_user(user) -> bool:
@@ -19,7 +25,7 @@ class PayrollPolicy:
             Role.Name.ADMINISTRATOR,
             Role.Name.ADMIN,
             Role.Name.EMPLOYEE,
-        }
+        } or role_name in PayrollPolicy.LEGACY_DEPARTMENT_HEAD_NAMES
 
     @staticmethod
     def can_manage_payroll(user) -> bool:
@@ -38,6 +44,7 @@ class PayrollPolicy:
                 AccessPolicy.is_super_admin(user)
                 or AccessPolicy.is_administrator(user)
                 or AccessPolicy.is_admin(user)
+                or PayrollPolicy._is_department_head(user)
             )
         )
 
@@ -58,6 +65,7 @@ class PayrollPolicy:
                 AccessPolicy.is_super_admin(user)
                 or AccessPolicy.is_administrator(user)
                 or AccessPolicy.is_admin(user)
+                or PayrollPolicy._is_department_head(user)
             )
         )
 
@@ -68,20 +76,20 @@ class PayrollPolicy:
     @staticmethod
     def compensation_edit_denial_reason(actor, target_user) -> str | None:
         if not PayrollPolicy.can_edit_compensation(actor):
-            return "Недостаточно прав для редактирования компенсаций."
+            return "Insufficient permissions to edit compensations."
         if not PayrollPolicy.is_salary_enabled_user(target_user):
-            return "Для выбранной роли сотрудника расчет зарплаты недоступен."
+            return "Payroll is not enabled for target user's role."
         if actor.id == target_user.id:
-            return "Нельзя изменять собственную зарплату."
+            return "You cannot edit your own salary settings."
         if AccessPolicy.is_super_admin(actor) or AccessPolicy.is_administrator(actor):
             return None
-        if not AccessPolicy.is_admin(actor):
-            return "Недостаточно прав для редактирования выбранного сотрудника."
+        if not (AccessPolicy.is_admin(actor) or PayrollPolicy._is_department_head(actor)):
+            return "Insufficient permissions to edit selected employee."
         if not getattr(actor, "department_id", None) or not getattr(target_user, "department_id", None):
-            return "У сотрудника или администратора не указан отдел."
+            return "Department is not set for actor or target user."
         if actor.department_id != target_user.department_id:
-            return "Можно изменять только сотрудников своего отдела."
-        target_role = getattr(getattr(target_user, "role", None), "name", None)
+            return "You can edit only users from your department."
+        target_role = str(getattr(getattr(target_user, "role", None), "name", "")).upper()
         if target_role != Role.Name.EMPLOYEE:
-            return "Администратор может изменять только сотрудников с ролью EMPLOYEE."
+            return "Department admin can edit compensation only for EMPLOYEE role."
         return None

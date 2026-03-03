@@ -13,6 +13,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework_simplejwt.tokens import RefreshToken
 from datetime import timedelta
 from django.utils import timezone
+from typing import Optional
 
 from .models import Department, LoginHistory, PasswordResetToken, Position, Role, User
 from .serializers import (
@@ -251,6 +252,73 @@ class MyProfilePasswordAPIView(APIView):
             },
         )
         return Response(serializer.data)
+
+
+class MeTeamAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @staticmethod
+    def _role_to_front(role: Optional[Role]) -> str:
+        if not role:
+            return ""
+        mapping = {
+            Role.Name.SUPER_ADMIN: "superadmin",
+            Role.Name.ADMINISTRATOR: "administrator",
+            Role.Name.ADMIN: "admin",
+            Role.Name.TEAMLEAD: "projectmanager",
+            Role.Name.EMPLOYEE: "employee",
+            Role.Name.INTERN: "intern",
+        }
+        return mapping.get(role.name, str(role.name).lower())
+
+    @staticmethod
+    def _role_label(front_role: str) -> str:
+        labels = {
+            "superadmin": "Суперадмин",
+            "administrator": "Администратор",
+            "admin": "Админ",
+            "projectmanager": "Тимлид",
+            "employee": "Сотрудник",
+            "intern": "Стажер",
+        }
+        return labels.get(front_role, front_role)
+
+    def get(self, request):
+        actor = request.user
+        if not (
+            AccessPolicy.is_teamlead(actor)
+            or AccessPolicy.is_admin(actor)
+            or AccessPolicy.is_administrator(actor)
+            or AccessPolicy.is_super_admin(actor)
+        ):
+            return Response(
+                {"detail": "Only projectmanager/admin/administrator/superadmin can perform this action."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        qs = User.objects.select_related("role", "position", "department", "manager")
+        if AccessPolicy.is_super_admin(actor):
+            qs = qs.filter(manager__isnull=False)
+        else:
+            # For admin/administrator/projectmanager return direct subordinates only.
+            qs = qs.filter(manager_id=actor.id)
+
+        payload = []
+        for item in qs.order_by("id"):
+            role_front = self._role_to_front(item.role)
+            payload.append(
+                {
+                    "id": item.id,
+                    "full_name": f"{item.first_name} {item.last_name}".strip() or item.username,
+                    "role": role_front,
+                    "role_label": self._role_label(role_front),
+                    "position_name": item.position.name if item.position_id else (item.custom_position or ""),
+                    "department_name": item.department.name if item.department_id else "",
+                    "avatar_url": request.build_absolute_uri(item.photo.url) if getattr(item, "photo", None) else "",
+                    "manager_id": item.manager_id,
+                }
+            )
+        return Response(payload)
 
 
 # ================= POSITIONS =================
@@ -534,9 +602,14 @@ class OrgStructureAPIView(APIView):
     def _base_member_payload(self, user):
         return {
             "id": user.id,
+            "username": user.username,
             "full_name": f"{user.first_name} {user.last_name}".strip() or user.username,
             "position": user.position.name if user.position_id else (user.custom_position or ""),
             "role": user.role.name if user.role_id else "",
+            "photo": user.photo.url if getattr(user, "photo", None) else "",
+            "email": user.email,
+            "department_id": user.department_id,
+            "position_id": user.position_id,
         }
 
     def _detailed_member_payload(self, user):
@@ -715,3 +788,4 @@ class CompanyStructureAPIView(APIView):
                 "departments": departments,
             }
         )
+

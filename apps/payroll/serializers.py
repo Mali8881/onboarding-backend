@@ -1,4 +1,5 @@
 from datetime import date
+from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
@@ -21,6 +22,10 @@ class PayrollRecalculateSerializer(MonthQuerySerializer):
 class PayrollRecordSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source="user.username", read_only=True)
     is_calculated = serializers.BooleanField(read_only=True, default=True)
+    pay_type = serializers.SerializerMethodField()
+    hourly_rate = serializers.SerializerMethodField()
+    minute_rate = serializers.SerializerMethodField()
+    fixed_salary = serializers.SerializerMethodField()
 
     class Meta:
         model = PayrollRecord
@@ -36,12 +41,56 @@ class PayrollRecordSerializer(serializers.ModelSerializer):
             "calculated_at",
             "paid_at",
             "is_calculated",
+            "pay_type",
+            "hourly_rate",
+            "minute_rate",
+            "fixed_salary",
         )
         read_only_fields = ("calculated_at", "paid_at", "is_calculated")
 
+    @staticmethod
+    def _compensation(user):
+        return getattr(user, "payroll_compensation", None)
+
+    def get_pay_type(self, obj):
+        comp = self._compensation(obj.user)
+        if comp:
+            return "fixed" if comp.pay_type == PayrollCompensation.PayType.FIXED_SALARY else comp.pay_type
+        return "hourly"
+
+    def get_hourly_rate(self, obj):
+        comp = self._compensation(obj.user)
+        if comp:
+            return comp.hourly_rate
+        return getattr(obj.user, "current_hourly_rate", Decimal("0.00"))
+
+    def get_minute_rate(self, obj):
+        comp = self._compensation(obj.user)
+        if comp:
+            return comp.minute_rate
+        return Decimal("0.00")
+
+    def get_fixed_salary(self, obj):
+        comp = self._compensation(obj.user)
+        if comp:
+            return comp.fixed_salary
+        return Decimal("0.00")
+
 
 class PayrollRecordStatusSerializer(serializers.Serializer):
-    status = serializers.ChoiceField(choices=PayrollRecord.Status.choices)
+    status = serializers.CharField()
+
+    def validate_status(self, value: str):
+        normalized = str(value or "").strip().upper()
+        if normalized == "CALCULATED":
+            return PayrollRecord.Status.CALCULATED
+        if normalized == "PAID":
+            return PayrollRecord.Status.PAID
+        if normalized == "DELAYED":
+            # Keep delayed state explicitly for frontend workflow.
+            # DB field is CharField and accepts this value.
+            return "delayed"
+        raise serializers.ValidationError("Unsupported status. Use CALCULATED, PAID or DELAYED.")
 
 
 class HourlyRateUpdateSerializer(serializers.Serializer):
@@ -99,6 +148,10 @@ class PayrollCompensationUpdateSerializer(serializers.Serializer):
                 if key in data and data.get(key) not in (None, ""):
                     payload["pay_type"] = data.get(key)
                     break
+        else:
+            raw_pay_type = str(payload.get("pay_type") or "").strip().lower()
+            if raw_pay_type == "fixed":
+                payload["pay_type"] = PayrollCompensation.PayType.FIXED_SALARY
 
         if "hourly_rate" not in payload and "hourlyRate" in data:
             payload["hourly_rate"] = data.get("hourlyRate")
@@ -125,11 +178,11 @@ class PayrollCompensationUpdateSerializer(serializers.Serializer):
     def validate(self, attrs):
         pay_type = attrs["pay_type"]
         if pay_type == PayrollCompensation.PayType.HOURLY and "hourly_rate" not in attrs:
-            raise serializers.ValidationError({"hourly_rate": "hourly_rate is required for hourly pay type."})
+            raise serializers.ValidationError({"hourly_rate": ["hourly_rate is required for hourly pay type."]})
         if pay_type == PayrollCompensation.PayType.MINUTE and "minute_rate" not in attrs:
-            raise serializers.ValidationError({"minute_rate": "minute_rate is required for minute pay type."})
+            raise serializers.ValidationError({"minute_rate": ["minute_rate is required for minute pay type."]})
         if pay_type == PayrollCompensation.PayType.FIXED_SALARY and "fixed_salary" not in attrs:
-            raise serializers.ValidationError({"fixed_salary": "fixed_salary is required for fixed salary pay type."})
+            raise serializers.ValidationError({"fixed_salary": ["fixed_salary is required for fixed salary pay type."]})
         return attrs
 
 
@@ -151,6 +204,12 @@ class PayrollCompensationSerializer(serializers.ModelSerializer):
             "current_hourly_rate",
             "updated_at",
         )
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if str(data.get("pay_type")) == PayrollCompensation.PayType.FIXED_SALARY:
+            data["pay_type"] = "fixed"
+        return data
 
 
 class HourlyRateHistorySerializer(serializers.ModelSerializer):

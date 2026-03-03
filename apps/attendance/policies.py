@@ -7,6 +7,8 @@ from accounts.models import Role
 
 
 class AttendancePolicy:
+    LEGACY_DEPARTMENT_HEAD_NAMES = {"DEPARTMENT_HEAD", "DEPARTMENTHEAD"}
+
     @staticmethod
     def is_admin_like(user) -> bool:
         return AccessPolicy.is_admin_like(user)
@@ -35,7 +37,11 @@ class AttendancePolicy:
     def _role_name(user) -> str | None:
         if not user or not getattr(user, "role_id", None):
             return None
-        return user.role.name
+        return str(user.role.name).upper()
+
+    @classmethod
+    def _is_department_head(cls, role_name: str | None) -> bool:
+        return bool(role_name and role_name in cls.LEGACY_DEPARTMENT_HEAD_NAMES)
 
     @staticmethod
     def _same_department(actor, target_user) -> bool:
@@ -54,7 +60,7 @@ class AttendancePolicy:
             Role.Name.TEAMLEAD,
             Role.Name.EMPLOYEE,
             Role.Name.INTERN,
-        }
+        } or cls._is_department_head(role_name)
 
     @classmethod
     def can_delete_mark(cls, actor, target_user) -> bool:
@@ -66,7 +72,7 @@ class AttendancePolicy:
         target_role = cls._role_name(target_user)
         if actor_role == Role.Name.SUPER_ADMIN:
             return True
-        if actor_role in {Role.Name.ADMINISTRATOR, Role.Name.ADMIN}:
+        if actor_role in {Role.Name.ADMINISTRATOR, Role.Name.ADMIN} or cls._is_department_head(actor_role):
             return target_role in {Role.Name.EMPLOYEE, Role.Name.INTERN} and cls._same_department(actor, target_user)
         if actor_role == Role.Name.TEAMLEAD:
             return target_user.manager_id == actor.id and target_role in {Role.Name.EMPLOYEE, Role.Name.INTERN}
@@ -94,7 +100,7 @@ class AttendancePolicy:
             }
         if actor_role == Role.Name.SUPER_ADMIN:
             return True
-        if actor_role in {Role.Name.ADMINISTRATOR, Role.Name.ADMIN}:
+        if actor_role in {Role.Name.ADMINISTRATOR, Role.Name.ADMIN} or cls._is_department_head(actor_role):
             return target_role in {Role.Name.EMPLOYEE, Role.Name.INTERN} and cls._same_department(actor, target_user)
         if actor_role == Role.Name.TEAMLEAD:
             return target_user.manager_id == actor.id and target_role in {Role.Name.EMPLOYEE, Role.Name.INTERN}
@@ -112,7 +118,7 @@ class AttendancePolicy:
         target_role = cls._role_name(target_user)
         if actor_role == Role.Name.SUPER_ADMIN:
             return True
-        if actor_role in {Role.Name.ADMINISTRATOR, Role.Name.ADMIN}:
+        if actor_role in {Role.Name.ADMINISTRATOR, Role.Name.ADMIN} or cls._is_department_head(actor_role):
             return target_role in {Role.Name.EMPLOYEE, Role.Name.INTERN} and cls._same_department(actor, target_user)
         if actor_role == Role.Name.TEAMLEAD:
             return target_user.manager_id == actor.id and target_role in {Role.Name.EMPLOYEE, Role.Name.INTERN}

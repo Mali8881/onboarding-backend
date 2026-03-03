@@ -38,7 +38,7 @@ class PayrollMyAPIView(APIView):
         query.is_valid(raise_exception=True)
         period = date(query.validated_data["year"], query.validated_data["month"], 1)
 
-        record, was_created = PayrollRecord.objects.get_or_create(
+        record, was_created = PayrollRecord.objects.select_related("user", "user__payroll_compensation").get_or_create(
             user=request.user,
             month=period,
             defaults={
@@ -60,7 +60,7 @@ class PayrollAdminAPIView(APIView):
         query = MonthQuerySerializer(data=request.query_params)
         query.is_valid(raise_exception=True)
         period = date(query.validated_data["year"], query.validated_data["month"], 1)
-        qs = PayrollRecord.objects.select_related("user", "user__role").filter(month=period)
+        qs = PayrollRecord.objects.select_related("user", "user__role", "user__payroll_compensation").filter(month=period)
         qs = qs.exclude(user__role__name=Role.Name.INTERN)
         if PayrollPolicy.can_manage_payroll(request.user):
             qs = qs.order_by("user_id")
@@ -129,8 +129,10 @@ class PayrollRecalculateAPIView(APIView):
 
         return Response(
             {
+                "status": "ok",
                 "year": year,
                 "month": month,
+                "recalculated": result.created + result.updated,
                 "entries_created": result.created,
                 "entries_updated": result.updated,
             },

@@ -104,6 +104,10 @@ class PayrollApiTests(TestCase):
             "calculated_at",
             "paid_at",
             "is_calculated",
+            "pay_type",
+            "hourly_rate",
+            "minute_rate",
+            "fixed_salary",
         }
         self.assertTrue(expected_fields.issubset(set(response.data.keys())))
         self.assertEqual(response.data["user"], self.employee.id)
@@ -131,6 +135,10 @@ class PayrollApiTests(TestCase):
             "status",
             "calculated_at",
             "paid_at",
+            "pay_type",
+            "hourly_rate",
+            "minute_rate",
+            "fixed_salary",
         }
         self.assertTrue(expected_fields.issubset(set(response.data[0].keys())))
 
@@ -158,6 +166,14 @@ class PayrollApiTests(TestCase):
         )
         self.assertEqual(fixed.status_code, 200)
 
+        fixed_alias = self.client.post(
+            "/api/v1/payroll/admin/hourly-rates/",
+            {"user_id": self.employee.id, "pay_type": "fixed", "fixed_salary": "7000.00"},
+            format="json",
+        )
+        self.assertEqual(fixed_alias.status_code, 200)
+        self.assertEqual(fixed_alias.data.get("pay_type"), "fixed")
+
     def test_hourly_rates_invalid_payload_returns_field_errors(self):
         self.client.force_authenticate(user=self.super_admin)
 
@@ -171,7 +187,7 @@ class PayrollApiTests(TestCase):
 
         invalid_legacy_pay_type = self.client.post(
             "/api/v1/payroll/admin/hourly-rates/",
-            {"user_id": self.employee.id, "pay_type": "fixed", "fixed_salary": "1000.00"},
+            {"user_id": self.employee.id, "pay_type": "salary", "fixed_salary": "1000.00"},
             format="json",
         )
         self.assertEqual(invalid_legacy_pay_type.status_code, 400)
@@ -247,3 +263,24 @@ class PayrollApiTests(TestCase):
 
         # keep model import used to avoid lint complaints in strict environments
         self.assertTrue(PayrollCompensation.objects.count() >= 0)
+
+    def test_record_status_patch_accepts_uppercase_values(self):
+        self.client.force_authenticate(user=self.super_admin)
+        self._recalculate()
+        record = PayrollRecord.objects.filter(month=date(2026, 3, 1)).first()
+        self.assertIsNotNone(record)
+
+        response = self.client.patch(
+            f"/api/v1/payroll/admin/records/{record.id}/status/",
+            {"status": "DELAYED"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(str(response.data["status"]).upper(), "DELAYED")
+
+    def test_recalculate_response_contains_status_and_recalculated(self):
+        self.client.force_authenticate(user=self.super_admin)
+        response = self.client.post("/api/v1/payroll/admin/recalculate/", {"year": 2026, "month": 3}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data.get("status"), "ok")
+        self.assertIn("recalculated", response.data)

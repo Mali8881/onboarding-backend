@@ -67,25 +67,35 @@ def generate_work_calendar_month(year: int, month: int, *, overwrite: bool = Fal
 def attendance_table_queryset(actor, *, include_all_for_admin: bool = True):
     if actor.is_anonymous:
         return User.objects.none()
+    role_name = str(getattr(getattr(actor, "role", None), "name", "")).upper()
+    is_department_head = role_name in {"DEPARTMENT_HEAD", "DEPARTMENTHEAD"}
+
     if include_all_for_admin and AccessPolicy.is_super_admin(actor):
-        return User.objects.filter(is_active=True).exclude(role__name=Role.Name.SUPER_ADMIN).select_related(
+        return User.objects.filter(is_active=True).select_related(
             "position", "department", "role"
         )
     if include_all_for_admin and AccessPolicy.is_administrator(actor):
+        # Administrators should see company-wide attendance overview.
+        return User.objects.filter(is_active=True).exclude(role__name=Role.Name.SUPER_ADMIN).select_related(
+            "position", "department", "role"
+        )
+    if include_all_for_admin and (AccessPolicy.is_admin(actor) or is_department_head):
         if not actor.department_id:
-            return User.objects.none()
+            # Legacy data may contain department heads without a department.
+            # Keep overview usable instead of returning only self/empty list.
+            return User.objects.filter(is_active=True).exclude(role__name=Role.Name.SUPER_ADMIN).select_related(
+                "position", "department", "role"
+            )
         return User.objects.filter(
             is_active=True,
             department_id=actor.department_id,
-            role__name__in=[Role.Name.ADMIN, Role.Name.TEAMLEAD, Role.Name.EMPLOYEE, Role.Name.INTERN],
-        ).select_related("position", "department", "role")
-    if include_all_for_admin and AccessPolicy.is_admin(actor):
-        if not actor.department_id:
-            return User.objects.none()
-        return User.objects.filter(
-            is_active=True,
-            department_id=actor.department_id,
-            role__name__in=[Role.Name.TEAMLEAD, Role.Name.EMPLOYEE, Role.Name.INTERN],
+            role__name__in=[
+                Role.Name.ADMIN,
+                Role.Name.TEAMLEAD,
+                Role.Name.EMPLOYEE,
+                Role.Name.INTERN,
+                "DEPARTMENT_HEAD",
+            ],
         ).select_related("position", "department", "role")
     if AccessPolicy.is_teamlead(actor):
         return actor.team_members.filter(is_active=True).exclude(role__name=Role.Name.SUPER_ADMIN).select_related(
