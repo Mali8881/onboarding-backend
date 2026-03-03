@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 from django.contrib.auth import authenticate
+from django.db import IntegrityError
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework import serializers, status
@@ -11,7 +12,15 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from accounts.access_policy import AccessPolicy
-from accounts.models import AuditLog, Department, Position, PromotionRequest, Role, User
+from accounts.models import (
+    AuditLog,
+    Department,
+    DepartmentSubdivision,
+    Position,
+    PromotionRequest,
+    Role,
+    User,
+)
 from accounts.serializers import PasswordChangeSerializer, UserProfileUpdateSerializer
 from content.models import Feedback, Instruction, News
 from content.serializers import (
@@ -19,6 +28,7 @@ from content.serializers import (
     NewsDetailSerializer,
     NewsListSerializer,
 )
+from onboarding_core.models import OnboardingDay, OnboardingProgress
 from onboarding_core.views import OnboardingOverviewView
 from regulations.models import Regulation, RegulationAcknowledgement
 from regulations.serializers import RegulationAdminSerializer, RegulationSerializer
@@ -63,8 +73,8 @@ def _user_to_front_payload(user: User) -> dict:
         "role_label": role_label_map.get(role_front, role_front),
         "department": user.department_id,
         "department_name": user.department.name if user.department_id else "",
-        "subdivision": user.department_id,
-        "subdivision_name": user.department.name if user.department_id else "",
+        "subdivision": user.subdivision_id,
+        "subdivision_name": user.subdivision.name if user.subdivision_id else "",
         "position": user.position_id,
         "position_name": user.position.name if user.position_id else (user.custom_position or ""),
         "manager": user.manager_id,
@@ -197,6 +207,7 @@ class FrontendUsersSerializer(serializers.ModelSerializer):
             "first_name",
             "last_name",
             "department",
+            "subdivision",
             "position",
             "manager",
             "custom_position",
@@ -270,6 +281,14 @@ class FrontendUsersCollectionAPIView(APIView):
                 and manager.department_id != request.user.department_id
             ):
                 return Response({"detail": "Department head can assign only teamleads from own department."}, status=403)
+        if user.subdivision_id:
+            subdivision = DepartmentSubdivision.objects.filter(id=user.subdivision_id, is_active=True).first()
+            if not subdivision:
+                return Response({"detail": "Subdivision not found."}, status=400)
+            if user.department_id and subdivision.department_id != user.department_id:
+                return Response({"detail": "Subdivision must belong to selected department."}, status=400)
+            if not user.department_id:
+                user.department_id = subdivision.department_id
         if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
             if user.role and user.role.name in {Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN}:
                 return Response({"detail": "Department head cannot create privileged users."}, status=403)
@@ -324,6 +343,16 @@ class FrontendUsersDetailAPIView(APIView):
                     and manager.department_id != request.user.department_id
                 ):
                     return Response({"detail": "Department head can assign only teamleads from own department."}, status=403)
+        next_department = validated.get("department", target.department)
+        next_subdivision = validated.get("subdivision", target.subdivision)
+        if next_subdivision:
+            subdivision = DepartmentSubdivision.objects.filter(id=next_subdivision.id, is_active=True).first()
+            if not subdivision:
+                return Response({"detail": "Subdivision not found."}, status=400)
+            if next_department and subdivision.department_id != next_department.id:
+                return Response({"detail": "Subdivision must belong to selected department."}, status=400)
+            if not next_department:
+                validated["department"] = subdivision.department
         for field, value in validated.items():
             setattr(target, field, value)
         if role_name:
@@ -424,6 +453,41 @@ class FrontendDepartmentsAPIView(APIView):
 class FrontendDepartmentsDetailAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
+    def patch(self, request, department_id: int):
+        _ensure_admin_like(request.user)
+        item = Department.objects.filter(id=department_id).first()
+        if not item:
+            raise NotFound("Department not found.")
+
+        if "name" in request.data:
+            name = (request.data.get("name") or "").strip()
+            if not name:
+                return Response({"name": ["This field may not be blank."]}, status=400)
+            item.name = name
+
+        if "parent" in request.data:
+            parent_id = request.data.get("parent")
+            if parent_id in ("", None):
+                item.parent = None
+            else:
+                parent = Department.objects.filter(id=parent_id).first()
+                if not parent:
+                    return Response({"parent": ["Parent department not found."]}, status=404)
+                if parent.id == item.id:
+                    return Response({"parent": ["Department cannot be parent of itself."]}, status=400)
+                item.parent = parent
+
+        if "is_active" in request.data:
+            item.is_active = bool(request.data.get("is_active"))
+
+        try:
+            item.full_clean()
+            item.save()
+        except IntegrityError:
+            return Response({"name": ["Department with this name already exists."]}, status=400)
+
+        return Response({"id": item.id, "name": item.name, "parent": item.parent_id, "is_active": item.is_active})
+
     def delete(self, request, department_id: int):
         _ensure_admin_like(request.user)
         item = Department.objects.filter(id=department_id).first()
@@ -433,6 +497,45 @@ class FrontendDepartmentsDetailAPIView(APIView):
             return Response({"detail": "Department has users and cannot be deleted."}, status=400)
         item.delete()
         return Response(status=204)
+
+
+class FrontendDepartmentsTransferUsersAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, department_id: int):
+        _ensure_admin_like(request.user)
+        source = Department.objects.filter(id=department_id).first()
+        if not source:
+            raise NotFound("Department not found.")
+
+        target_department_id = request.data.get("target_department_id")
+        if not target_department_id:
+            return Response({"target_department_id": ["This field is required."]}, status=400)
+
+        target = Department.objects.filter(id=target_department_id, is_active=True).first()
+        if not target:
+            return Response({"target_department_id": ["Target department not found."]}, status=404)
+        if target.id == source.id:
+            return Response({"target_department_id": ["Target department must be different."]}, status=400)
+
+        users_qs = User.objects.filter(department_id=source.id)
+        moved_count = users_qs.count()
+        users_qs.update(department_id=target.id, subdivision=None)
+
+        delete_source = bool(request.data.get("delete_source", False))
+        deleted = False
+        if delete_source and not User.objects.filter(department_id=source.id).exists():
+            source.delete()
+            deleted = True
+
+        return Response(
+            {
+                "moved_count": moved_count,
+                "source_department_id": source.id,
+                "target_department_id": target.id,
+                "deleted_source": deleted,
+            }
+        )
 
 
 class FrontendPositionsAPIView(APIView):
@@ -459,6 +562,112 @@ class FrontendPositionsDetailAPIView(APIView):
         item = Position.objects.filter(id=position_id).first()
         if not item:
             raise NotFound("Position not found.")
+        item.delete()
+        return Response(status=204)
+
+
+class FrontendSubdivisionsAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        items = DepartmentSubdivision.objects.select_related("department").order_by("department__name", "name")
+        department_id = request.query_params.get("department_id")
+        if department_id:
+            items = items.filter(department_id=department_id)
+        is_active = request.query_params.get("is_active")
+        if is_active is not None:
+            items = items.filter(is_active=str(is_active).lower() in {"1", "true", "yes"})
+        return Response(
+            [
+                {
+                    "id": item.id,
+                    "name": item.name,
+                    "department_id": item.department_id,
+                    "department_name": item.department.name,
+                    "is_active": item.is_active,
+                }
+                for item in items
+            ]
+        )
+
+    def post(self, request):
+        _ensure_admin_like(request.user)
+        name = (request.data.get("name") or "").strip()
+        if not name:
+            return Response({"name": ["This field is required."]}, status=400)
+        department_id = request.data.get("department_id")
+        if not department_id:
+            return Response({"department_id": ["This field is required."]}, status=400)
+
+        department = Department.objects.filter(id=department_id, is_active=True).first()
+        if not department:
+            return Response({"department_id": ["Department not found."]}, status=404)
+
+        item = DepartmentSubdivision.objects.create(
+            department=department,
+            name=name,
+            is_active=bool(request.data.get("is_active", True)),
+        )
+        return Response(
+            {
+                "id": item.id,
+                "name": item.name,
+                "department_id": item.department_id,
+                "department_name": item.department.name,
+                "is_active": item.is_active,
+            },
+            status=201,
+        )
+
+
+class FrontendSubdivisionsDetailAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, subdivision_id: int):
+        _ensure_admin_like(request.user)
+        item = DepartmentSubdivision.objects.select_related("department").filter(id=subdivision_id).first()
+        if not item:
+            raise NotFound("Subdivision not found.")
+
+        if "name" in request.data:
+            name = (request.data.get("name") or "").strip()
+            if not name:
+                return Response({"name": ["This field may not be blank."]}, status=400)
+            item.name = name
+
+        if "department_id" in request.data:
+            department_id = request.data.get("department_id")
+            department = Department.objects.filter(id=department_id, is_active=True).first()
+            if not department:
+                return Response({"department_id": ["Department not found."]}, status=404)
+            item.department = department
+
+        if "is_active" in request.data:
+            item.is_active = bool(request.data.get("is_active"))
+
+        try:
+            item.full_clean()
+            item.save()
+        except IntegrityError:
+            return Response({"name": ["Subdivision with this name already exists in this department."]}, status=400)
+
+        return Response(
+            {
+                "id": item.id,
+                "name": item.name,
+                "department_id": item.department_id,
+                "department_name": item.department.name,
+                "is_active": item.is_active,
+            }
+        )
+
+    def delete(self, request, subdivision_id: int):
+        _ensure_admin_like(request.user)
+        item = DepartmentSubdivision.objects.filter(id=subdivision_id).first()
+        if not item:
+            raise NotFound("Subdivision not found.")
+        if User.objects.filter(subdivision=item).exists():
+            return Response({"detail": "Subdivision has users and cannot be deleted."}, status=400)
         item.delete()
         return Response(status=204)
 
@@ -536,8 +745,29 @@ class FrontendPromotionRequestsActionAPIView(APIView):
         comment = (request.data.get("comment") or request.data.get("reason") or "").strip()
         if action_value == "approve":
             item.status = PromotionRequest.Status.APPROVED
-            item.user.role = item.requested_role
-            item.user.save(update_fields=["role"])
+            target_user = item.user
+            target_user.role = item.requested_role
+            update_fields = ["role"]
+
+            # Keep intern-selected subdivision and align department to it on promotion.
+            if (
+                target_user.subdivision_id
+                and item.requested_role.name in {Role.Name.EMPLOYEE, Role.Name.TEAMLEAD}
+            ):
+                subdivision = DepartmentSubdivision.objects.select_related("department").filter(
+                    id=target_user.subdivision_id,
+                    is_active=True,
+                ).first()
+                if subdivision:
+                    if target_user.department_id != subdivision.department_id:
+                        target_user.department_id = subdivision.department_id
+                        update_fields.append("department")
+                else:
+                    # If subdivision became inactive/missing, clear it to keep data consistent.
+                    target_user.subdivision = None
+                    update_fields.append("subdivision")
+
+            target_user.save(update_fields=update_fields)
         elif action_value == "reject":
             item.status = PromotionRequest.Status.REJECTED
         else:
@@ -808,6 +1038,9 @@ class FrontendOnboardingReportsAPIView(APIView):
                     "did": item.did,
                     "will_do": item.will_do,
                     "problems": item.problems,
+                    "report_title": item.report_title,
+                    "report_description": item.report_description,
+                    "github_url": item.github_url,
                     "status": item.status,
                     "reviewer_comment": item.reviewer_comment,
                     "updated_at": item.updated_at,
@@ -825,14 +1058,41 @@ class FrontendOnboardingReportsAPIView(APIView):
         did = (request.data.get("did") or "").strip()
         will_do = (request.data.get("will_do") or "").strip()
         problems = (request.data.get("problems") or "").strip()
+        report_title = (request.data.get("report_title") or "").strip()
+        report_description = (request.data.get("report_description") or "").strip()
+        github_url = (request.data.get("github_url") or "").strip()
+        day = OnboardingDay.objects.filter(id=day_id, is_active=True).first()
+        if not day:
+            return Response({"detail": "Day not found."}, status=404)
+        if day.day_number == 2:
+            if github_url and "github.com" not in github_url.lower():
+                return Response({"github_url": ["Use GitHub URL."]}, status=400)
+            did = did or report_title
+            will_do = will_do or report_description
         report, _ = OnboardingReport.objects.update_or_create(
             user=request.user,
             day_id=day_id,
-            defaults={"did": did, "will_do": will_do, "problems": problems},
+            defaults={
+                "did": did,
+                "will_do": will_do,
+                "problems": problems,
+                "report_title": report_title,
+                "report_description": report_description,
+                "github_url": github_url,
+            },
         )
-        if did and will_do:
+        if report.can_be_sent():
             report.status = OnboardingReport.Status.SENT
             report.save(update_fields=["status", "updated_at"])
+            if day.day_number == 2:
+                OnboardingProgress.objects.update_or_create(
+                    user=request.user,
+                    day=day,
+                    defaults={
+                        "status": OnboardingProgress.Status.DONE,
+                        "completed_at": timezone.now(),
+                    },
+                )
         return Response({"id": str(report.id), "status": report.status}, status=201)
 
 
@@ -845,10 +1105,34 @@ class FrontendOnboardingReportDetailAPIView(APIView):
             raise NotFound("Report not found.")
         if not report.can_be_modified():
             return Response({"detail": "Report cannot be modified"}, status=409)
-        for field in ("did", "will_do", "problems"):
+        for field in ("did", "will_do", "problems", "report_title", "report_description", "github_url"):
             if field in request.data:
                 setattr(report, field, request.data.get(field) or "")
-        report.save(update_fields=["did", "will_do", "problems", "updated_at"])
+        if report.github_url and "github.com" not in report.github_url.lower():
+            return Response({"github_url": ["Use GitHub URL."]}, status=400)
+        report.save(
+            update_fields=[
+                "did",
+                "will_do",
+                "problems",
+                "report_title",
+                "report_description",
+                "github_url",
+                "updated_at",
+            ]
+        )
+        if report.can_be_sent():
+            report.status = OnboardingReport.Status.SENT
+            report.save(update_fields=["status", "updated_at"])
+            if report.day.day_number == 2:
+                OnboardingProgress.objects.update_or_create(
+                    user=request.user,
+                    day=report.day,
+                    defaults={
+                        "status": OnboardingProgress.Status.DONE,
+                        "completed_at": timezone.now(),
+                    },
+                )
         return Response({"id": str(report.id), "status": report.status})
 
 

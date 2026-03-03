@@ -5,6 +5,7 @@ from .frontend_compat_views import (
     FrontendAuditListAPIView,
     FrontendDepartmentsAPIView,
     FrontendDepartmentsDetailAPIView,
+    FrontendDepartmentsTransferUsersAPIView,
     FrontendFeedbackReplyAPIView,
     FrontendFeedbackTicketsAPIView,
     FrontendInstructionsAPIView,
@@ -21,6 +22,7 @@ from .frontend_compat_views import (
     FrontendOnboardingReportsAPIView,
     FrontendPositionsAPIView,
     FrontendPositionsDetailAPIView,
+    FrontendSubdivisionsAPIView,
     FrontendPromotionRequestsActionAPIView,
     FrontendPromotionRequestsAPIView,
     FrontendRegulationsCollectionAPIView,
@@ -32,6 +34,7 @@ from .frontend_compat_views import (
     FrontendUsersDetailAPIView,
     FrontendUsersSetRoleAPIView,
     FrontendUsersToggleStatusAPIView,
+    FrontendSubdivisionsDetailAPIView,
 )
 
 urlpatterns = [
@@ -46,8 +49,11 @@ urlpatterns = [
     path("auth/users/<int:user_id>/set_role/", FrontendUsersSetRoleAPIView.as_view()),
     path("auth/departments/", FrontendDepartmentsAPIView.as_view()),
     path("auth/departments/<int:department_id>/", FrontendDepartmentsDetailAPIView.as_view()),
+    path("auth/departments/<int:department_id>/transfer-users/", FrontendDepartmentsTransferUsersAPIView.as_view()),
     path("auth/positions/", FrontendPositionsAPIView.as_view()),
     path("auth/positions/<int:position_id>/", FrontendPositionsDetailAPIView.as_view()),
+    path("auth/subdivisions/", FrontendSubdivisionsAPIView.as_view()),
+    path("auth/subdivisions/<int:subdivision_id>/", FrontendSubdivisionsDetailAPIView.as_view()),
     path("auth/promotion-requests/", FrontendPromotionRequestsAPIView.as_view()),
     path(
         "auth/promotion-requests/<int:request_id>/<str:action>/",
