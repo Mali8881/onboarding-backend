@@ -12,7 +12,7 @@ from .managers import UserManager
 
 
 def validate_photo_size(value):
-    max_size = 2 * 1024 * 1024  # 2MB
+    max_size = 2 * 1024 * 1024  
     if value.size > max_size:
         raise ValidationError("Максимальный размер фото — 2MB.")
 
@@ -103,6 +103,29 @@ class Position(models.Model):
         return self.name
 
 
+class DepartmentSubdivision(models.Model):
+    department = models.ForeignKey(
+        Department,
+        on_delete=models.CASCADE,
+        related_name="subdivisions",
+        verbose_name="Отдел",
+    )
+    name = models.CharField("Название", max_length=150)
+    day_two_task_title = models.CharField("Заголовок задачи 2-го дня", max_length=255, blank=True)
+    day_two_task_description = models.TextField("Описание задачи 2-го дня", blank=True)
+    day_two_spec_url = models.URLField("Ссылка на ТЗ/документ", blank=True)
+    is_active = models.BooleanField("Активен", default=True)
+
+    class Meta:
+        verbose_name = "Подотдел"
+        verbose_name_plural = "Подотделы"
+        unique_together = ("department", "name")
+        ordering = ["department__name", "name"]
+
+    def __str__(self):
+        return f"{self.department.name}: {self.name}"
+
+
 # ================= User =================
 class User(AbstractUser):
     role = models.ForeignKey(Role, on_delete=models.PROTECT, verbose_name="Системная роль")
@@ -127,6 +150,14 @@ class User(AbstractUser):
         blank=True,
         related_name="team_members",
         verbose_name="Руководитель",
+    )
+    subdivision = models.ForeignKey(
+        DepartmentSubdivision,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="users",
+        verbose_name="Подотдел",
     )
 
     custom_position = models.CharField("Своя должность", max_length=150, blank=True)

@@ -46,6 +46,8 @@ class AttendancePolicy:
     def can_delete_mark(cls, actor, target_user) -> bool:
         if not actor or not actor.is_authenticated:
             return False
+        if actor.id == target_user.id:
+            return True
         if not cls.is_trackable_user(target_user):
             return False
         actor_role = cls._role_name(actor)
@@ -64,8 +66,6 @@ class AttendancePolicy:
             return target_role in {Role.Name.TEAMLEAD, Role.Name.EMPLOYEE, Role.Name.INTERN}
         if actor_role == Role.Name.TEAMLEAD:
             return target_user.manager_id == actor.id and target_role in {Role.Name.EMPLOYEE, Role.Name.INTERN}
-        if actor.id == target_user.id:
-            return actor_role in {Role.Name.TEAMLEAD, Role.Name.EMPLOYEE, Role.Name.INTERN}
         if cls.is_admin_like(actor):
             return True
         return target_user.manager_id == actor.id
@@ -76,18 +76,12 @@ class AttendancePolicy:
             return False
         if mark_date > date.today():
             return False
+        if actor.id == target_user.id:
+            return True
         if not cls.is_trackable_user(target_user):
             return False
         actor_role = cls._role_name(actor)
         target_role = cls._role_name(target_user)
-        if actor.id == target_user.id:
-            return actor_role in {
-                Role.Name.DEPARTMENT_HEAD,
-                Role.Name.ADMIN,
-                Role.Name.TEAMLEAD,
-                Role.Name.EMPLOYEE,
-                Role.Name.INTERN,
-            }
         if actor_role == Role.Name.SUPER_ADMIN:
             return target_role in {
                 Role.Name.DEPARTMENT_HEAD,

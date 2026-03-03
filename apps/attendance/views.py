@@ -267,28 +267,48 @@ class AttendanceTeamAPIView(APIView):
 
 class AttendanceOfficeCheckInAPIView(APIView):
     permission_classes = [IsAuthenticated]
-    authentication_classes = [SessionAuthentication, JWTAuthentication]
+    # JWT must be preferred for SPA requests with Authorization header.
+    # Session auth is kept as fallback for admin/tools.
+    authentication_classes = [JWTAuthentication, SessionAuthentication]
 
     def post(self, request):
-        geofence = office_geofence()
-        if geofence is None:
-            return Response(
-                {"detail": "Office geofence is not configured."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
-
         serializer = OfficeCheckInSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        office_lat, office_lon, radius_m = geofence
-        lat = serializer.validated_data["latitude"]
-        lon = serializer.validated_data["longitude"]
-        accuracy = serializer.validated_data.get("accuracy_m")
+        geofence = office_geofence()
         client_ip = get_client_ip(request)
-
-        distance_m = haversine_distance_m(lat, lon, office_lat, office_lon)
         ip_valid = is_office_ip(client_ip)
-        in_office = distance_m <= radius_m or ip_valid
+        lat = serializer.validated_data.get("latitude")
+        lon = serializer.validated_data.get("longitude")
+        accuracy = serializer.validated_data.get("accuracy_m")
+
+        has_coordinates = lat is not None and lon is not None
+        if geofence is None:
+            if not ip_valid:
+                return Response(
+                    {"detail": "Office geofence is not configured."},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            # Allow office check-in by trusted office IP even when geofence is not configured.
+            office_lat, office_lon, radius_m = 0.0, 0.0, 0
+            distance_m = 0.0
+            in_office = True
+            session_lat = float(lat) if lat is not None else office_lat
+            session_lon = float(lon) if lon is not None else office_lon
+            has_coordinates = lat is not None and lon is not None
+        else:
+            office_lat, office_lon, radius_m = geofence
+            if has_coordinates:
+                distance_m = haversine_distance_m(lat, lon, office_lat, office_lon)
+                in_office = distance_m <= radius_m or ip_valid
+                session_lat = lat
+                session_lon = lon
+            else:
+                # Fallback for office Wi-Fi/IP verification when browser geolocation is denied.
+                distance_m = 0.0 if ip_valid else float(radius_m + 1)
+                in_office = ip_valid
+                session_lat = office_lat
+                session_lon = office_lon
 
         mark = None
         if in_office:
@@ -307,8 +327,8 @@ class AttendanceOfficeCheckInAPIView(APIView):
 
         session = AttendanceSession.objects.create(
             user=request.user,
-            latitude=lat,
-            longitude=lon,
+            latitude=session_lat,
+            longitude=session_lon,
             accuracy_m=accuracy,
             ip_address=client_ip,
             distance_m=distance_m,
@@ -332,6 +352,7 @@ class AttendanceOfficeCheckInAPIView(APIView):
         payload["status"] = "IN_OFFICE" if in_office else "OUT_OF_OFFICE"
         payload["in_office"] = in_office
         payload["ip_valid"] = ip_valid
+        payload["geolocation_used"] = has_coordinates
         return Response(payload, status=status.HTTP_201_CREATED)
 
 

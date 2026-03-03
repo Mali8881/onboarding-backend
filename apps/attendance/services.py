@@ -156,6 +156,8 @@ def is_office_ip(ip_string: str | None) -> bool:
         return False
     try:
         ip = ipaddress.ip_address(ip_string)
+        if getattr(settings, "DEBUG", False) and ip.is_loopback:
+            return True
         return any(ip in network for network in office_networks())
     except ValueError:
         return False

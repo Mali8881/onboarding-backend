@@ -33,6 +33,10 @@ class AttendanceApiTests(TestCase):
             name=Role.Name.ADMIN,
             defaults={"level": Role.Level.ADMIN},
         )
+        self.super_admin_role, _ = Role.objects.get_or_create(
+            name=Role.Name.SUPER_ADMIN,
+            defaults={"level": Role.Level.SUPER_ADMIN},
+        )
 
         self.teamlead = User.objects.create_user(
             username="teamlead",
@@ -54,6 +58,11 @@ class AttendanceApiTests(TestCase):
             username="admin_att",
             password="StrongPass123!",
             role=self.admin_role,
+        )
+        self.super_admin = User.objects.create_user(
+            username="super_admin_att",
+            password="StrongPass123!",
+            role=self.super_admin_role,
         )
 
     @patch("apps.attendance.views.AttendanceAuditService.log_mark_created")
@@ -90,6 +99,22 @@ class AttendanceApiTests(TestCase):
         self.assertEqual(mark.status, AttendanceMark.Status.REMOTE)
         self.assertEqual(mark.comment, "new")
         log_mark_updated.assert_called_once()
+
+    def test_super_admin_can_mark_self(self):
+        self.client.force_authenticate(user=self.super_admin)
+        response = self.client.post(
+            "/api/v1/attendance/mark/",
+            {"date": str(date.today()), "status": "remote", "comment": "self mark"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(
+            AttendanceMark.objects.filter(
+                user=self.super_admin,
+                date=date.today(),
+                status=AttendanceMark.Status.REMOTE,
+            ).exists()
+        )
 
     def test_teamlead_can_mark_subordinate(self):
         self.client.force_authenticate(user=self.teamlead)
@@ -349,6 +374,49 @@ class AttendanceApiTests(TestCase):
         self.assertEqual(response.status_code, 503)
 
     @override_settings(
+        OFFICE_GEOFENCE_LATITUDE=None,
+        OFFICE_GEOFENCE_LONGITUDE=None,
+        OFFICE_GEOFENCE_RADIUS_M=150,
+        OFFICE_IP_NETWORKS=[ipaddress.ip_network("192.168.10.0/24")],
+    )
+    @patch("apps.attendance.views.AttendanceAuditService.log_office_checkin_in_office")
+    def test_check_in_by_ip_when_geofence_not_configured(self, log_in_office):
+        self.client.force_authenticate(user=self.subordinate)
+        response = self.client.post(
+            "/api/v1/attendance/check-in/",
+            {},
+            format="json",
+            HTTP_X_FORWARDED_FOR="192.168.10.88",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(response.data["in_office"])
+        self.assertTrue(response.data["ip_valid"])
+        self.assertEqual(response.data["status"], "IN_OFFICE")
+        log_in_office.assert_called_once()
+
+    @override_settings(
+        DEBUG=True,
+        OFFICE_GEOFENCE_LATITUDE=None,
+        OFFICE_GEOFENCE_LONGITUDE=None,
+        OFFICE_GEOFENCE_RADIUS_M=150,
+        OFFICE_IP_NETWORKS=[],
+    )
+    @patch("apps.attendance.views.AttendanceAuditService.log_office_checkin_in_office")
+    def test_check_in_local_loopback_allowed_in_debug(self, log_in_office):
+        self.client.force_authenticate(user=self.subordinate)
+        response = self.client.post(
+            "/api/v1/attendance/check-in/",
+            {},
+            format="json",
+            REMOTE_ADDR="127.0.0.1",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(response.data["in_office"])
+        self.assertTrue(response.data["ip_valid"])
+        self.assertEqual(response.data["status"], "IN_OFFICE")
+        log_in_office.assert_called_once()
+
+    @override_settings(
         OFFICE_GEOFENCE_LATITUDE=42.874621,
         OFFICE_GEOFENCE_LONGITUDE=74.569762,
         OFFICE_GEOFENCE_RADIUS_M=150,
@@ -368,3 +436,57 @@ class AttendanceApiTests(TestCase):
         self.assertTrue(response.data["ip_valid"])
         self.assertEqual(response.data["status"], "IN_OFFICE")
         log_in_office.assert_called_once()
+
+    @override_settings(
+        OFFICE_GEOFENCE_LATITUDE=42.874621,
+        OFFICE_GEOFENCE_LONGITUDE=74.569762,
+        OFFICE_GEOFENCE_RADIUS_M=150,
+        OFFICE_IP_NETWORKS=[ipaddress.ip_network("192.168.10.0/24")],
+    )
+    @patch("apps.attendance.views.AttendanceAuditService.log_office_checkin_in_office")
+    def test_check_in_in_office_by_ip_without_coordinates(self, log_in_office):
+        self.client.force_authenticate(user=self.subordinate)
+        response = self.client.post(
+            "/api/v1/attendance/check-in/",
+            {},
+            format="json",
+            HTTP_X_FORWARDED_FOR="192.168.10.15",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(response.data["in_office"])
+        self.assertTrue(response.data["ip_valid"])
+        self.assertFalse(response.data["geolocation_used"])
+        self.assertEqual(response.data["status"], "IN_OFFICE")
+        self.assertTrue(
+            AttendanceMark.objects.filter(
+                user=self.subordinate,
+                date=date.today(),
+                status=AttendanceMark.Status.PRESENT,
+            ).exists()
+        )
+        log_in_office.assert_called_once()
+
+    @override_settings(
+        OFFICE_GEOFENCE_LATITUDE=42.874621,
+        OFFICE_GEOFENCE_LONGITUDE=74.569762,
+        OFFICE_GEOFENCE_RADIUS_M=150,
+        OFFICE_IP_NETWORKS=[ipaddress.ip_network("192.168.10.0/24")],
+    )
+    @patch("apps.attendance.views.AttendanceAuditService.log_office_checkin_outside")
+    def test_check_in_without_coordinates_outside_office_network(self, log_outside):
+        self.client.force_authenticate(user=self.subordinate)
+        response = self.client.post(
+            "/api/v1/attendance/check-in/",
+            {},
+            format="json",
+            HTTP_X_FORWARDED_FOR="10.1.1.5",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertFalse(response.data["in_office"])
+        self.assertFalse(response.data["ip_valid"])
+        self.assertFalse(response.data["geolocation_used"])
+        self.assertEqual(response.data["status"], "OUT_OF_OFFICE")
+        self.assertFalse(
+            AttendanceMark.objects.filter(user=self.subordinate, date=date.today()).exists()
+        )
+        log_outside.assert_called_once()

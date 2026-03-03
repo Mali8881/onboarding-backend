@@ -1,7 +1,15 @@
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from .models import Department, PasswordResetToken, Position, Role, User
+from .models import (
+    Department,
+    DepartmentSubdivision,
+    PasswordResetToken,
+    Position,
+    PromotionRequest,
+    Role,
+    User,
+)
 
 
 class PasswordResetApiTests(TestCase):
@@ -183,3 +191,60 @@ class TeamleadManagerCleanupTests(TestCase):
 
         employee.refresh_from_db()
         self.assertIsNone(employee.manager_id)
+
+
+class PromotionApprovalMappingTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.role_admin, _ = Role.objects.get_or_create(
+            name=Role.Name.ADMIN,
+            defaults={"level": Role.Level.ADMIN},
+        )
+        self.role_intern, _ = Role.objects.get_or_create(
+            name=Role.Name.INTERN,
+            defaults={"level": Role.Level.INTERN},
+        )
+        self.role_employee, _ = Role.objects.get_or_create(
+            name=Role.Name.EMPLOYEE,
+            defaults={"level": Role.Level.EMPLOYEE},
+        )
+
+        self.department_it = Department.objects.create(name="IT Department", is_active=True)
+        self.department_sales = Department.objects.create(name="Sales Department", is_active=True)
+        self.subdivision_backend = DepartmentSubdivision.objects.create(
+            department=self.department_it,
+            name="Backend",
+            is_active=True,
+        )
+
+        self.admin = User.objects.create_user(
+            username="promo_admin",
+            password="StrongPass123!",
+            role=self.role_admin,
+        )
+        self.intern = User.objects.create_user(
+            username="promo_intern",
+            password="StrongPass123!",
+            role=self.role_intern,
+            department=self.department_sales,
+            subdivision=self.subdivision_backend,
+        )
+
+    def test_approve_promotion_maps_department_from_selected_subdivision(self):
+        request_item = PromotionRequest.objects.create(
+            user=self.intern,
+            requested_role=self.role_employee,
+            reason="Move to employee",
+        )
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(
+            f"/api/auth/promotion-requests/{request_item.id}/approve/",
+            {"comment": "Approved"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+
+        self.intern.refresh_from_db()
+        self.assertEqual(self.intern.role_id, self.role_employee.id)
+        self.assertEqual(self.intern.subdivision_id, self.subdivision_backend.id)
+        self.assertEqual(self.intern.department_id, self.department_it.id)

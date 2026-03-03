@@ -15,8 +15,11 @@ urlpatterns = [
     path("password-reset/confirm/", PasswordResetConfirmAPIView.as_view()),
     path("org/departments/", DepartmentListCreateAPIView.as_view(), name="org-department-list-create"),
     path("org/departments/<int:pk>/", DepartmentDetailAPIView.as_view(), name="org-department-detail"),
+    path("org/subdivisions/", SubdivisionListCreateAPIView.as_view(), name="org-subdivision-list-create"),
+    path("org/subdivisions/<int:pk>/", SubdivisionDetailAPIView.as_view(), name="org-subdivision-detail"),
     path("org/positions/", PositionListCreateAPIView.as_view(), name="org-position-list-create"),
     path("org/positions/<int:pk>/", PositionDetailAPIView.as_view(), name="org-position-detail"),
     path("org/structure/", OrgStructureAPIView.as_view(), name="org-structure"),
+    path("me/intern-role/", MyInternSubdivisionAPIView.as_view(), name="my-intern-role"),
 ]
 

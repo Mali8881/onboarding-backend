@@ -384,7 +384,7 @@ OFFICE_IP_NETWORKS = [
     ipaddress.ip_network(value.strip())
     for value in os.environ.get(
         "OFFICE_IP_NETWORKS",
-        "192.168.10.0/24,10.0.0.0/16",
+        "127.0.0.1/32,192.168.1.0/24,192.168.10.0/24,10.0.0.0/16",
     ).split(",")
     if value.strip()
 ]

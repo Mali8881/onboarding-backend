@@ -83,6 +83,9 @@ class AuditEvents:
     POSITION_CREATED = "position_created"
     POSITION_UPDATED = "position_updated"
     POSITION_DELETED = "position_deleted"
+    SUBDIVISION_CREATED = "subdivision_created"
+    SUBDIVISION_UPDATED = "subdivision_updated"
+    SUBDIVISION_DELETED = "subdivision_deleted"
 
     # Payroll
     SALARY_PROFILE_CREATED = "salary_profile_created"

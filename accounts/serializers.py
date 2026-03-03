@@ -1,17 +1,15 @@
-from rest_framework import serializers
-from .models import User, Role, Department, Position
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
+from rest_framework import serializers
 
+from .models import Department, DepartmentSubdivision, Position, Role, User
 
-# =========================
-# USER SERIALIZER (READ)
-# =========================
 
 class UserSerializer(serializers.ModelSerializer):
     role = serializers.CharField(source="role.name", read_only=True)
     role_level = serializers.IntegerField(source="role.level", read_only=True)
     department = serializers.CharField(source="department.name", read_only=True)
+    subdivision = serializers.CharField(source="subdivision.name", read_only=True)
     position = serializers.CharField(source="position.name", read_only=True)
     manager = serializers.PrimaryKeyRelatedField(read_only=True)
     full_name = serializers.SerializerMethodField()
@@ -27,6 +25,7 @@ class UserSerializer(serializers.ModelSerializer):
             "role",
             "role_level",
             "department",
+            "subdivision",
             "position",
             "manager",
             "custom_position",
@@ -38,10 +37,6 @@ class UserSerializer(serializers.ModelSerializer):
     def get_full_name(self, obj):
         return f"{obj.first_name} {obj.last_name}".strip()
 
-
-# =========================
-# LOGIN
-# =========================
 
 class LoginSerializer(serializers.Serializer):
     username = serializers.CharField()
@@ -75,19 +70,11 @@ class PasswordChangeSerializer(serializers.Serializer):
         return attrs
 
 
-# =========================
-# ROLE
-# =========================
-
 class RoleSerializer(serializers.ModelSerializer):
     class Meta:
         model = Role
         fields = ("id", "name", "level")
 
-
-# =========================
-# DEPARTMENT
-# =========================
 
 class DepartmentSerializer(serializers.ModelSerializer):
     parent = serializers.PrimaryKeyRelatedField(
@@ -107,8 +94,6 @@ class DepartmentSerializer(serializers.ModelSerializer):
             return value
         if value.id == instance.id:
             raise serializers.ValidationError("Отдел не может быть родителем сам себе.")
-
-        # Simple cycle protection for parent chain.
         cursor = value
         while cursor is not None:
             if cursor.id == instance.id:
@@ -116,10 +101,6 @@ class DepartmentSerializer(serializers.ModelSerializer):
             cursor = cursor.parent
         return value
 
-
-# =========================
-# POSITION
-# =========================
 
 class PositionSerializer(serializers.ModelSerializer):
     class Meta:
@@ -130,6 +111,7 @@ class PositionSerializer(serializers.ModelSerializer):
 class StructureUserSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
     role = serializers.CharField(source="role.name", read_only=True)
+    subdivision = serializers.CharField(source="subdivision.name", read_only=True)
     position = serializers.SerializerMethodField()
 
     class Meta:
@@ -139,6 +121,7 @@ class StructureUserSerializer(serializers.ModelSerializer):
             "full_name",
             "role",
             "position",
+            "subdivision",
             "username",
             "telegram",
             "phone",
@@ -153,15 +136,6 @@ class StructureUserSerializer(serializers.ModelSerializer):
         return obj.custom_position or ""
 
 
-# =========================
-# NOTIFICATION
-# =========================
-
-
-# =========================
-# USER PROFILE UPDATE
-# =========================
-
 class UserProfileUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
@@ -170,6 +144,7 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
             "last_name",
             "photo",
             "department",
+            "subdivision",
             "position",
             "custom_position",
             "telegram",
@@ -179,14 +154,16 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         position = attrs.get("position")
         custom_position = attrs.get("custom_position")
+        department = attrs.get("department")
+        subdivision = attrs.get("subdivision")
 
         if self.instance:
             position = position if "position" in attrs else self.instance.position
             custom_position = (
-                custom_position
-                if "custom_position" in attrs
-                else self.instance.custom_position
+                custom_position if "custom_position" in attrs else self.instance.custom_position
             )
+            department = department if "department" in attrs else self.instance.department
+            subdivision = subdivision if "subdivision" in attrs else self.instance.subdivision
 
         if position and custom_position:
             raise serializers.ValidationError(
@@ -198,4 +175,39 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
                 "Необходимо указать должность из списка или другую должность."
             )
 
+        if subdivision and department and subdivision.department_id != department.id:
+            raise serializers.ValidationError("Подотдел должен принадлежать выбранному отделу.")
+
         return attrs
+
+
+class DepartmentSubdivisionSerializer(serializers.ModelSerializer):
+    department_name = serializers.CharField(source="department.name", read_only=True)
+    users_count = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = DepartmentSubdivision
+        fields = (
+            "id",
+            "department",
+            "department_name",
+            "name",
+            "day_two_task_title",
+            "day_two_task_description",
+            "day_two_spec_url",
+            "is_active",
+            "users_count",
+        )
+
+
+class InternSubdivisionChoiceSerializer(serializers.Serializer):
+    subdivision_id = serializers.IntegerField()
+
+    def validate_subdivision_id(self, value):
+        subdivision = DepartmentSubdivision.objects.select_related("department").filter(
+            id=value,
+            is_active=True,
+        ).first()
+        if not subdivision:
+            raise serializers.ValidationError("Подотдел не найден или неактивен.")
+        return value

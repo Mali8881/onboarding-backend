@@ -5,9 +5,10 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 from unittest.mock import patch
 
-from accounts.models import Permission, Role, User
+from accounts.models import Department, DepartmentSubdivision, Permission, Role, User
 from apps.tasks.models import Task
 from onboarding_core.models import OnboardingDay, OnboardingProgress
+from reports.models import OnboardingReport
 from regulations.models import (
     Regulation,
     RegulationAcknowledgement,
@@ -33,10 +34,39 @@ class OnboardingFlowTests(TestCase):
         self.day2 = OnboardingDay.objects.create(day_number=2, title="Day 2", is_active=True)
         self.client.force_authenticate(user=self.user)
 
-    def test_can_complete_second_day_without_first_day(self):
+    def test_cannot_complete_second_day_without_selected_role_and_report(self):
+        response = self.client.post(f"/api/v1/onboarding/days/{self.day2.id}/complete/")
+        self.assertEqual(response.status_code, 409)
+
+    def test_can_complete_second_day_after_role_selected_and_report_sent(self):
+        department = Department.objects.create(name="IT")
+        subdivision = DepartmentSubdivision.objects.create(
+            department=department,
+            name="Backend",
+            is_active=True,
+        )
+        self.user.department = department
+        self.user.subdivision = subdivision
+        self.user.save(update_fields=["department", "subdivision"])
+        OnboardingProgress.objects.create(
+            user=self.user,
+            day=self.day1,
+            status=OnboardingProgress.Status.DONE,
+            completed_at=timezone.now(),
+        )
+        OnboardingReport.objects.create(
+            user=self.user,
+            day=self.day2,
+            did="implemented parser",
+            will_do="send PR",
+            report_title="Fedresurs parser",
+            report_description="Implemented parser by spec",
+            github_url="https://github.com/example/repo/pull/1",
+            status=OnboardingReport.Status.SENT,
+        )
+
         response = self.client.post(f"/api/v1/onboarding/days/{self.day2.id}/complete/")
         self.assertEqual(response.status_code, 200)
-
         progress = OnboardingProgress.objects.get(user=self.user, day=self.day2)
         self.assertEqual(progress.status, OnboardingProgress.Status.DONE)
 
@@ -124,12 +154,12 @@ class OnboardingFlowTests(TestCase):
         self.assertEqual(second.status_code, 200)
         self.assertEqual(second.data["status"], OnboardingProgress.Status.DONE)
 
-    def test_overview_no_locked_statuses(self):
+    def test_overview_contains_locked_statuses(self):
         response = self.client.get("/api/v1/onboarding/overview/")
         self.assertEqual(response.status_code, 200)
 
         statuses = {item["status"] for item in response.data["days"]}
-        self.assertNotIn("LOCKED", statuses)
+        self.assertIn("LOCKED", statuses)
 
     @patch("onboarding_core.views.OnboardingAuditService.log_day_completed")
     def test_complete_logs_audit_payload(self, log_day_completed):
@@ -210,6 +240,7 @@ class OnboardingDayDetailTests(TestCase):
             role=self.role,
         )
         self.day1 = OnboardingDay.objects.create(day_number=1, title="Day 1", is_active=True)
+        self.day2 = OnboardingDay.objects.create(day_number=2, title="Day 2", is_active=True)
         self.reg = Regulation.objects.create(
             title="Reg Day 1",
             type=Regulation.RegulationType.LINK,
@@ -235,3 +266,7 @@ class OnboardingDayDetailTests(TestCase):
         task = Task.objects.get(assignee=self.user, onboarding_day=self.day1)
         self.assertEqual(task.title, "День 1: Ознакомление с регламентами компании")
         self.assertEqual(task.due_date, timezone.localdate() + timedelta(days=1))
+
+    def test_day_two_detail_locked_until_day_one_completed(self):
+        response = self.client.get(f"/api/v1/onboarding/days/{self.day2.id}/")
+        self.assertEqual(response.status_code, 409)

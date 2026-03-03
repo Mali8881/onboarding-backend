@@ -21,12 +21,12 @@ from .serializers import (
 )
 
 from accounts.permissions import HasPermission
-from onboarding_core.models import OnboardingDay
+from onboarding_core.models import OnboardingDay, OnboardingProgress
 from onboarding_core.utils import is_deadline_passed
 from .audit import ReportsAuditService
 
 
-SYSTEM_REJECT_COMMENT = "Report is empty. Fill in 'did' and 'will_do' before submit."
+SYSTEM_REJECT_COMMENT = "Report is empty. Fill required fields before submit."
 
 
 class SubmitOnboardingReportView(APIView):
@@ -67,6 +67,13 @@ class SubmitOnboardingReportView(APIView):
         did = serializer.validated_data.get("did", "").strip()
         will_do = serializer.validated_data.get("will_do", "").strip()
         problems = serializer.validated_data.get("problems", "").strip()
+        report_title = serializer.validated_data.get("report_title", "").strip()
+        report_description = serializer.validated_data.get("report_description", "").strip()
+        github_url = serializer.validated_data.get("github_url", "").strip()
+
+        if day.day_number == 2:
+            did = did or report_title
+            will_do = will_do or report_description
 
         existing_report = OnboardingReport.objects.filter(
             user=request.user,
@@ -84,11 +91,33 @@ class SubmitOnboardingReportView(APIView):
             existing_report.did = did
             existing_report.will_do = will_do
             existing_report.problems = problems
-            existing_report.save(update_fields=["did", "will_do", "problems", "updated_at"])
+            existing_report.report_title = report_title
+            existing_report.report_description = report_description
+            existing_report.github_url = github_url
+            existing_report.save(
+                update_fields=[
+                    "did",
+                    "will_do",
+                    "problems",
+                    "report_title",
+                    "report_description",
+                    "github_url",
+                    "updated_at",
+                ]
+            )
 
             if existing_report.can_be_sent():
                 existing_report.send()
                 ReportsAuditService.log_report_submitted(request, existing_report)
+                if day.day_number == 2:
+                    OnboardingProgress.objects.update_or_create(
+                        user=request.user,
+                        day=day,
+                        defaults={
+                            "status": OnboardingProgress.Status.DONE,
+                            "completed_at": timezone.now(),
+                        },
+                    )
             else:
                 self._mark_rejected(existing_report)
                 ReportsAuditService.log_report_rejected_empty(request, existing_report)
@@ -106,6 +135,9 @@ class SubmitOnboardingReportView(APIView):
             did=did,
             will_do=will_do,
             problems=problems,
+            report_title=report_title,
+            report_description=report_description,
+            github_url=github_url,
         )
 
         OnboardingReportLog.objects.create(
@@ -117,6 +149,15 @@ class SubmitOnboardingReportView(APIView):
         if report.can_be_sent():
             report.send()
             ReportsAuditService.log_report_submitted(request, report)
+            if day.day_number == 2:
+                OnboardingProgress.objects.update_or_create(
+                    user=request.user,
+                    day=day,
+                    defaults={
+                        "status": OnboardingProgress.Status.DONE,
+                        "completed_at": timezone.now(),
+                    },
+                )
         else:
             self._mark_rejected(report)
             ReportsAuditService.log_report_rejected_empty(request, report)

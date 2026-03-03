@@ -21,9 +21,11 @@ from regulations.models import (
     RegulationKnowledgeCheck,
     RegulationReadProgress,
 )
+from reports.models import OnboardingReport
 
 from .models import OnboardingDay, OnboardingMaterial, OnboardingProgress
 from .audit import OnboardingAuditService
+from .services import ensure_day_two_task_for_intern
 from .serializers import (
     AdminOnboardingDaySerializer,
     AdminOnboardingMaterialSerializer,
@@ -51,6 +53,27 @@ def _get_day_one_regulations_queryset(day):
     if day.day_number == 1:
         return Regulation.objects.filter(is_active=True).order_by("position", "-created_at")
     return day.regulations.filter(is_active=True).order_by("position", "-created_at")
+
+
+def _get_first_incomplete_previous_day(user, day):
+    previous_days = (
+        OnboardingDay.objects.filter(is_active=True, day_number__lt=day.day_number)
+        .order_by("day_number")
+    )
+    if not previous_days.exists():
+        return None
+
+    completed_day_ids = set(
+        OnboardingProgress.objects.filter(
+            user=user,
+            day_id__in=previous_days.values_list("id", flat=True),
+            status=OnboardingProgress.Status.DONE,
+        ).values_list("day_id", flat=True)
+    )
+    for prev_day in previous_days:
+        if prev_day.id not in completed_day_ids:
+            return prev_day
+    return None
 
 
 def _ensure_day_one_onboarding_task_for_intern(*, user, day):
@@ -126,7 +149,19 @@ class OnboardingDayDetailView(RetrieveAPIView):
 
     def retrieve(self, request, *args, **kwargs):
         day = self.get_object()
+        missing_prev = _get_first_incomplete_previous_day(request.user, day)
+        if missing_prev is not None:
+            return Response(
+                {
+                    "detail": (
+                        f"День {day.day_number} пока недоступен. "
+                        f"Сначала завершите день {missing_prev.day_number}."
+                    )
+                },
+                status=drf_status.HTTP_409_CONFLICT,
+            )
         _ensure_day_one_onboarding_task_for_intern(user=request.user, day=day)
+        ensure_day_two_task_for_intern(user=request.user, day=day)
         serializer = self.get_serializer(day)
         return Response(serializer.data)
 
@@ -144,100 +179,131 @@ class CompleteOnboardingDayView(APIView):
     )
     def post(self, request, id):
         day = get_object_or_404(OnboardingDay, id=id, is_active=True)
+        missing_prev = _get_first_incomplete_previous_day(request.user, day)
+        if missing_prev is not None:
+            return Response(
+                {
+                    "detail": (
+                        f"Нельзя завершить день {day.day_number}, "
+                        f"пока не завершен день {missing_prev.day_number}."
+                    )
+                },
+                status=drf_status.HTTP_409_CONFLICT,
+            )
 
         if (
             getattr(request.user, "role_id", None)
             and request.user.role.name == Role.Name.INTERN
-            and day.day_number == 1
+            and day.day_number in {1, 2}
         ):
-            mandatory = Regulation.objects.filter(
-                is_active=True,
-                is_mandatory_on_day_one=True,
-            )
-            if mandatory.exists():
-                acknowledged_ids = set(
-                    RegulationAcknowledgement.objects.filter(
-                        user=request.user,
-                        regulation__in=mandatory,
-                    ).values_list("regulation_id", flat=True)
+            if day.day_number == 1:
+                mandatory = Regulation.objects.filter(
+                    is_active=True,
+                    is_mandatory_on_day_one=True,
                 )
-                missing = mandatory.exclude(id__in=acknowledged_ids)
-                if missing.exists():
-                    missing_docs = list(missing.values("id", "title"))
-                    log_event(
-                        action=AuditEvents.ONBOARDING_DAY1_BLOCKED_MISSING_REGULATIONS,
-                        actor=request.user,
-                        object_type="onboarding_day",
-                        object_id=str(day.id),
-                        category="content",
-                        level="warning",
-                        ip_address=request.META.get("REMOTE_ADDR"),
-                        metadata={
-                            "missing_count": len(missing_docs),
-                            "missing_docs": [
-                                {"id": str(item["id"]), "title": item["title"]}
-                                for item in missing_docs
-                            ],
-                        },
+                if mandatory.exists():
+                    acknowledged_ids = set(
+                        RegulationAcknowledgement.objects.filter(
+                            user=request.user,
+                            regulation__in=mandatory,
+                        ).values_list("regulation_id", flat=True)
                     )
+                    missing = mandatory.exclude(id__in=acknowledged_ids)
+                    if missing.exists():
+                        missing_docs = list(missing.values("id", "title"))
+                        log_event(
+                            action=AuditEvents.ONBOARDING_DAY1_BLOCKED_MISSING_REGULATIONS,
+                            actor=request.user,
+                            object_type="onboarding_day",
+                            object_id=str(day.id),
+                            category="content",
+                            level="warning",
+                            ip_address=request.META.get("REMOTE_ADDR"),
+                            metadata={
+                                "missing_count": len(missing_docs),
+                                "missing_docs": [
+                                    {"id": str(item["id"]), "title": item["title"]}
+                                    for item in missing_docs
+                                ],
+                            },
+                        )
+                        return Response(
+                            {
+                                "detail": "Нельзя завершить 1-й день: подтвердите ознакомление с обязательными регламентами.",
+                                "missing_regulations": [
+                                    {"id": str(item["id"]), "title": item["title"]}
+                                    for item in missing_docs
+                                ],
+                            },
+                            status=drf_status.HTTP_409_CONFLICT,
+                        )
+
+                day_regs = list(_get_day_one_regulations_queryset(day))
+                if day_regs:
+                    reg_ids = [reg.id for reg in day_regs]
+                    read_ids = set(
+                        RegulationReadProgress.objects.filter(
+                            user=request.user,
+                            regulation_id__in=reg_ids,
+                            is_read=True,
+                        ).values_list("regulation_id", flat=True)
+                    )
+                    feedback_ids = set(
+                        RegulationFeedback.objects.filter(
+                            user=request.user,
+                            regulation_id__in=reg_ids,
+                        ).values_list("regulation_id", flat=True)
+                    )
+                    quiz_ids = set(
+                        RegulationKnowledgeCheck.objects.filter(
+                            user=request.user,
+                            regulation_id__in=reg_ids,
+                            is_passed=True,
+                        ).values_list("regulation_id", flat=True)
+                    )
+
+                    missing_steps = []
+                    for reg in day_regs:
+                        steps = []
+                        if reg.id not in read_ids:
+                            steps.append("read")
+                        if reg.id not in feedback_ids:
+                            steps.append("feedback")
+                        if reg.id not in quiz_ids:
+                            steps.append("quiz")
+                        if steps:
+                            missing_steps.append(
+                                {
+                                    "id": str(reg.id),
+                                    "title": reg.title,
+                                    "missing": steps,
+                                }
+                            )
+
+                    if missing_steps:
+                        return Response(
+                            {
+                                "detail": "Нельзя завершить 1-й день: для каждого регламента нужны шаги 'прочитал', 'фидбек' и 'тест'.",
+                                "missing_steps": missing_steps,
+                            },
+                            status=drf_status.HTTP_409_CONFLICT,
+                        )
+            elif day.day_number == 2:
+                if not request.user.subdivision_id:
                     return Response(
                         {
-                            "detail": "Нельзя завершить 1-й день: подтвердите ознакомление с обязательными регламентами.",
-                            "missing_regulations": [
-                                {"id": str(item["id"]), "title": item["title"]}
-                                for item in missing_docs
-                            ],
+                            "detail": "Нельзя завершить 2-й день: сначала выберите роль/подотдел."
                         },
                         status=drf_status.HTTP_409_CONFLICT,
                     )
-
-            day_regs = list(_get_day_one_regulations_queryset(day))
-            if day_regs:
-                reg_ids = [reg.id for reg in day_regs]
-                read_ids = set(
-                    RegulationReadProgress.objects.filter(
-                        user=request.user,
-                        regulation_id__in=reg_ids,
-                        is_read=True,
-                    ).values_list("regulation_id", flat=True)
-                )
-                feedback_ids = set(
-                    RegulationFeedback.objects.filter(
-                        user=request.user,
-                        regulation_id__in=reg_ids,
-                    ).values_list("regulation_id", flat=True)
-                )
-                quiz_ids = set(
-                    RegulationKnowledgeCheck.objects.filter(
-                        user=request.user,
-                        regulation_id__in=reg_ids,
-                        is_passed=True,
-                    ).values_list("regulation_id", flat=True)
-                )
-
-                missing_steps = []
-                for reg in day_regs:
-                    steps = []
-                    if reg.id not in read_ids:
-                        steps.append("read")
-                    if reg.id not in feedback_ids:
-                        steps.append("feedback")
-                    if reg.id not in quiz_ids:
-                        steps.append("quiz")
-                    if steps:
-                        missing_steps.append(
-                            {
-                                "id": str(reg.id),
-                                "title": reg.title,
-                                "missing": steps,
-                            }
-                        )
-
-                if missing_steps:
+                report = OnboardingReport.objects.filter(user=request.user, day=day).first()
+                if not report or report.status not in {
+                    OnboardingReport.Status.SENT,
+                    OnboardingReport.Status.ACCEPTED,
+                }:
                     return Response(
                         {
-                            "detail": "Нельзя завершить 1-й день: для каждого регламента нужны шаги 'прочитал', 'фидбек' и 'тест'.",
-                            "missing_steps": missing_steps,
+                            "detail": "Нельзя завершить 2-й день: отправьте отчет с описанием и ссылкой на GitHub."
                         },
                         status=drf_status.HTTP_409_CONFLICT,
                     )
@@ -308,6 +374,7 @@ class OnboardingOverviewView(APIView):
         completed_days = 0
         result_days = []
         current_day = None
+        previous_incomplete_found = False
 
         for day in days:
             progress = progress_map.get(day.id)
@@ -321,14 +388,26 @@ class OnboardingOverviewView(APIView):
                 })
                 continue
 
-            if current_day is None:
-                current_day = day
+            if not previous_incomplete_found:
+                previous_incomplete_found = True
+                if current_day is None:
+                    current_day = day
+                result_days.append({
+                    "day_id": str(day.id),
+                    "day_number": day.day_number,
+                    "status": "IN_PROGRESS",
+                })
+                continue
 
             result_days.append({
                 "day_id": str(day.id),
                 "day_number": day.day_number,
-                "status": "IN_PROGRESS",
+                "status": "LOCKED",
             })
+
+        if current_day is None and days.exists():
+            # All completed.
+            current_day = days.order_by("-day_number").first()
 
         total_days = days.count()
         progress_percent = int((completed_days / total_days) * 100) if total_days else 0

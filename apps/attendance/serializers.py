@@ -89,9 +89,18 @@ class WorkCalendarDayUpsertSerializer(serializers.ModelSerializer):
 
 
 class OfficeCheckInSerializer(serializers.Serializer):
-    latitude = serializers.FloatField(min_value=-90, max_value=90)
-    longitude = serializers.FloatField(min_value=-180, max_value=180)
+    latitude = serializers.FloatField(min_value=-90, max_value=90, required=False)
+    longitude = serializers.FloatField(min_value=-180, max_value=180, required=False)
     accuracy_m = serializers.FloatField(required=False, min_value=0)
+
+    def validate(self, attrs):
+        has_lat = "latitude" in attrs
+        has_lon = "longitude" in attrs
+        if has_lat != has_lon:
+            raise serializers.ValidationError(
+                "Provide both latitude and longitude, or omit both for IP/Wi-Fi check."
+            )
+        return attrs
 
 
 class AttendanceSessionSerializer(serializers.ModelSerializer):
