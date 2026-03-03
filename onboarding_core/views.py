@@ -636,6 +636,20 @@ class InternOnboardingProgressDetailView(APIView):
                 feedback_item = feedback_map.get(reg.id)
                 quiz_item = quiz_map.get(reg.id)
                 requires_quiz = bool(reg.requires_quiz)
+                fallback_quiz_total = max(
+                    len(reg.quiz_questions or []),
+                    1 if ((reg.quiz_question or "").strip() or (reg.quiz_expected_answer or "").strip()) else 0,
+                )
+                raw_quiz_total = quiz_item.total_questions if quiz_item else 0
+                raw_quiz_incorrect = quiz_item.incorrect_answers if quiz_item else 0
+                raw_quiz_score = quiz_item.score if quiz_item else 0
+                quiz_total = raw_quiz_total if raw_quiz_total > 0 else (fallback_quiz_total if requires_quiz else 0)
+                if raw_quiz_score > 0:
+                    quiz_score = min(raw_quiz_score, quiz_total) if quiz_total > 0 else raw_quiz_score
+                elif quiz_item and quiz_item.is_passed and quiz_total > 0:
+                    quiz_score = max(quiz_total - max(raw_quiz_incorrect, 0), 0)
+                else:
+                    quiz_score = 0
                 if not read_item or not read_item.is_read:
                     step = "read"
                 elif not feedback_item:
@@ -658,9 +672,9 @@ class InternOnboardingProgressDetailView(APIView):
                         "feedback_at": feedback_item.created_at if feedback_item else None,
                         "quiz_required": requires_quiz,
                         "quiz_passed": bool(quiz_item and quiz_item.is_passed) if requires_quiz else True,
-                        "quiz_score": quiz_item.score if quiz_item else 0,
-                        "quiz_total": quiz_item.total_questions if quiz_item else 0,
-                        "quiz_incorrect": quiz_item.incorrect_answers if quiz_item else 0,
+                        "quiz_score": quiz_score,
+                        "quiz_total": quiz_total,
+                        "quiz_incorrect": raw_quiz_incorrect,
                         "quiz_submitted_at": quiz_item.submitted_at if quiz_item else None,
                     }
                 )
