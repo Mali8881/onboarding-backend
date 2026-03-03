@@ -59,6 +59,15 @@ class Regulation(models.Model):
         blank=True,
         help_text="If empty, non-empty user answer is enough to pass knowledge check.",
     )
+    quiz_questions = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="List of quiz questions: [{question, options: [], correct_answer}]",
+    )
+    quiz_allowed_mistakes = models.PositiveSmallIntegerField(
+        default=1,
+        help_text="How many mistakes are allowed to pass quiz.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True, null=True)
 
@@ -87,6 +96,14 @@ class Regulation(models.Model):
     def save(self, *args, **kwargs):
         self.full_clean()
         return super().save(*args, **kwargs)
+
+    @property
+    def requires_quiz(self) -> bool:
+        return bool(
+            (self.quiz_question or "").strip()
+            or (self.quiz_expected_answer or "").strip()
+            or len(self.quiz_questions or []) > 0
+        )
 
 
 class RegulationAcknowledgement(models.Model):
@@ -164,6 +181,10 @@ class RegulationKnowledgeCheck(models.Model):
         related_name="knowledge_checks",
     )
     answer = models.TextField()
+    answers_json = models.JSONField(default=list, blank=True)
+    score = models.PositiveIntegerField(default=0)
+    total_questions = models.PositiveIntegerField(default=0)
+    incorrect_answers = models.PositiveIntegerField(default=0)
     is_passed = models.BooleanField(default=False)
     submitted_at = models.DateTimeField(auto_now=True)
 

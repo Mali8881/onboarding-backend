@@ -1,5 +1,6 @@
 ﻿from datetime import timedelta
 
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
@@ -7,6 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.access_policy import AccessPolicy
 from accounts.models import Role, User
 from onboarding_core.models import OnboardingDay
 from work_schedule.models import WeeklyWorkPlan
@@ -153,6 +155,40 @@ class TaskCreateAPIView(APIView):
         return Response(TaskSerializer(task).data, status=status.HTTP_201_CREATED)
 
 
+class TaskAssigneesAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        if TaskPolicy.is_admin_like(user):
+            qs = User.objects.filter(
+                is_active=True,
+                role__name__in=[Role.Name.TEAMLEAD, Role.Name.EMPLOYEE, Role.Name.INTERN],
+            )
+            if TaskPolicy.is_department_admin(user):
+                if user.department_id:
+                    qs = qs.filter(department_id=user.department_id)
+                else:
+                    qs = qs.none()
+        elif AccessPolicy.is_teamlead(user):
+            qs = User.objects.filter(Q(id=user.id) | Q(manager_id=user.id), is_active=True)
+        else:
+            qs = User.objects.filter(id=user.id, is_active=True)
+
+        qs = qs.select_related("role").order_by("first_name", "last_name", "username", "id")
+        payload = [
+            {
+                "id": item.id,
+                "username": item.username,
+                "full_name": f"{item.first_name} {item.last_name}".strip() or item.username,
+                "role": item.role.name if item.role_id else "",
+                "department_id": item.department_id,
+            }
+            for item in qs
+        ]
+        return Response(payload)
+
+
 class TaskDetailAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -197,3 +233,5 @@ class TaskMoveAPIView(APIView):
         task.save(update_fields=["column", "updated_at"])
         TasksAuditService.log_task_moved(request, task, old_column_id, task.column_id)
         return Response(TaskSerializer(task).data)
+
+

@@ -70,6 +70,7 @@ class SubmitOnboardingReportView(APIView):
         report_title = serializer.validated_data.get("report_title", "").strip()
         report_description = serializer.validated_data.get("report_description", "").strip()
         github_url = serializer.validated_data.get("github_url", "").strip()
+        attachment = serializer.validated_data.get("attachment")
 
         if day.day_number == 2:
             did = did or report_title
@@ -94,6 +95,8 @@ class SubmitOnboardingReportView(APIView):
             existing_report.report_title = report_title
             existing_report.report_description = report_description
             existing_report.github_url = github_url
+            if attachment is not None:
+                existing_report.attachment = attachment
             existing_report.save(
                 update_fields=[
                     "did",
@@ -102,6 +105,7 @@ class SubmitOnboardingReportView(APIView):
                     "report_title",
                     "report_description",
                     "github_url",
+                    "attachment",
                     "updated_at",
                 ]
             )
@@ -138,6 +142,7 @@ class SubmitOnboardingReportView(APIView):
             report_title=report_title,
             report_description=report_description,
             github_url=github_url,
+            attachment=attachment,
         )
 
         OnboardingReportLog.objects.create(
@@ -257,7 +262,10 @@ class EmployeeDailyReportAPIView(APIView):
             else:
                 qs = qs.none()
         elif AccessPolicy.is_teamlead(request.user):
-            qs = qs.filter(Q(user__manager_id=request.user.id) | Q(user=request.user))
+            team_filter = Q(user__manager_id=request.user.id) | Q(user=request.user)
+            if request.user.subdivision_id:
+                team_filter = team_filter | Q(user__subdivision_id=request.user.subdivision_id)
+            qs = qs.filter(team_filter)
         else:
             qs = qs.filter(user=request.user)
         if report_date:
@@ -299,6 +307,13 @@ class EmployeeDailyReportAPIView(APIView):
         recipient_ids = set()
         if request.user.manager_id:
             recipient_ids.add(request.user.manager_id)
+        else:
+            teamlead_qs = User.objects.filter(role__name=Role.Name.TEAMLEAD, is_active=True)
+            if request.user.subdivision_id:
+                teamlead_qs = teamlead_qs.filter(subdivision_id=request.user.subdivision_id)
+            elif request.user.department_id:
+                teamlead_qs = teamlead_qs.filter(department_id=request.user.department_id)
+            recipient_ids.update(teamlead_qs.values_list("id", flat=True))
         admin_qs = User.objects.filter(role__name=Role.Name.DEPARTMENT_HEAD, is_active=True)
         if request.user.department_id:
             admin_qs = admin_qs.filter(department_id=request.user.department_id)

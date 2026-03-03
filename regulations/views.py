@@ -1,4 +1,5 @@
-﻿from pathlib import Path
+import mimetypes
+from pathlib import Path
 from django.http import FileResponse
 from django.db import transaction
 from django.utils import timezone
@@ -156,6 +157,29 @@ class RegulationDownloadAPIView(APIView):
             return Response({"detail": "Regulation file not found on disk."}, status=status.HTTP_404_NOT_FOUND)
 
         return FileResponse(file_path.open("rb"), as_attachment=True, filename=file_path.name)
+
+
+class RegulationViewAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, regulation_id):
+        regulation = get_object_or_404(Regulation, id=regulation_id, is_active=True)
+        if not regulation.file:
+            return Response({"detail": "Regulation file not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        file_path = Path(regulation.file.path)
+        if not file_path.exists():
+            return Response({"detail": "Regulation file not found on disk."}, status=status.HTTP_404_NOT_FOUND)
+
+        content_type, _ = mimetypes.guess_type(str(file_path))
+        response = FileResponse(
+            file_path.open("rb"),
+            as_attachment=False,
+            filename=file_path.name,
+            content_type=content_type or "application/octet-stream",
+        )
+        response["Content-Disposition"] = f'inline; filename="{file_path.name}"'
+        return response
 class RegulationAdminListCreateAPIView(ListCreateAPIView):
     serializer_class = RegulationAdminSerializer
     permission_classes = [IsAuthenticated, IsAdminLike]
@@ -462,34 +486,88 @@ class RegulationQuizSubmitAPIView(APIView):
         regulation = Regulation.objects.filter(id=regulation_id, is_active=True).first()
         if not regulation:
             return Response({"detail": "Regulation not found."}, status=404)
+        if not regulation.requires_quiz:
+            return Response(
+                {
+                    "is_passed": True,
+                    "detail": "Тест для этого регламента не требуется.",
+                }
+            )
 
         serializer = RegulationQuizSubmitSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        answer = serializer.validated_data["answer"]
+        raw_questions = regulation.quiz_questions or []
+        quiz_questions = [item for item in raw_questions if isinstance(item, dict) and str(item.get("question", "")).strip()]
+        answer = serializer.validated_data.get("answer", "")
+        answers = serializer.validated_data.get("answers") or []
 
-        expected = self._normalize(regulation.quiz_expected_answer)
-        normalized_answer = self._normalize(answer)
-        if expected:
-            is_passed = normalized_answer == expected
+        if quiz_questions:
+            total = len(quiz_questions)
+            if len(answers) < total:
+                return Response(
+                    {
+                        "detail": f"Ответьте на все вопросы теста. Требуется: {total}.",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            normalized_answers = [self._normalize(value) for value in answers[:total]]
+            correct_answers = [self._normalize(str(item.get("correct_answer", ""))) for item in quiz_questions]
+            score = 0
+            for idx, expected in enumerate(correct_answers):
+                current = normalized_answers[idx] if idx < len(normalized_answers) else ""
+                if expected and current == expected:
+                    score += 1
+                elif not expected and len(current) >= 2:
+                    score += 1
+            incorrect = max(total - score, 0)
+            allowed = int(regulation.quiz_allowed_mistakes or 0)
+            is_passed = incorrect <= allowed
+            answer = "\n".join(answers[:total]).strip()
         else:
-            is_passed = len(normalized_answer) >= 3
+            normalized_answer = self._normalize(answer)
+            expected = self._normalize(regulation.quiz_expected_answer)
+            if expected:
+                is_passed = normalized_answer == expected
+            else:
+                is_passed = len(normalized_answer) >= 3
+            score = 1 if is_passed else 0
+            total = 1
+            incorrect = 0 if is_passed else 1
+            normalized_answers = [answer]
 
         check, _ = RegulationKnowledgeCheck.objects.update_or_create(
             user=request.user,
             regulation=regulation,
             defaults={
                 "answer": answer,
+                "answers_json": normalized_answers,
+                "score": score,
+                "total_questions": total,
+                "incorrect_answers": incorrect,
                 "is_passed": is_passed,
             },
         )
+
+        if not is_passed:
+            RegulationReadProgress.objects.update_or_create(
+                user=request.user,
+                regulation=regulation,
+                defaults={"is_read": False, "read_at": None},
+            )
 
         return Response(
             {
                 "id": check.id,
                 "is_passed": check.is_passed,
+                "score": check.score,
+                "total_questions": check.total_questions,
+                "incorrect_answers": check.incorrect_answers,
                 "submitted_at": check.submitted_at,
+                "restart_required": not check.is_passed,
                 "detail": (
-                    "Тест пройден." if check.is_passed else "Тест не пройден. Проверьте ответ и попробуйте снова."
+                    "Тест пройден."
+                    if check.is_passed
+                    else "Тест не пройден. Вернитесь к чтению этого регламента и попробуйте снова."
                 ),
             }
         )

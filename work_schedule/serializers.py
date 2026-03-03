@@ -167,10 +167,7 @@ class WeeklyWorkPlanUpsertSerializer(serializers.Serializer):
             if duration_hours <= 0:
                 raise serializers.ValidationError({"days": f"Shift #{idx}: duration must be at least 1 hour."})
 
-            if mode == "online":
-                if breaks or lunch_start is not None or lunch_end is not None:
-                    raise serializers.ValidationError({"days": f"Shift #{idx}: breaks/lunch are allowed only for office mode."})
-            else:
+            if mode in {"office", "online"}:
                 self._validate_office_breaks_and_lunch(
                     idx=idx,
                     start_time=start_time,
@@ -242,9 +239,9 @@ class WeeklyWorkPlanUpsertSerializer(serializers.Serializer):
         lunch_end,
     ):
         if duration_hours < 7 and breaks:
-            raise serializers.ValidationError({"days": f"Shift #{idx}: breaks are allowed only when office shift is 7+ hours."})
+            raise serializers.ValidationError({"days": f"Shift #{idx}: breaks are allowed only when shift is 7+ hours."})
         if duration_hours < 8 and (lunch_start is not None or lunch_end is not None):
-            raise serializers.ValidationError({"days": f"Shift #{idx}: lunch is allowed only when office shift is 8+ hours."})
+            raise serializers.ValidationError({"days": f"Shift #{idx}: lunch is allowed only when shift is 8+ hours."})
 
         if (lunch_start is None) != (lunch_end is None):
             raise serializers.ValidationError({"days": f"Shift #{idx}: lunch_start and lunch_end must be set together."})

@@ -27,6 +27,7 @@ class OnboardingReportSerializer(serializers.ModelSerializer):
             "report_title",
             "report_description",
             "github_url",
+            "attachment",
             "status",
             "reviewer_comment",
             "created_at",
@@ -43,6 +44,7 @@ class OnboardingReportCreateSerializer(serializers.Serializer):
     report_title = serializers.CharField(allow_blank=True, required=False)
     report_description = serializers.CharField(allow_blank=True, required=False)
     github_url = serializers.URLField(allow_blank=True, required=False)
+    attachment = serializers.FileField(required=False, allow_null=True)
 
     def validate(self, data):
         github_url = (data.get("github_url") or "").strip()

@@ -1,5 +1,6 @@
 import uuid
 
+from django.core.validators import FileExtensionValidator
 from django.db import models
 
 from accounts.models import User
@@ -46,6 +47,32 @@ class OnboardingReport(models.Model):
         blank=True,
         default="",
         verbose_name="Ссылка на работу (GitHub)",
+    )
+    attachment = models.FileField(
+        upload_to="onboarding_reports/",
+        blank=True,
+        null=True,
+        validators=[
+            FileExtensionValidator(
+                allowed_extensions=[
+                    "pdf",
+                    "doc",
+                    "docx",
+                    "xls",
+                    "xlsx",
+                    "txt",
+                    "ppt",
+                    "pptx",
+                    "zip",
+                    "rar",
+                    "7z",
+                    "png",
+                    "jpg",
+                    "jpeg",
+                ]
+            )
+        ],
+        verbose_name="Вложение",
     )
 
     status = models.CharField(

@@ -19,6 +19,8 @@ class RegulationSerializer(serializers.ModelSerializer):
     has_passed_quiz = serializers.SerializerMethodField()
     is_read = serializers.SerializerMethodField()
     read_at = serializers.SerializerMethodField()
+    requires_quiz = serializers.SerializerMethodField()
+    quiz_questions = serializers.SerializerMethodField()
 
     class Meta:
         model = Regulation
@@ -34,6 +36,8 @@ class RegulationSerializer(serializers.ModelSerializer):
             "acknowledged_at",
             "position",
             "quiz_question",
+            "quiz_questions",
+            "requires_quiz",
             "has_feedback",
             "has_passed_quiz",
             "is_read",
@@ -84,6 +88,8 @@ class RegulationSerializer(serializers.ModelSerializer):
         return RegulationFeedback.objects.filter(user=request.user, regulation=obj).exists()
 
     def get_has_passed_quiz(self, obj):
+        if not obj.requires_quiz:
+            return True
         knowledge_map = self.context.get("knowledge_map")
         if knowledge_map is not None:
             return bool(knowledge_map.get(obj.id))
@@ -96,6 +102,26 @@ class RegulationSerializer(serializers.ModelSerializer):
             regulation=obj,
             is_passed=True,
         ).exists()
+
+    def get_requires_quiz(self, obj):
+        return obj.requires_quiz
+
+    def get_quiz_questions(self, obj):
+        questions = obj.quiz_questions or []
+        sanitized = []
+        for item in questions:
+            if not isinstance(item, dict):
+                continue
+            question = str(item.get("question", "")).strip()
+            options = item.get("options") or []
+            if question:
+                sanitized.append(
+                    {
+                        "question": question,
+                        "options": [str(opt).strip() for opt in options if str(opt).strip()],
+                    }
+                )
+        return sanitized
 
     def get_is_read(self, obj):
         read_map = self.context.get("read_map")
@@ -142,6 +168,8 @@ class RegulationAdminSerializer(serializers.ModelSerializer):
             "language",
             "quiz_question",
             "quiz_expected_answer",
+            "quiz_questions",
+            "quiz_allowed_mistakes",
             "created_at",
             "updated_at",
         )
@@ -198,7 +226,16 @@ class RegulationFeedbackCreateSerializer(serializers.ModelSerializer):
 
 
 class RegulationQuizSubmitSerializer(serializers.Serializer):
-    answer = serializers.CharField(allow_blank=False, trim_whitespace=True)
+    answer = serializers.CharField(required=False, allow_blank=False, trim_whitespace=True)
+    answers = serializers.ListField(
+        required=False,
+        child=serializers.CharField(allow_blank=True, trim_whitespace=True),
+    )
+
+    def validate(self, attrs):
+        if not attrs.get("answer") and not attrs.get("answers"):
+            raise serializers.ValidationError("Either 'answer' or 'answers' must be provided.")
+        return attrs
 
 
 class InternOnboardingRequestSerializer(serializers.ModelSerializer):

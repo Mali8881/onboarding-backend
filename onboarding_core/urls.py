@@ -10,6 +10,7 @@ from .views import (
     AdminOnboardingDayViewSet,
     AdminOnboardingMaterialViewSet,
     AdminOnboardingProgressViewSet,
+    InternOnboardingProgressDetailView,
 
 
 )
@@ -38,6 +39,7 @@ urlpatterns = [
     path("days/<uuid:id>/", OnboardingDayDetailView.as_view()),
     path("days/<uuid:id>/complete/", CompleteOnboardingDayView.as_view()),
     path("overview/", OnboardingOverviewView.as_view()),
+    path("progress/<int:user_id>/detail/", InternOnboardingProgressDetailView.as_view()),
 
 ]
 
