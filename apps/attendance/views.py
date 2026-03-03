@@ -1,6 +1,7 @@
 import calendar
 from datetime import date
 from datetime import datetime
+from typing import Optional
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
@@ -327,7 +328,7 @@ class AttendanceCheckinReportAPIView(APIView):
         return None, None, ""
 
     @staticmethod
-    def _parse_shift_hhmm(value: str | None):
+    def _parse_shift_hhmm(value: Optional[str]):
         if not value:
             return None
         chunks = str(value).split(":")
@@ -339,7 +340,9 @@ class AttendanceCheckinReportAPIView(APIView):
             return None
 
     @classmethod
-    def _compute_late_minutes(cls, target_date: date, shift_start_hhmm: str | None, checked_at):
+    def _compute_late_minutes(
+        cls, target_date: date, shift_start_hhmm: Optional[str], checked_at
+    ):
         if not shift_start_hhmm or not checked_at:
             return None
         parsed = cls._parse_shift_hhmm(shift_start_hhmm)
