@@ -607,61 +607,63 @@ class InternOnboardingProgressDetailView(APIView):
             for item in tasks
         ]
 
-        regulations = list(Regulation.objects.filter(is_active=True).order_by("position", "-created_at"))
-        reg_ids = [item.id for item in regulations]
-        read_map = {
-            item.regulation_id: item
-            for item in RegulationReadProgress.objects.filter(user=target, regulation_id__in=reg_ids)
-        }
-        feedback_map = {
-            item.regulation_id: item
-            for item in RegulationFeedback.objects.filter(user=target, regulation_id__in=reg_ids).order_by("-created_at")
-        }
-        quiz_map = {
-            item.regulation_id: item
-            for item in RegulationKnowledgeCheck.objects.filter(user=target, regulation_id__in=reg_ids)
-        }
-        day_relations = {}
-        for day in days:
-            for reg_id in day.regulations.values_list("id", flat=True):
-                current = day_relations.get(reg_id)
-                if current is None or day.day_number < current:
-                    day_relations[reg_id] = day.day_number
-
         regulation_rows = []
-        for reg in regulations:
-            read_item = read_map.get(reg.id)
-            feedback_item = feedback_map.get(reg.id)
-            quiz_item = quiz_map.get(reg.id)
-            requires_quiz = bool(reg.requires_quiz)
-            if not read_item or not read_item.is_read:
-                step = "read"
-            elif not feedback_item:
-                step = "feedback"
-            elif requires_quiz and not (quiz_item and quiz_item.is_passed):
-                step = "quiz"
-            else:
-                step = "done"
+        is_intern = bool(target.role_id and target.role.name == Role.Name.INTERN)
+        if is_intern:
+            regulations = list(Regulation.objects.filter(is_active=True).order_by("position", "-created_at"))
+            reg_ids = [item.id for item in regulations]
+            read_map = {
+                item.regulation_id: item
+                for item in RegulationReadProgress.objects.filter(user=target, regulation_id__in=reg_ids)
+            }
+            feedback_map = {
+                item.regulation_id: item
+                for item in RegulationFeedback.objects.filter(user=target, regulation_id__in=reg_ids).order_by("-created_at")
+            }
+            quiz_map = {
+                item.regulation_id: item
+                for item in RegulationKnowledgeCheck.objects.filter(user=target, regulation_id__in=reg_ids)
+            }
+            day_relations = {}
+            for day in days:
+                for reg_id in day.regulations.values_list("id", flat=True):
+                    current = day_relations.get(reg_id)
+                    if current is None or day.day_number < current:
+                        day_relations[reg_id] = day.day_number
 
-            regulation_rows.append(
-                {
-                    "id": str(reg.id),
-                    "title": reg.title,
-                    "day_number": day_relations.get(reg.id, 1),
-                    "position": reg.position,
-                    "step": step,
-                    "is_read": bool(read_item and read_item.is_read),
-                    "read_at": read_item.read_at if read_item else None,
-                    "feedback": feedback_item.text if feedback_item else "",
-                    "feedback_at": feedback_item.created_at if feedback_item else None,
-                    "quiz_required": requires_quiz,
-                    "quiz_passed": bool(quiz_item and quiz_item.is_passed) if requires_quiz else True,
-                    "quiz_score": quiz_item.score if quiz_item else 0,
-                    "quiz_total": quiz_item.total_questions if quiz_item else 0,
-                    "quiz_incorrect": quiz_item.incorrect_answers if quiz_item else 0,
-                    "quiz_submitted_at": quiz_item.submitted_at if quiz_item else None,
-                }
-            )
+            for reg in regulations:
+                read_item = read_map.get(reg.id)
+                feedback_item = feedback_map.get(reg.id)
+                quiz_item = quiz_map.get(reg.id)
+                requires_quiz = bool(reg.requires_quiz)
+                if not read_item or not read_item.is_read:
+                    step = "read"
+                elif not feedback_item:
+                    step = "feedback"
+                elif requires_quiz and not (quiz_item and quiz_item.is_passed):
+                    step = "quiz"
+                else:
+                    step = "done"
+
+                regulation_rows.append(
+                    {
+                        "id": str(reg.id),
+                        "title": reg.title,
+                        "day_number": day_relations.get(reg.id, 1),
+                        "position": reg.position,
+                        "step": step,
+                        "is_read": bool(read_item and read_item.is_read),
+                        "read_at": read_item.read_at if read_item else None,
+                        "feedback": feedback_item.text if feedback_item else "",
+                        "feedback_at": feedback_item.created_at if feedback_item else None,
+                        "quiz_required": requires_quiz,
+                        "quiz_passed": bool(quiz_item and quiz_item.is_passed) if requires_quiz else True,
+                        "quiz_score": quiz_item.score if quiz_item else 0,
+                        "quiz_total": quiz_item.total_questions if quiz_item else 0,
+                        "quiz_incorrect": quiz_item.incorrect_answers if quiz_item else 0,
+                        "quiz_submitted_at": quiz_item.submitted_at if quiz_item else None,
+                    }
+                )
 
         return Response(
             {
