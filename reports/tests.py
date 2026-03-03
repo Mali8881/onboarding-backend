@@ -3,7 +3,7 @@ from unittest.mock import patch
 from rest_framework.test import APIClient
 
 from accounts.models import Permission, Role, User
-from onboarding_core.models import OnboardingDay
+from onboarding_core.models import OnboardingDay, OnboardingProgress
 from .models import OnboardingReport
 
 
@@ -115,6 +115,40 @@ class SubmitReportApiTests(TestCase):
 
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.data["status"], OnboardingReport.Status.SENT)
+
+    def test_day2_report_requires_title_description_and_github(self):
+        day2 = OnboardingDay.objects.create(day_number=2, title="Day 2", is_active=True)
+        response = self.client.post(
+            "/api/v1/reports/submit/",
+            {
+                "day_id": str(day2.id),
+                "did": "",
+                "will_do": "",
+                "report_title": "",
+                "report_description": "",
+                "github_url": "",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["status"], OnboardingReport.Status.REJECTED)
+
+    def test_day2_report_marks_progress_done(self):
+        day2 = OnboardingDay.objects.create(day_number=2, title="Day 2", is_active=True)
+        response = self.client.post(
+            "/api/v1/reports/submit/",
+            {
+                "day_id": str(day2.id),
+                "report_title": "Parser",
+                "report_description": "Implemented parser by spec",
+                "github_url": "https://github.com/example/repo",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["status"], OnboardingReport.Status.SENT)
+        progress = OnboardingProgress.objects.get(user=self.user, day=day2)
+        self.assertEqual(progress.status, OnboardingProgress.Status.DONE)
 
     @patch("reports.views.ReportsAuditService.log_report_rejected_empty")
     def test_empty_report_logs_rejected_event_once(self, log_rejected):

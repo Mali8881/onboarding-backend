@@ -5,6 +5,7 @@ from .frontend_compat_views import (
     FrontendAuditListAPIView,
     FrontendDepartmentsAPIView,
     FrontendDepartmentsDetailAPIView,
+    FrontendDepartmentsTransferUsersAPIView,
     FrontendFeedbackReplyAPIView,
     FrontendFeedbackTicketsAPIView,
     FrontendInstructionsAPIView,
@@ -21,11 +22,11 @@ from .frontend_compat_views import (
     FrontendOnboardingReportsAPIView,
     FrontendPositionsAPIView,
     FrontendPositionsDetailAPIView,
+    FrontendSubdivisionsAPIView,
     FrontendPromotionRequestsActionAPIView,
     FrontendPromotionRequestsAPIView,
     FrontendRegulationsCollectionAPIView,
     FrontendRegulationsDetailAPIView,
-    FrontendRegulationsActionAPIView,
     FrontendSchedulesHolidaysAPIView,
     FrontendSchedulesMineAPIView,
     FrontendSchedulesWorkSchedulesAPIView,
@@ -33,6 +34,7 @@ from .frontend_compat_views import (
     FrontendUsersDetailAPIView,
     FrontendUsersSetRoleAPIView,
     FrontendUsersToggleStatusAPIView,
+    FrontendSubdivisionsDetailAPIView,
 )
 
 urlpatterns = [
@@ -47,11 +49,11 @@ urlpatterns = [
     path("auth/users/<int:user_id>/set_role/", FrontendUsersSetRoleAPIView.as_view()),
     path("auth/departments/", FrontendDepartmentsAPIView.as_view()),
     path("auth/departments/<int:department_id>/", FrontendDepartmentsDetailAPIView.as_view()),
-    # Alias for frontend wording: subdivisions are child departments.
-    path("auth/subdivisions/", FrontendDepartmentsAPIView.as_view()),
-    path("auth/subdivisions/<int:department_id>/", FrontendDepartmentsDetailAPIView.as_view()),
+    path("auth/departments/<int:department_id>/transfer-users/", FrontendDepartmentsTransferUsersAPIView.as_view()),
     path("auth/positions/", FrontendPositionsAPIView.as_view()),
     path("auth/positions/<int:position_id>/", FrontendPositionsDetailAPIView.as_view()),
+    path("auth/subdivisions/", FrontendSubdivisionsAPIView.as_view()),
+    path("auth/subdivisions/<int:subdivision_id>/", FrontendSubdivisionsDetailAPIView.as_view()),
     path("auth/promotion-requests/", FrontendPromotionRequestsAPIView.as_view()),
     path(
         "auth/promotion-requests/<int:request_id>/<str:action>/",
@@ -62,7 +64,6 @@ urlpatterns = [
     path("core/audit/", FrontendAuditListAPIView.as_view()),
     path("content/regulations/", FrontendRegulationsCollectionAPIView.as_view()),
     path("content/regulations/<uuid:regulation_id>/", FrontendRegulationsDetailAPIView.as_view()),
-    path("content/regulations/<uuid:regulation_id>/<str:action>/", FrontendRegulationsActionAPIView.as_view()),
     path("content/instructions/", FrontendInstructionsAPIView.as_view()),
     path("content/instructions/<uuid:instruction_id>/", FrontendInstructionsDetailAPIView.as_view()),
     path("onboarding/my/", FrontendOnboardingMyAPIView.as_view()),

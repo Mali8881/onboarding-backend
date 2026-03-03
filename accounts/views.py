@@ -15,9 +15,19 @@ from datetime import timedelta
 from django.utils import timezone
 from typing import Optional
 
-from .models import Department, LoginHistory, PasswordResetToken, Position, Role, User
+from .models import (
+    Department,
+    DepartmentSubdivision,
+    LoginHistory,
+    PasswordResetToken,
+    Position,
+    Role,
+    User,
+)
 from .serializers import (
     DepartmentSerializer,
+    DepartmentSubdivisionSerializer,
+    InternSubdivisionChoiceSerializer,
     PasswordChangeSerializer,
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
@@ -35,6 +45,8 @@ from .throttles import (
 from apps.audit import AuditEvents, log_event
 from content.models import Course, CourseEnrollment
 from reports.models import EmployeeDailyReport
+from onboarding_core.models import OnboardingDay, OnboardingProgress
+from onboarding_core.services import ensure_day_two_task_for_intern
 
 
 # ================= LOGIN =================
@@ -604,6 +616,196 @@ class PositionDetailAPIView(_OrgAdminMixin, RetrieveUpdateDestroyAPIView):
             ip_address=self._ip(request),
         )
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class SubdivisionListCreateAPIView(_OrgAdminMixin, ListCreateAPIView):
+    serializer_class = DepartmentSubdivisionSerializer
+
+    def get_queryset(self):
+        qs = DepartmentSubdivision.objects.select_related("department").annotate(users_count=Count("users"))
+        is_active = self.request.query_params.get("is_active")
+        department_id = self.request.query_params.get("department_id")
+        if is_active is not None:
+            qs = qs.filter(is_active=str(is_active).lower() in {"1", "true", "yes"})
+        if department_id:
+            qs = qs.filter(department_id=department_id)
+        if AccessPolicy.is_admin(self.request.user) and not AccessPolicy.is_super_admin(self.request.user):
+            if self.request.user.department_id:
+                qs = qs.filter(department_id=self.request.user.department_id)
+            else:
+                qs = qs.none()
+        return qs.order_by("department__name", "name")
+
+    def list(self, request, *args, **kwargs):
+        if not request.user.is_authenticated:
+            raise PermissionDenied("Требуется авторизация.")
+        return super().list(request, *args, **kwargs)
+
+    def create(self, request, *args, **kwargs):
+        self._ensure_can_manage(request)
+        if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
+            try:
+                department_id = int(request.data.get("department", 0) or 0)
+            except (TypeError, ValueError):
+                department_id = 0
+            if request.user.department_id and department_id != request.user.department_id:
+                return Response(
+                    {"detail": "Руководитель отдела может создавать подотделы только своего отдела."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+        return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        subdivision = serializer.save()
+        log_event(
+            action=AuditEvents.SUBDIVISION_CREATED,
+            actor=self.request.user,
+            object_type="subdivision",
+            object_id=str(subdivision.id),
+            category="content",
+            ip_address=self._ip(self.request),
+        )
+
+
+class SubdivisionDetailAPIView(_OrgAdminMixin, RetrieveUpdateDestroyAPIView):
+    queryset = DepartmentSubdivision.objects.select_related("department").annotate(users_count=Count("users"))
+    serializer_class = DepartmentSubdivisionSerializer
+
+    def get_object(self):
+        obj = super().get_object()
+        if AccessPolicy.is_admin(self.request.user) and not AccessPolicy.is_super_admin(self.request.user):
+            if self.request.user.department_id != obj.department_id:
+                raise PermissionDenied("Недостаточно прав для управления этим подотделом.")
+        return obj
+
+    def update(self, request, *args, **kwargs):
+        self._ensure_can_manage(request)
+        partial = kwargs.pop("partial", False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        changed_fields = {
+            field
+            for field, value in serializer.validated_data.items()
+            if getattr(instance, field) != value
+        }
+        self.perform_update(serializer)
+        if changed_fields:
+            log_event(
+                action=AuditEvents.SUBDIVISION_UPDATED,
+                actor=request.user,
+                object_type="subdivision",
+                object_id=str(instance.id),
+                category="content",
+                ip_address=self._ip(request),
+                metadata={"changed_fields": sorted(changed_fields)},
+            )
+        return Response(serializer.data)
+
+    def destroy(self, request, *args, **kwargs):
+        self._ensure_can_manage(request)
+        instance = self.get_object()
+        if instance.users.exists():
+            return Response(
+                {"detail": "Нельзя удалить подотдел: к нему привязаны пользователи."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        subdivision_id = instance.id
+        self.perform_destroy(instance)
+        log_event(
+            action=AuditEvents.SUBDIVISION_DELETED,
+            actor=request.user,
+            object_type="subdivision",
+            object_id=str(subdivision_id),
+            category="content",
+            ip_address=self._ip(request),
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class MyInternSubdivisionAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        if not AccessPolicy.is_intern(user):
+            return Response({"detail": "Only intern can use this endpoint."}, status=403)
+
+        day_one = OnboardingDay.objects.filter(day_number=1, is_active=True).first()
+        day_one_completed = False
+        if day_one:
+            day_one_completed = OnboardingProgress.objects.filter(
+                user=user,
+                day=day_one,
+                status=OnboardingProgress.Status.DONE,
+            ).exists()
+
+        department_id = user.department_id
+        if user.subdivision_id:
+            department_id = user.subdivision.department_id
+        if not department_id and user.manager_id:
+            department_id = (
+                User.objects.filter(id=user.manager_id).values_list("department_id", flat=True).first()
+            )
+
+        available = DepartmentSubdivision.objects.filter(is_active=True)
+        if department_id:
+            available = available.filter(department_id=department_id)
+        available = available.order_by("department__name", "name")
+        return Response(
+            {
+                "selected_subdivision_id": user.subdivision_id,
+                "selected_subdivision_name": user.subdivision.name if user.subdivision_id else "",
+                "department_id": department_id,
+                "day_one_completed": day_one_completed,
+                "available_subdivisions": DepartmentSubdivisionSerializer(available, many=True).data,
+            }
+        )
+
+    def post(self, request):
+        user = request.user
+        if not AccessPolicy.is_intern(user):
+            return Response({"detail": "Only intern can use this endpoint."}, status=403)
+
+        day_one = OnboardingDay.objects.filter(day_number=1, is_active=True).first()
+        if day_one and not OnboardingProgress.objects.filter(
+            user=user,
+            day=day_one,
+            status=OnboardingProgress.Status.DONE,
+        ).exists():
+            return Response(
+                {"detail": "Выбор роли доступен только после завершения 1-го дня."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        serializer = InternSubdivisionChoiceSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        subdivision = DepartmentSubdivision.objects.select_related("department").get(
+            id=serializer.validated_data["subdivision_id"]
+        )
+        if user.department_id and subdivision.department_id != user.department_id:
+            return Response(
+                {"detail": "Выбранный подотдел не относится к вашему отделу."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user.subdivision = subdivision
+        if not user.department_id:
+            user.department_id = subdivision.department_id
+            user.save(update_fields=["subdivision", "department"])
+        else:
+            user.save(update_fields=["subdivision"])
+
+        day_two = OnboardingDay.objects.filter(day_number=2, is_active=True).first()
+        if day_two:
+            ensure_day_two_task_for_intern(user=user, day=day_two)
+
+        return Response(
+            {
+                "selected_subdivision_id": subdivision.id,
+                "selected_subdivision_name": subdivision.name,
+            }
+        )
 
 
 class OrgStructureAPIView(APIView):

@@ -7,11 +7,9 @@ from accounts.models import Role
 
 
 class AttendancePolicy:
-    LEGACY_DEPARTMENT_HEAD_NAMES = {"DEPARTMENT_HEAD", "DEPARTMENTHEAD"}
-
     @staticmethod
     def is_admin_like(user) -> bool:
-        return AccessPolicy.is_admin_like(user)
+        return AccessPolicy.is_admin(user) or AccessPolicy.is_main_admin(user) or AccessPolicy.is_super_admin(user)
 
     @classmethod
     def can_view_team(cls, actor) -> bool:
@@ -27,58 +25,50 @@ class AttendancePolicy:
             return False
         return cls.is_admin_like(actor)
 
-    @classmethod
-    def can_manage_office_networks(cls, actor) -> bool:
-        if not actor or not actor.is_authenticated:
-            return False
-        return AccessPolicy.is_super_admin(actor)
-
     @staticmethod
     def _role_name(user) -> str | None:
         if not user or not getattr(user, "role_id", None):
             return None
-        return str(user.role.name).upper()
-
-    @classmethod
-    def _is_department_head(cls, role_name: str | None) -> bool:
-        return bool(role_name and role_name in cls.LEGACY_DEPARTMENT_HEAD_NAMES)
-
-    @staticmethod
-    def _same_department(actor, target_user) -> bool:
-        return bool(
-            getattr(actor, "department_id", None)
-            and getattr(target_user, "department_id", None)
-            and actor.department_id == target_user.department_id
-        )
+        return user.role.name
 
     @classmethod
     def is_trackable_user(cls, user) -> bool:
         role_name = cls._role_name(user)
         return role_name in {
-            Role.Name.ADMINISTRATOR,
+            Role.Name.DEPARTMENT_HEAD,
             Role.Name.ADMIN,
             Role.Name.TEAMLEAD,
             Role.Name.EMPLOYEE,
             Role.Name.INTERN,
-        } or cls._is_department_head(role_name)
+        }
 
     @classmethod
     def can_delete_mark(cls, actor, target_user) -> bool:
         if not actor or not actor.is_authenticated:
             return False
+        if actor.id == target_user.id:
+            return True
         if not cls.is_trackable_user(target_user):
             return False
         actor_role = cls._role_name(actor)
         target_role = cls._role_name(target_user)
         if actor_role == Role.Name.SUPER_ADMIN:
-            return True
-        if actor_role in {Role.Name.ADMINISTRATOR, Role.Name.ADMIN} or cls._is_department_head(actor_role):
-            return target_role in {Role.Name.EMPLOYEE, Role.Name.INTERN} and cls._same_department(actor, target_user)
+            return target_role in {
+                Role.Name.DEPARTMENT_HEAD,
+                Role.Name.ADMIN,
+                Role.Name.TEAMLEAD,
+                Role.Name.EMPLOYEE,
+                Role.Name.INTERN,
+            }
+        if actor_role == Role.Name.ADMIN:
+            return target_role in {Role.Name.DEPARTMENT_HEAD, Role.Name.TEAMLEAD, Role.Name.EMPLOYEE, Role.Name.INTERN}
+        if actor_role == Role.Name.DEPARTMENT_HEAD:
+            return target_role in {Role.Name.TEAMLEAD, Role.Name.EMPLOYEE, Role.Name.INTERN}
         if actor_role == Role.Name.TEAMLEAD:
             return target_user.manager_id == actor.id and target_role in {Role.Name.EMPLOYEE, Role.Name.INTERN}
-        if actor.id == target_user.id:
-            return actor_role in {Role.Name.EMPLOYEE, Role.Name.INTERN}
-        return False
+        if cls.is_admin_like(actor):
+            return True
+        return target_user.manager_id == actor.id
 
     @classmethod
     def can_edit_mark(cls, actor, target_user, mark_date: date) -> bool:
@@ -86,25 +76,29 @@ class AttendancePolicy:
             return False
         if mark_date > date.today():
             return False
+        if actor.id == target_user.id:
+            return True
         if not cls.is_trackable_user(target_user):
             return False
         actor_role = cls._role_name(actor)
         target_role = cls._role_name(target_user)
-        if actor.id == target_user.id:
-            return actor_role in {
-                Role.Name.ADMINISTRATOR,
+        if actor_role == Role.Name.SUPER_ADMIN:
+            return target_role in {
+                Role.Name.DEPARTMENT_HEAD,
                 Role.Name.ADMIN,
                 Role.Name.TEAMLEAD,
                 Role.Name.EMPLOYEE,
                 Role.Name.INTERN,
             }
-        if actor_role == Role.Name.SUPER_ADMIN:
-            return True
-        if actor_role in {Role.Name.ADMINISTRATOR, Role.Name.ADMIN} or cls._is_department_head(actor_role):
-            return target_role in {Role.Name.EMPLOYEE, Role.Name.INTERN} and cls._same_department(actor, target_user)
+        if actor_role == Role.Name.ADMIN:
+            return target_role in {Role.Name.DEPARTMENT_HEAD, Role.Name.TEAMLEAD, Role.Name.EMPLOYEE, Role.Name.INTERN}
+        if actor_role == Role.Name.DEPARTMENT_HEAD:
+            return target_role in {Role.Name.TEAMLEAD, Role.Name.EMPLOYEE, Role.Name.INTERN}
         if actor_role == Role.Name.TEAMLEAD:
             return target_user.manager_id == actor.id and target_role in {Role.Name.EMPLOYEE, Role.Name.INTERN}
-        return False
+        if cls.is_admin_like(actor):
+            return True
+        return target_user.manager_id == actor.id
 
     @classmethod
     def can_view_user_marks(cls, actor, target_user) -> bool:
@@ -117,9 +111,19 @@ class AttendancePolicy:
         actor_role = cls._role_name(actor)
         target_role = cls._role_name(target_user)
         if actor_role == Role.Name.SUPER_ADMIN:
-            return True
-        if actor_role in {Role.Name.ADMINISTRATOR, Role.Name.ADMIN} or cls._is_department_head(actor_role):
-            return target_role in {Role.Name.EMPLOYEE, Role.Name.INTERN} and cls._same_department(actor, target_user)
+            return target_role in {
+                Role.Name.DEPARTMENT_HEAD,
+                Role.Name.ADMIN,
+                Role.Name.TEAMLEAD,
+                Role.Name.EMPLOYEE,
+                Role.Name.INTERN,
+            }
+        if actor_role == Role.Name.ADMIN:
+            return target_role in {Role.Name.DEPARTMENT_HEAD, Role.Name.TEAMLEAD, Role.Name.EMPLOYEE, Role.Name.INTERN}
+        if actor_role == Role.Name.DEPARTMENT_HEAD:
+            return target_role in {Role.Name.TEAMLEAD, Role.Name.EMPLOYEE, Role.Name.INTERN}
         if actor_role == Role.Name.TEAMLEAD:
             return target_user.manager_id == actor.id and target_role in {Role.Name.EMPLOYEE, Role.Name.INTERN}
-        return False
+        if cls.is_admin_like(actor):
+            return True
+        return target_user.manager_id == actor.id

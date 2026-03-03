@@ -6,7 +6,16 @@ from django.contrib.auth.models import Group
 from django.utils.html import format_html
 
 from .access_policy import AccessPolicy
-from .models import AuditLog, Department, LoginHistory, Permission, Position, Role, User
+from .models import (
+    AuditLog,
+    Department,
+    DepartmentSubdivision,
+    LoginHistory,
+    Permission,
+    Position,
+    Role,
+    User,
+)
 
 
 ROLE_BADGE_COLORS = {
@@ -85,6 +94,7 @@ class UserAdmin(DjangoUserAdmin):
                 "fields": (
                     "role",
                     "department",
+                    "subdivision",
                     "position",
                     "custom_position",
                     "manager",
@@ -129,6 +139,7 @@ class UserAdmin(DjangoUserAdmin):
                     "email",
                     "role",
                     "department",
+                    "subdivision",
                     "position",
                     "custom_position",
                     "manager",
@@ -237,6 +248,11 @@ class UserAdmin(DjangoUserAdmin):
             qs = Role.objects.all().order_by("level")
             if is_admin(request.user):
                 qs = qs.exclude(name=Role.Name.SUPER_ADMIN)
+            kwargs["queryset"] = qs
+        if db_field.name == "subdivision":
+            qs = DepartmentSubdivision.objects.select_related("department").order_by("department__name", "name")
+            if is_admin(request.user) and request.user.department_id:
+                qs = qs.filter(department_id=request.user.department_id)
             kwargs["queryset"] = qs
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
@@ -419,6 +435,33 @@ class PositionAdmin(admin.ModelAdmin):
     list_display = ("name", "is_active")
     list_filter = ("is_active",)
     search_fields = ("name",)
+
+    def has_module_permission(self, request):
+        return AccessPolicy.can_access_admin_panel(request.user)
+
+    def has_view_permission(self, request, obj=None):
+        return AccessPolicy.can_access_admin_panel(request.user)
+
+    def has_add_permission(self, request):
+        return AccessPolicy.can_manage_org_reference(request.user)
+
+    def has_change_permission(self, request, obj=None):
+        return AccessPolicy.can_manage_org_reference(request.user)
+
+    def has_delete_permission(self, request, obj=None):
+        return AccessPolicy.can_manage_org_reference(request.user)
+
+
+@admin.register(DepartmentSubdivision)
+class DepartmentSubdivisionAdmin(admin.ModelAdmin):
+    list_display = ("name", "department", "is_active", "users_count")
+    list_filter = ("is_active", "department")
+    search_fields = ("name", "department__name")
+    autocomplete_fields = ("department",)
+
+    @admin.display(description="Сотрудников")
+    def users_count(self, obj):
+        return obj.users.count()
 
     def has_module_permission(self, request):
         return AccessPolicy.can_access_admin_panel(request.user)

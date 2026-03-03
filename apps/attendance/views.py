@@ -1,4 +1,4 @@
-﻿import calendar
+import calendar
 from datetime import date
 
 from django.contrib.auth import get_user_model
@@ -11,9 +11,11 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from work_schedule.models import ProductionCalendar
+from accounts.models import Role
+from accounts.access_policy import AccessPolicy
 
 from .audit import AttendanceAuditService
-from .models import AttendanceMark, AttendanceSession, OfficeNetwork, WorkCalendarDay
+from .models import AttendanceMark, AttendanceSession, WorkCalendarDay
 from .policies import AttendancePolicy
 from .serializers import (
     AttendanceTeamFilterSerializer,
@@ -22,7 +24,6 @@ from .serializers import (
     AttendanceSessionSerializer,
     MonthQuerySerializer,
     OfficeCheckInSerializer,
-    OfficeNetworkSerializer,
     WorkCalendarDaySerializer,
     WorkCalendarDayUpsertSerializer,
     WorkCalendarGenerateSerializer,
@@ -32,9 +33,10 @@ from .services import (
     build_attendance_table,
     get_client_ip,
     generate_work_calendar_month,
+    haversine_distance_m,
     is_office_ip,
     month_bounds,
-    planned_work_mode_for_date,
+    office_geofence,
 )
 
 
@@ -236,7 +238,18 @@ class AttendanceTeamAPIView(APIView):
         position_id = query.validated_data.get("position_id")
         status_filter = query.validated_data.get("status")
 
-        users_qs = attendance_table_queryset(request.user)
+        users_qs = User.objects.none()
+        if AccessPolicy.is_super_admin(request.user):
+            users_qs = User.objects.filter(is_active=True)
+        elif AccessPolicy.is_main_admin(request.user):
+            users_qs = User.objects.filter(is_active=True).exclude(role__name=Role.Name.SUPER_ADMIN)
+        elif AccessPolicy.is_admin(request.user):
+            users_qs = User.objects.filter(is_active=True)
+            if request.user.department_id:
+                users_qs = users_qs.filter(department_id=request.user.department_id)
+            users_qs = users_qs.exclude(role__name__in=[Role.Name.SUPER_ADMIN, Role.Name.ADMIN, Role.Name.DEPARTMENT_HEAD])
+        else:
+            users_qs = request.user.team_members.filter(is_active=True).exclude(role__name=Role.Name.SUPER_ADMIN)
 
         if user_id:
             users_qs = users_qs.filter(id=user_id)
@@ -252,76 +265,56 @@ class AttendanceTeamAPIView(APIView):
         return Response(AttendanceMarkSerializer(qs, many=True).data)
 
 
-class AttendanceDailyCheckInAPIView(APIView):
+class AttendanceOfficeCheckInAPIView(APIView):
     permission_classes = [IsAuthenticated]
-    authentication_classes = [SessionAuthentication, JWTAuthentication]
+    # JWT must be preferred for SPA requests with Authorization header.
+    # Session auth is kept as fallback for admin/tools.
+    authentication_classes = [JWTAuthentication, SessionAuthentication]
 
     def post(self, request):
-        role_name = getattr(getattr(request.user, "role", None), "name", "")
-        if role_name not in {"SUPER_ADMIN", "ADMINISTRATOR", "ADMIN", "DEPARTMENT_HEAD", "DEPARTMENTHEAD", "EMPLOYEE", "INTERN"}:
-            return Response(
-                {"detail": "Check-in is available only for trackable users."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
         serializer = OfficeCheckInSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        work_mode = serializer.validated_data["work_mode"]
-        today = date.today()
 
-        planned_mode = planned_work_mode_for_date(user=request.user, target_date=today)
-        # Demo-friendly fallback: allow check-in without approved weekly plan.
-        if planned_mode is None:
-            planned_mode = work_mode
-        if planned_mode == "day_off":
-            return Response(
-                {"detail": "Today is marked as day off in your approved schedule."},
-                status=status.HTTP_409_CONFLICT,
-            )
-        if planned_mode != work_mode:
-            return Response(
-                {"detail": f"Schedule mismatch: today is planned as '{planned_mode}'."},
-                status=status.HTTP_409_CONFLICT,
-            )
-
-        if AttendanceSession.objects.filter(user=request.user, checked_at__date=today).exists():
-            return Response(
-                {"detail": "Check-in already completed for today."},
-                status=status.HTTP_409_CONFLICT,
-            )
-
-        if work_mode == OfficeCheckInSerializer.WorkMode.ONLINE:
-            mark, created = AttendanceMark.objects.get_or_create(
-                user=request.user,
-                date=today,
-                defaults={
-                    "status": AttendanceMark.Status.REMOTE,
-                    "comment": "Online check-in",
-                    "created_by": request.user,
-                },
-            )
-            if not created and mark.status != AttendanceMark.Status.REMOTE:
-                mark.status = AttendanceMark.Status.REMOTE
-                mark.save(update_fields=["status", "updated_at"])
-
-            return Response(
-                {
-                    "status": "ONLINE",
-                    "in_office": False,
-                    "planned_mode": planned_mode,
-                    "attendance_mark_id": mark.id,
-                },
-                status=status.HTTP_201_CREATED,
-            )
-
+        geofence = office_geofence()
         client_ip = get_client_ip(request)
         ip_valid = is_office_ip(client_ip)
+        lat = serializer.validated_data.get("latitude")
+        lon = serializer.validated_data.get("longitude")
+        accuracy = serializer.validated_data.get("accuracy_m")
+
+        has_coordinates = lat is not None and lon is not None
+        if geofence is None:
+            if not ip_valid:
+                return Response(
+                    {"detail": "Office geofence is not configured."},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            # Allow office check-in by trusted office IP even when geofence is not configured.
+            office_lat, office_lon, radius_m = 0.0, 0.0, 0
+            distance_m = 0.0
+            in_office = True
+            session_lat = float(lat) if lat is not None else office_lat
+            session_lon = float(lon) if lon is not None else office_lon
+            has_coordinates = lat is not None and lon is not None
+        else:
+            office_lat, office_lon, radius_m = geofence
+            if has_coordinates:
+                distance_m = haversine_distance_m(lat, lon, office_lat, office_lon)
+                in_office = distance_m <= radius_m or ip_valid
+                session_lat = lat
+                session_lon = lon
+            else:
+                # Fallback for office Wi-Fi/IP verification when browser geolocation is denied.
+                distance_m = 0.0 if ip_valid else float(radius_m + 1)
+                in_office = ip_valid
+                session_lat = office_lat
+                session_lon = office_lon
 
         mark = None
-        if ip_valid:
+        if in_office:
             mark, _ = AttendanceMark.objects.get_or_create(
                 user=request.user,
-                date=today,
+                date=date.today(),
                 defaults={
                     "status": AttendanceMark.Status.PRESENT,
                     "comment": "Office check-in",
@@ -334,33 +327,32 @@ class AttendanceDailyCheckInAPIView(APIView):
 
         session = AttendanceSession.objects.create(
             user=request.user,
-            latitude=0,
-            longitude=0,
-            accuracy_m=None,
+            latitude=session_lat,
+            longitude=session_lon,
+            accuracy_m=accuracy,
             ip_address=client_ip,
-            distance_m=0,
-            office_latitude=0,
-            office_longitude=0,
-            radius_m=0,
+            distance_m=distance_m,
+            office_latitude=office_lat,
+            office_longitude=office_lon,
+            radius_m=radius_m,
             result=(
                 AttendanceSession.Result.IN_OFFICE
-                if ip_valid
+                if in_office
                 else AttendanceSession.Result.OUTSIDE_GEOFENCE
             ),
             attendance_mark=mark,
         )
 
-        if ip_valid:
+        if in_office:
             AttendanceAuditService.log_office_checkin_in_office(request, session)
         else:
             AttendanceAuditService.log_office_checkin_outside(request, session)
-            return Response({"detail": "Office check-in denied: IP is not in office networks."}, status=status.HTTP_403_FORBIDDEN)
 
         payload = AttendanceSessionSerializer(session).data
-        payload["status"] = "IN_OFFICE"
-        payload["in_office"] = True
+        payload["status"] = "IN_OFFICE" if in_office else "OUT_OF_OFFICE"
+        payload["in_office"] = in_office
         payload["ip_valid"] = ip_valid
-        payload["planned_mode"] = planned_mode
+        payload["geolocation_used"] = has_coordinates
         return Response(payload, status=status.HTTP_201_CREATED)
 
 
@@ -476,49 +468,3 @@ class WorkCalendarGenerateAPIView(APIView):
             },
             status=status.HTTP_200_OK,
         )
-
-
-class OfficeNetworkAdminAPIView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        if not AttendancePolicy.can_manage_office_networks(request.user):
-            raise PermissionDenied("Access denied.")
-        include_inactive = str(request.query_params.get("include_inactive", "0")).lower() in {"1", "true", "yes"}
-        qs = OfficeNetwork.objects.all().order_by("name", "id")
-        if not include_inactive:
-            qs = qs.filter(is_active=True)
-        return Response(OfficeNetworkSerializer(qs, many=True).data, status=status.HTTP_200_OK)
-
-    def post(self, request):
-        if not AttendancePolicy.can_manage_office_networks(request.user):
-            raise PermissionDenied("Access denied.")
-        serializer = OfficeNetworkSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        obj = serializer.save()
-        return Response(OfficeNetworkSerializer(obj).data, status=status.HTTP_201_CREATED)
-
-
-class OfficeNetworkAdminDetailAPIView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def patch(self, request, network_id: int):
-        if not AttendancePolicy.can_manage_office_networks(request.user):
-            raise PermissionDenied("Access denied.")
-        obj = OfficeNetwork.objects.filter(id=network_id).first()
-        if not obj:
-            return Response({"detail": "Office network not found."}, status=status.HTTP_404_NOT_FOUND)
-        serializer = OfficeNetworkSerializer(instance=obj, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
-        obj = serializer.save()
-        return Response(OfficeNetworkSerializer(obj).data, status=status.HTTP_200_OK)
-
-    def delete(self, request, network_id: int):
-        if not AttendancePolicy.can_manage_office_networks(request.user):
-            raise PermissionDenied("Access denied.")
-        obj = OfficeNetwork.objects.filter(id=network_id).first()
-        if not obj:
-            return Response({"detail": "Office network not found."}, status=status.HTTP_404_NOT_FOUND)
-        obj.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
-

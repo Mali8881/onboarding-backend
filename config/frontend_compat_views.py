@@ -1,10 +1,7 @@
 ﻿from __future__ import annotations
 
-import mimetypes
-
 from django.contrib.auth import authenticate
-from django.http import FileResponse
-from django.db import transaction
+from django.db import IntegrityError
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework import serializers, status
@@ -15,7 +12,15 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from accounts.access_policy import AccessPolicy
-from accounts.models import AuditLog, Department, Position, PromotionRequest, Role, User
+from accounts.models import (
+    AuditLog,
+    Department,
+    DepartmentSubdivision,
+    Position,
+    PromotionRequest,
+    Role,
+    User,
+)
 from accounts.serializers import PasswordChangeSerializer, UserProfileUpdateSerializer
 from content.models import Feedback, Instruction, News
 from content.serializers import (
@@ -23,49 +28,26 @@ from content.serializers import (
     NewsDetailSerializer,
     NewsListSerializer,
 )
+from onboarding_core.models import OnboardingDay, OnboardingProgress
 from onboarding_core.views import OnboardingOverviewView
-from regulations.models import (
-    Regulation,
-    RegulationAcknowledgement,
-    RegulationFeedback,
-    RegulationQuiz,
-    RegulationQuizAttempt,
-    RegulationQuizOption,
-    RegulationQuizQuestion,
-    RegulationReadProgress,
-    RegulationReadReport,
-)
+from regulations.models import Regulation, RegulationAcknowledgement
 from regulations.serializers import RegulationAdminSerializer, RegulationSerializer
 from reports.models import OnboardingReport
 from work_schedule.models import ProductionCalendar
 from work_schedule.views import MyScheduleAPIView, WorkScheduleListAPIView
-
-ROLE_SUPER_ADMIN = getattr(Role.Name, "SUPER_ADMIN", "SUPER_ADMIN")
-ROLE_ADMIN = getattr(Role.Name, "ADMIN", "ADMIN")
-ROLE_ADMINISTRATOR = getattr(Role.Name, "ADMINISTRATOR", "ADMINISTRATOR")
-ROLE_DEPARTMENT_HEAD = getattr(Role.Name, "DEPARTMENT_HEAD", None)
-ROLE_TEAMLEAD = getattr(Role.Name, "TEAMLEAD", "TEAMLEAD")
-ROLE_EMPLOYEE = getattr(Role.Name, "EMPLOYEE", "EMPLOYEE")
-ROLE_INTERN = getattr(Role.Name, "INTERN", "INTERN")
-
-PRIVILEGED_ROLE_NAMES = {ROLE_ADMIN, ROLE_SUPER_ADMIN, ROLE_ADMINISTRATOR}
-if ROLE_DEPARTMENT_HEAD:
-    PRIVILEGED_ROLE_NAMES.add(ROLE_DEPARTMENT_HEAD)
 
 
 def _role_to_front(role: Role | None) -> str:
     if not role:
         return ""
     mapping = {
-        ROLE_SUPER_ADMIN: "superadmin",
-        ROLE_ADMIN: "admin",
-        ROLE_ADMINISTRATOR: "administrator",
-        ROLE_TEAMLEAD: "projectmanager",
-        ROLE_EMPLOYEE: "employee",
-        ROLE_INTERN: "intern",
+        Role.Name.SUPER_ADMIN: "superadmin",
+        Role.Name.ADMIN: "admin",
+        Role.Name.DEPARTMENT_HEAD: "department_head",
+        Role.Name.TEAMLEAD: "projectmanager",
+        Role.Name.EMPLOYEE: "employee",
+        Role.Name.INTERN: "intern",
     }
-    if ROLE_DEPARTMENT_HEAD:
-        mapping[ROLE_DEPARTMENT_HEAD] = "department_head"
     return mapping.get(role.name, role.name.lower())
 
 
@@ -91,8 +73,8 @@ def _user_to_front_payload(user: User) -> dict:
         "role_label": role_label_map.get(role_front, role_front),
         "department": user.department_id,
         "department_name": user.department.name if user.department_id else "",
-        "subdivision": user.department_id,
-        "subdivision_name": user.department.name if user.department_id else "",
+        "subdivision": user.subdivision_id,
+        "subdivision_name": user.subdivision.name if user.subdivision_id else "",
         "position": user.position_id,
         "position_name": user.position.name if user.position_id else (user.custom_position or ""),
         "manager": user.manager_id,
@@ -110,48 +92,19 @@ def _user_to_front_payload(user: User) -> dict:
 
 
 def _ensure_admin_like(user: User):
-    if not (AccessPolicy.is_admin_like(user) or _is_department_scoped_admin(user)):
+    if not AccessPolicy.is_admin_like(user):
         raise PermissionDenied("Only department head/admin/super admin can perform this action.")
 
 
 def _ensure_content_manager(user: User):
-    if not AccessPolicy.is_admin_like(user):
+    if not (AccessPolicy.is_main_admin(user) or AccessPolicy.is_super_admin(user)):
         raise PermissionDenied("Only admin/super admin can manage content.")
-
-
-def _ensure_structure_editor(user: User):
-    if not (AccessPolicy.is_super_admin(user) or AccessPolicy.is_administrator(user)):
-        raise PermissionDenied("Only administrator/super admin can edit company structure.")
-
-
-def _role_name(user: User | None) -> str:
-    return str(getattr(getattr(user, "role", None), "name", "")).upper()
-
-
-def _is_department_scoped_admin(user: User | None) -> bool:
-    return _role_name(user) in {"DEPARTMENT_HEAD", "DEPARTMENTHEAD"}
 
 
 def _is_privileged_target(target: User) -> bool:
     if not getattr(target, "role_id", None):
         return False
-    return target.role.name in PRIVILEGED_ROLE_NAMES
-
-
-def _first_validation_error(errors) -> str:
-    if isinstance(errors, dict):
-        for value in errors.values():
-            if isinstance(value, (list, tuple)) and value:
-                return str(value[0])
-            if isinstance(value, dict):
-                nested = _first_validation_error(value)
-                if nested:
-                    return nested
-            if value:
-                return str(value)
-    elif isinstance(errors, (list, tuple)) and errors:
-        return str(errors[0])
-    return "Validation error."
+    return target.role.name in {Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN}
 
 
 def _resolve_role(value: str | None) -> Role | None:
@@ -159,18 +112,17 @@ def _resolve_role(value: str | None) -> Role | None:
         return None
     normalized = str(value).strip().upper()
     aliases = {
-        "PROJECTMANAGER": ROLE_TEAMLEAD,
-        "PROJECT_MANAGER": ROLE_TEAMLEAD,
-        "TEAMLEAD": ROLE_TEAMLEAD,
-        "TEAM_LEAD": ROLE_TEAMLEAD,
-        "DEPARTMENTHEAD": ROLE_DEPARTMENT_HEAD or ROLE_ADMIN,
-        "DEPARTMENT_HEAD": ROLE_DEPARTMENT_HEAD or ROLE_ADMIN,
-        "ADMIN": ROLE_ADMIN,
-        "ADMINISTRATOR": ROLE_ADMINISTRATOR,
-        "SUPERADMIN": ROLE_SUPER_ADMIN,
-        "SUPER_ADMIN": ROLE_SUPER_ADMIN,
-        "EMPLOYEE": ROLE_EMPLOYEE,
-        "INTERN": ROLE_INTERN,
+        "PROJECTMANAGER": Role.Name.TEAMLEAD,
+        "PROJECT_MANAGER": Role.Name.TEAMLEAD,
+        "TEAMLEAD": Role.Name.TEAMLEAD,
+        "TEAM_LEAD": Role.Name.TEAMLEAD,
+        "DEPARTMENTHEAD": Role.Name.DEPARTMENT_HEAD,
+        "DEPARTMENT_HEAD": Role.Name.DEPARTMENT_HEAD,
+        "ADMIN": Role.Name.ADMIN,
+        "SUPERADMIN": Role.Name.SUPER_ADMIN,
+        "SUPER_ADMIN": Role.Name.SUPER_ADMIN,
+        "EMPLOYEE": Role.Name.EMPLOYEE,
+        "INTERN": Role.Name.INTERN,
     }
     role_name = aliases.get(normalized)
     if not role_name:
@@ -246,7 +198,6 @@ class FrontendMePasswordAPIView(APIView):
 class FrontendUsersSerializer(serializers.ModelSerializer):
     role = serializers.CharField(required=False, allow_blank=True)
     password = serializers.CharField(required=False, allow_blank=False, write_only=True)
-    photo = serializers.ImageField(required=False, allow_null=True)
 
     class Meta:
         model = User
@@ -256,6 +207,7 @@ class FrontendUsersSerializer(serializers.ModelSerializer):
             "first_name",
             "last_name",
             "department",
+            "subdivision",
             "position",
             "manager",
             "custom_position",
@@ -264,7 +216,6 @@ class FrontendUsersSerializer(serializers.ModelSerializer):
             "is_active",
             "role",
             "password",
-            "photo",
         )
 
     def validate_role(self, value):
@@ -279,32 +230,14 @@ class FrontendUsersSerializer(serializers.ModelSerializer):
 class FrontendUsersCollectionAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
-    @staticmethod
-    def _inject_names_from_full_name(data):
-        payload = dict(data)
-        full_name = str(payload.get("full_name") or "").strip()
-        if full_name:
-            first_name = str(payload.get("first_name") or "").strip()
-            last_name = str(payload.get("last_name") or "").strip()
-            if not first_name or not last_name:
-                parts = full_name.split()
-                if parts:
-                    payload["first_name"] = parts[0]
-                    payload["last_name"] = " ".join(parts[1:]) if len(parts) > 1 else ""
-        return payload
-
     def get(self, request):
-        if not (AccessPolicy.is_admin_like(request.user) or AccessPolicy.is_teamlead(request.user)):
-            raise PermissionDenied("Only department head/admin/super admin/teamlead can perform this action.")
+        _ensure_admin_like(request.user)
         qs = User.objects.select_related("role", "department", "position", "manager").order_by("id")
-        if AccessPolicy.is_teamlead(request.user) and not AccessPolicy.is_admin_like(request.user):
-            # Teamlead can only see direct subordinates.
-            qs = qs.filter(manager_id=request.user.id)
-        if (_is_department_scoped_admin(request.user) or AccessPolicy.is_admin(request.user)) and not AccessPolicy.is_super_admin(request.user):
+        if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
             qs = qs.filter(
-                Q(role__name=ROLE_INTERN)
-                | Q(role__name=ROLE_EMPLOYEE, department_id=request.user.department_id)
-                | Q(role__name=ROLE_TEAMLEAD, department_id=request.user.department_id)
+                Q(role__name=Role.Name.INTERN)
+                | Q(role__name=Role.Name.EMPLOYEE, department_id=request.user.department_id)
+                | Q(role__name=Role.Name.TEAMLEAD, department_id=request.user.department_id)
             )
         search = (request.query_params.get("search") or "").strip()
         if search:
@@ -317,44 +250,47 @@ class FrontendUsersCollectionAPIView(APIView):
         return Response([_user_to_front_payload(item) for item in qs])
 
     def post(self, request):
-        _ensure_structure_editor(request.user)
-        incoming = self._inject_names_from_full_name(request.data)
-        serializer = FrontendUsersSerializer(data=incoming)
-        if not serializer.is_valid():
-            return Response(
-                {"detail": _first_validation_error(serializer.errors), "errors": serializer.errors},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        _ensure_admin_like(request.user)
+        serializer = FrontendUsersSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
         validated = dict(serializer.validated_data)
         password = validated.pop("password", None)
         role_name = validated.pop("role", None)
 
         user = User(**validated)
-        user.role = _resolve_role(role_name) or Role.objects.filter(name=ROLE_INTERN).first()
-        if (_is_department_scoped_admin(request.user) or AccessPolicy.is_admin(request.user)) and not AccessPolicy.is_super_admin(request.user):
+        user.role = _resolve_role(role_name) or Role.objects.filter(name=Role.Name.INTERN).first()
+        if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
             # Department head can create employees/teamleads only in own department.
             # Interns must be created without department.
-            if user.role and user.role.name in {ROLE_EMPLOYEE, ROLE_TEAMLEAD}:
+            if user.role and user.role.name in {Role.Name.EMPLOYEE, Role.Name.TEAMLEAD}:
                 if not request.user.department_id:
                     return Response({"detail": "Department head must belong to a department."}, status=400)
                 user.department_id = request.user.department_id
-            elif user.role and user.role.name == ROLE_INTERN:
+            elif user.role and user.role.name == Role.Name.INTERN:
                 user.department = None
 
-        if user.role and user.role.name == ROLE_TEAMLEAD and user.manager_id:
+        if user.role and user.role.name == Role.Name.TEAMLEAD and user.manager_id:
             return Response({"detail": "Teamlead cannot have a manager."}, status=400)
         if user.manager_id:
             manager = User.objects.select_related("role").filter(id=user.manager_id).first()
-            if not manager or manager.role.name != ROLE_TEAMLEAD:
+            if not manager or manager.role.name != Role.Name.TEAMLEAD:
                 return Response({"detail": "Manager must be a teamlead."}, status=400)
             if (
-                (_is_department_scoped_admin(request.user) or AccessPolicy.is_admin(request.user))
+                AccessPolicy.is_admin(request.user)
                 and request.user.department_id
                 and manager.department_id != request.user.department_id
             ):
                 return Response({"detail": "Department head can assign only teamleads from own department."}, status=403)
-        if (_is_department_scoped_admin(request.user) or AccessPolicy.is_admin(request.user)) and not AccessPolicy.is_super_admin(request.user):
-            if user.role and user.role.name in PRIVILEGED_ROLE_NAMES:
+        if user.subdivision_id:
+            subdivision = DepartmentSubdivision.objects.filter(id=user.subdivision_id, is_active=True).first()
+            if not subdivision:
+                return Response({"detail": "Subdivision not found."}, status=400)
+            if user.department_id and subdivision.department_id != user.department_id:
+                return Response({"detail": "Subdivision must belong to selected department."}, status=400)
+            if not user.department_id:
+                user.department_id = subdivision.department_id
+        if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
+            if user.role and user.role.name in {Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN}:
                 return Response({"detail": "Department head cannot create privileged users."}, status=403)
         if not user.role:
             return Response({"detail": "Default role INTERN not found. Run role seed first."}, status=400)
@@ -376,26 +312,22 @@ class FrontendUsersDetailAPIView(APIView):
         return user
 
     def patch(self, request, user_id: int):
-        _ensure_structure_editor(request.user)
+        _ensure_admin_like(request.user)
         target = self._get_user(user_id)
-        if (_is_department_scoped_admin(request.user) or AccessPolicy.is_admin(request.user)) and not AccessPolicy.is_super_admin(request.user):
+        if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
             if _is_privileged_target(target):
                 return Response({"detail": "Department head cannot edit privileged users."}, status=403)
         serializer = FrontendUsersSerializer(target, data=request.data, partial=True)
-        if not serializer.is_valid():
-            return Response(
-                {"detail": _first_validation_error(serializer.errors), "errors": serializer.errors},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        serializer.is_valid(raise_exception=True)
         validated = dict(serializer.validated_data)
         role_name = validated.pop("role", None)
         password = validated.pop("password", None)
         next_role = _resolve_role(role_name) if role_name else target.role
-        if role_name and (_is_department_scoped_admin(request.user) or AccessPolicy.is_admin(request.user)) and not AccessPolicy.is_super_admin(request.user):
-            if next_role and next_role.name in PRIVILEGED_ROLE_NAMES:
+        if role_name and AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
+            if next_role and next_role.name in {Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN}:
                 return Response({"detail": "Department head cannot assign privileged role."}, status=403)
 
-        if next_role and next_role.name == ROLE_TEAMLEAD:
+        if next_role and next_role.name == Role.Name.TEAMLEAD:
             if "manager" in validated and validated.get("manager"):
                 return Response({"detail": "Teamlead cannot have a manager."}, status=400)
             validated["manager"] = None
@@ -403,19 +335,29 @@ class FrontendUsersDetailAPIView(APIView):
             manager = validated.get("manager")
             if manager:
                 manager = User.objects.select_related("role").filter(id=manager.id).first()
-                if not manager or manager.role.name != ROLE_TEAMLEAD:
+                if not manager or manager.role.name != Role.Name.TEAMLEAD:
                     return Response({"detail": "Manager must be a teamlead."}, status=400)
                 if (
-                    (_is_department_scoped_admin(request.user) or AccessPolicy.is_admin(request.user))
+                    AccessPolicy.is_admin(request.user)
                     and request.user.department_id
                     and manager.department_id != request.user.department_id
                 ):
                     return Response({"detail": "Department head can assign only teamleads from own department."}, status=403)
+        next_department = validated.get("department", target.department)
+        next_subdivision = validated.get("subdivision", target.subdivision)
+        if next_subdivision:
+            subdivision = DepartmentSubdivision.objects.filter(id=next_subdivision.id, is_active=True).first()
+            if not subdivision:
+                return Response({"detail": "Subdivision not found."}, status=400)
+            if next_department and subdivision.department_id != next_department.id:
+                return Response({"detail": "Subdivision must belong to selected department."}, status=400)
+            if not next_department:
+                validated["department"] = subdivision.department
         for field, value in validated.items():
             setattr(target, field, value)
         if role_name:
             target.role = next_role
-            if next_role and next_role.name == ROLE_TEAMLEAD:
+            if next_role and next_role.name == Role.Name.TEAMLEAD:
                 target.manager = None
         if password:
             target.set_password(password)
@@ -423,9 +365,9 @@ class FrontendUsersDetailAPIView(APIView):
         return Response(_user_to_front_payload(target))
 
     def delete(self, request, user_id: int):
-        _ensure_structure_editor(request.user)
+        _ensure_admin_like(request.user)
         target = self._get_user(user_id)
-        if (_is_department_scoped_admin(request.user) or AccessPolicy.is_admin(request.user)) and not AccessPolicy.is_super_admin(request.user):
+        if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
             if _is_privileged_target(target):
                 return Response({"detail": "Department head cannot delete privileged users."}, status=403)
         target.delete()
@@ -436,11 +378,11 @@ class FrontendUsersToggleStatusAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, user_id: int):
-        _ensure_structure_editor(request.user)
+        _ensure_admin_like(request.user)
         target = User.objects.filter(id=user_id).first()
         if not target:
             raise NotFound("User not found.")
-        if (_is_department_scoped_admin(request.user) or AccessPolicy.is_admin(request.user)) and not AccessPolicy.is_super_admin(request.user):
+        if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
             if _is_privileged_target(target):
                 return Response({"detail": "Department head cannot change status of privileged users."}, status=403)
         target.is_active = not target.is_active
@@ -454,21 +396,21 @@ class FrontendUsersSetRoleAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, user_id: int):
-        _ensure_structure_editor(request.user)
+        _ensure_admin_like(request.user)
         target = User.objects.filter(id=user_id).first()
         if not target:
             raise NotFound("User not found.")
-        if (_is_department_scoped_admin(request.user) or AccessPolicy.is_admin(request.user)) and not AccessPolicy.is_super_admin(request.user):
+        if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
             if _is_privileged_target(target):
                 return Response({"detail": "Department head cannot change role of privileged users."}, status=403)
         role = _resolve_role(request.data.get("role"))
         if not role:
             return Response({"detail": "Invalid role."}, status=400)
-        if (_is_department_scoped_admin(request.user) or AccessPolicy.is_admin(request.user)) and not AccessPolicy.is_super_admin(request.user):
-            if role.name in PRIVILEGED_ROLE_NAMES:
+        if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
+            if role.name in {Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN}:
                 return Response({"detail": "Department head cannot assign privileged role."}, status=403)
         target.role = role
-        if role.name == ROLE_TEAMLEAD:
+        if role.name == Role.Name.TEAMLEAD:
             target.manager = None
             target.save(update_fields=["role", "manager"])
         else:
@@ -481,65 +423,38 @@ class FrontendDepartmentsAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        items_qs = Department.objects.select_related("parent")
-        if "subdivisions" in (request.path or ""):
-            items_qs = items_qs.filter(parent__isnull=False)
-        items = list(items_qs.order_by("name"))
-        children_counter = {}
-        for dep in items:
-            if dep.parent_id:
-                children_counter[dep.parent_id] = children_counter.get(dep.parent_id, 0) + 1
+        items = Department.objects.select_related("parent").order_by("name")
         return Response(
             [
                 {
                     "id": item.id,
                     "name": item.name,
-                    "comment": item.comment or "",
                     "parent": item.parent_id,
                     "is_active": item.is_active,
-                    "children_count": children_counter.get(item.id, 0),
                 }
                 for item in items
             ]
         )
 
     def post(self, request):
-        _ensure_structure_editor(request.user)
+        _ensure_admin_like(request.user)
         name = (request.data.get("name") or "").strip()
         if not name:
             return Response({"name": ["This field is required."]}, status=400)
-        if "subdivisions" in (request.path or "") and not request.data.get("parent"):
-            return Response({"parent": ["Subdivision must have a parent department."]}, status=400)
         parent_id = request.data.get("parent")
-        parent = None
-        if parent_id:
-            parent = Department.objects.filter(id=parent_id).first()
-            if not parent:
-                return Response({"parent": ["Parent department not found."]}, status=400)
         item = Department.objects.create(
             name=name,
-            comment=(request.data.get("comment") or "").strip(),
-            parent=parent,
+            parent_id=parent_id if parent_id else None,
             is_active=bool(request.data.get("is_active", True)),
         )
-        return Response(
-            {
-                "id": item.id,
-                "name": item.name,
-                "comment": item.comment or "",
-                "parent": item.parent_id,
-                "is_active": item.is_active,
-                "children_count": 0,
-            },
-            status=201,
-        )
+        return Response({"id": item.id, "name": item.name, "parent": item.parent_id, "is_active": item.is_active}, status=201)
 
 
 class FrontendDepartmentsDetailAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def patch(self, request, department_id: int):
-        _ensure_structure_editor(request.user)
+        _ensure_admin_like(request.user)
         item = Department.objects.filter(id=department_id).first()
         if not item:
             raise NotFound("Department not found.")
@@ -547,45 +462,34 @@ class FrontendDepartmentsDetailAPIView(APIView):
         if "name" in request.data:
             name = (request.data.get("name") or "").strip()
             if not name:
-                return Response({"name": ["This field is required."]}, status=400)
+                return Response({"name": ["This field may not be blank."]}, status=400)
             item.name = name
-
-        if "comment" in request.data:
-            item.comment = (request.data.get("comment") or "").strip()
-
-        if "is_active" in request.data:
-            item.is_active = bool(request.data.get("is_active"))
 
         if "parent" in request.data:
             parent_id = request.data.get("parent")
-            if not parent_id:
+            if parent_id in ("", None):
                 item.parent = None
             else:
                 parent = Department.objects.filter(id=parent_id).first()
                 if not parent:
-                    return Response({"parent": ["Parent department not found."]}, status=400)
+                    return Response({"parent": ["Parent department not found."]}, status=404)
                 if parent.id == item.id:
                     return Response({"parent": ["Department cannot be parent of itself."]}, status=400)
-                cursor = parent
-                while cursor is not None:
-                    if cursor.id == item.id:
-                        return Response({"parent": ["Department hierarchy cycle is not allowed."]}, status=400)
-                    cursor = cursor.parent
                 item.parent = parent
 
-        item.save()
-        return Response(
-            {
-                "id": item.id,
-                "name": item.name,
-                "comment": item.comment or "",
-                "parent": item.parent_id,
-                "is_active": item.is_active,
-            }
-        )
+        if "is_active" in request.data:
+            item.is_active = bool(request.data.get("is_active"))
+
+        try:
+            item.full_clean()
+            item.save()
+        except IntegrityError:
+            return Response({"name": ["Department with this name already exists."]}, status=400)
+
+        return Response({"id": item.id, "name": item.name, "parent": item.parent_id, "is_active": item.is_active})
 
     def delete(self, request, department_id: int):
-        _ensure_structure_editor(request.user)
+        _ensure_admin_like(request.user)
         item = Department.objects.filter(id=department_id).first()
         if not item:
             raise NotFound("Department not found.")
@@ -593,6 +497,45 @@ class FrontendDepartmentsDetailAPIView(APIView):
             return Response({"detail": "Department has users and cannot be deleted."}, status=400)
         item.delete()
         return Response(status=204)
+
+
+class FrontendDepartmentsTransferUsersAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, department_id: int):
+        _ensure_admin_like(request.user)
+        source = Department.objects.filter(id=department_id).first()
+        if not source:
+            raise NotFound("Department not found.")
+
+        target_department_id = request.data.get("target_department_id")
+        if not target_department_id:
+            return Response({"target_department_id": ["This field is required."]}, status=400)
+
+        target = Department.objects.filter(id=target_department_id, is_active=True).first()
+        if not target:
+            return Response({"target_department_id": ["Target department not found."]}, status=404)
+        if target.id == source.id:
+            return Response({"target_department_id": ["Target department must be different."]}, status=400)
+
+        users_qs = User.objects.filter(department_id=source.id)
+        moved_count = users_qs.count()
+        users_qs.update(department_id=target.id, subdivision=None)
+
+        delete_source = bool(request.data.get("delete_source", False))
+        deleted = False
+        if delete_source and not User.objects.filter(department_id=source.id).exists():
+            source.delete()
+            deleted = True
+
+        return Response(
+            {
+                "moved_count": moved_count,
+                "source_department_id": source.id,
+                "target_department_id": target.id,
+                "deleted_source": deleted,
+            }
+        )
 
 
 class FrontendPositionsAPIView(APIView):
@@ -603,7 +546,7 @@ class FrontendPositionsAPIView(APIView):
         return Response([{"id": item.id, "name": item.name, "is_active": item.is_active} for item in items])
 
     def post(self, request):
-        _ensure_structure_editor(request.user)
+        _ensure_admin_like(request.user)
         name = (request.data.get("name") or "").strip()
         if not name:
             return Response({"name": ["This field is required."]}, status=400)
@@ -615,7 +558,7 @@ class FrontendPositionsDetailAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def delete(self, request, position_id: int):
-        _ensure_structure_editor(request.user)
+        _ensure_admin_like(request.user)
         item = Position.objects.filter(id=position_id).first()
         if not item:
             raise NotFound("Position not found.")
@@ -623,9 +566,114 @@ class FrontendPositionsDetailAPIView(APIView):
         return Response(status=204)
 
 
+class FrontendSubdivisionsAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        items = DepartmentSubdivision.objects.select_related("department").order_by("department__name", "name")
+        department_id = request.query_params.get("department_id")
+        if department_id:
+            items = items.filter(department_id=department_id)
+        is_active = request.query_params.get("is_active")
+        if is_active is not None:
+            items = items.filter(is_active=str(is_active).lower() in {"1", "true", "yes"})
+        return Response(
+            [
+                {
+                    "id": item.id,
+                    "name": item.name,
+                    "department_id": item.department_id,
+                    "department_name": item.department.name,
+                    "is_active": item.is_active,
+                }
+                for item in items
+            ]
+        )
+
+    def post(self, request):
+        _ensure_admin_like(request.user)
+        name = (request.data.get("name") or "").strip()
+        if not name:
+            return Response({"name": ["This field is required."]}, status=400)
+        department_id = request.data.get("department_id")
+        if not department_id:
+            return Response({"department_id": ["This field is required."]}, status=400)
+
+        department = Department.objects.filter(id=department_id, is_active=True).first()
+        if not department:
+            return Response({"department_id": ["Department not found."]}, status=404)
+
+        item = DepartmentSubdivision.objects.create(
+            department=department,
+            name=name,
+            is_active=bool(request.data.get("is_active", True)),
+        )
+        return Response(
+            {
+                "id": item.id,
+                "name": item.name,
+                "department_id": item.department_id,
+                "department_name": item.department.name,
+                "is_active": item.is_active,
+            },
+            status=201,
+        )
+
+
+class FrontendSubdivisionsDetailAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, subdivision_id: int):
+        _ensure_admin_like(request.user)
+        item = DepartmentSubdivision.objects.select_related("department").filter(id=subdivision_id).first()
+        if not item:
+            raise NotFound("Subdivision not found.")
+
+        if "name" in request.data:
+            name = (request.data.get("name") or "").strip()
+            if not name:
+                return Response({"name": ["This field may not be blank."]}, status=400)
+            item.name = name
+
+        if "department_id" in request.data:
+            department_id = request.data.get("department_id")
+            department = Department.objects.filter(id=department_id, is_active=True).first()
+            if not department:
+                return Response({"department_id": ["Department not found."]}, status=404)
+            item.department = department
+
+        if "is_active" in request.data:
+            item.is_active = bool(request.data.get("is_active"))
+
+        try:
+            item.full_clean()
+            item.save()
+        except IntegrityError:
+            return Response({"name": ["Subdivision with this name already exists in this department."]}, status=400)
+
+        return Response(
+            {
+                "id": item.id,
+                "name": item.name,
+                "department_id": item.department_id,
+                "department_name": item.department.name,
+                "is_active": item.is_active,
+            }
+        )
+
+    def delete(self, request, subdivision_id: int):
+        _ensure_admin_like(request.user)
+        item = DepartmentSubdivision.objects.filter(id=subdivision_id).first()
+        if not item:
+            raise NotFound("Subdivision not found.")
+        if User.objects.filter(subdivision=item).exists():
+            return Response({"detail": "Subdivision has users and cannot be deleted."}, status=400)
+        item.delete()
+        return Response(status=204)
+
+
 class FrontendPromotionRequestsAPIView(APIView):
     permission_classes = [IsAuthenticated]
-    throttle_classes = []
 
     def get(self, request):
         _ensure_admin_like(request.user)
@@ -684,7 +732,6 @@ class FrontendPromotionRequestsAPIView(APIView):
 
 class FrontendPromotionRequestsActionAPIView(APIView):
     permission_classes = [IsAuthenticated]
-    throttle_classes = []
 
     def post(self, request, request_id: int, action: str):
         _ensure_admin_like(request.user)
@@ -698,8 +745,29 @@ class FrontendPromotionRequestsActionAPIView(APIView):
         comment = (request.data.get("comment") or request.data.get("reason") or "").strip()
         if action_value == "approve":
             item.status = PromotionRequest.Status.APPROVED
-            item.user.role = item.requested_role
-            item.user.save(update_fields=["role"])
+            target_user = item.user
+            target_user.role = item.requested_role
+            update_fields = ["role"]
+
+            # Keep intern-selected subdivision and align department to it on promotion.
+            if (
+                target_user.subdivision_id
+                and item.requested_role.name in {Role.Name.EMPLOYEE, Role.Name.TEAMLEAD}
+            ):
+                subdivision = DepartmentSubdivision.objects.select_related("department").filter(
+                    id=target_user.subdivision_id,
+                    is_active=True,
+                ).first()
+                if subdivision:
+                    if target_user.department_id != subdivision.department_id:
+                        target_user.department_id = subdivision.department_id
+                        update_fields.append("department")
+                else:
+                    # If subdivision became inactive/missing, clear it to keep data consistent.
+                    target_user.subdivision = None
+                    update_fields.append("subdivision")
+
+            target_user.save(update_fields=update_fields)
         elif action_value == "reject":
             item.status = PromotionRequest.Status.REJECTED
         else:
@@ -721,7 +789,6 @@ class FrontendPromotionRequestsActionAPIView(APIView):
 
 class FrontendNewsCollectionAPIView(APIView):
     permission_classes = [IsAuthenticated]
-    throttle_classes = []
 
     def get(self, request):
         language = request.query_params.get("language", "ru")
@@ -779,7 +846,7 @@ class FrontendAuditListAPIView(APIView):
     def get(self, request):
         _ensure_admin_like(request.user)
         qs = AuditLog.objects.select_related("user").order_by("-created_at")
-        if (_is_department_scoped_admin(request.user) or AccessPolicy.is_admin(request.user)) and not AccessPolicy.is_super_admin(request.user):
+        if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
             if request.user.department_id:
                 qs = qs.filter(user__department_id=request.user.department_id)
             else:
@@ -811,64 +878,19 @@ class FrontendRegulationsCollectionAPIView(APIView):
         regulation_type = request.query_params.get("type")
         if regulation_type in {Regulation.RegulationType.LINK, Regulation.RegulationType.FILE}:
             qs = qs.filter(type=regulation_type)
-        read_progress_map = {
-            progress.regulation_id: progress
-            for progress in RegulationReadProgress.objects.filter(
-                user=request.user,
-                regulation__in=qs,
-            )
-        }
-        today = timezone.localdate()
-        read_report_map = {
-            report.regulation_id: True
-            for report in RegulationReadReport.objects.filter(
-                user=request.user,
-                regulation__in=qs,
-                opened_on=today,
-            )
-        }
-        quiz_required_map = {
-            regulation_id: True
-            for regulation_id in RegulationQuiz.objects.filter(
-                regulation__in=qs,
-                is_active=True,
-            ).values_list("regulation_id", flat=True)
-        }
-        quiz_passed_map = {
-            attempt.quiz.regulation_id: True
-            for attempt in RegulationQuizAttempt.objects.filter(
-                user=request.user,
-                passed=True,
-                quiz__regulation__in=qs,
-                quiz__is_active=True,
-            ).select_related("quiz")
-        }
         ack_map = {
             ack.regulation_id: ack
             for ack in RegulationAcknowledgement.objects.filter(user=request.user, regulation__in=qs)
         }
-        serializer = RegulationSerializer(
-            qs,
-            many=True,
-            context={
-                "request": request,
-                "ack_map": ack_map,
-                "read_progress_map": read_progress_map,
-                "read_report_map": read_report_map,
-                "quiz_required_map": quiz_required_map,
-                "quiz_passed_map": quiz_passed_map,
-            },
-        )
-        return Response([_append_front_quiz_payload(item, reg, request=request) for item, reg in zip(serializer.data, qs)])
+        serializer = RegulationSerializer(qs, many=True, context={"request": request, "ack_map": ack_map})
+        return Response(serializer.data)
 
     def post(self, request):
         _ensure_content_manager(request.user)
-        serializer = RegulationAdminSerializer(data=request.data, context={"request": request})
+        serializer = RegulationAdminSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         instance = serializer.save()
-        _apply_front_quiz_patch(instance, request.data, partial=False)
-        output = RegulationAdminSerializer(instance, context={"request": request}).data
-        return Response(_append_front_quiz_payload(output, instance, request=request), status=201)
+        return Response(RegulationAdminSerializer(instance).data, status=201)
 
 
 class FrontendRegulationsDetailAPIView(APIView):
@@ -879,44 +901,18 @@ class FrontendRegulationsDetailAPIView(APIView):
         if not item:
             raise NotFound("Regulation not found.")
         ack = RegulationAcknowledgement.objects.filter(user=request.user, regulation=item).first()
-        progress = RegulationReadProgress.objects.filter(user=request.user, regulation=item).first()
-        today = timezone.localdate()
-        has_report = RegulationReadReport.objects.filter(
-            user=request.user,
-            regulation=item,
-            opened_on=today,
-        ).exists()
-        quiz_required = RegulationQuiz.objects.filter(regulation=item, is_active=True).exists()
-        quiz_passed = RegulationQuizAttempt.objects.filter(
-            user=request.user,
-            quiz__regulation=item,
-            quiz__is_active=True,
-            passed=True,
-        ).exists()
-        serializer = RegulationSerializer(
-            item,
-            context={
-                "request": request,
-                "ack_map": {item.id: ack} if ack else {},
-                "read_progress_map": {item.id: progress} if progress else {},
-                "read_report_map": {item.id: has_report},
-                "quiz_required_map": {item.id: quiz_required},
-                "quiz_passed_map": {item.id: quiz_passed},
-            },
-        )
-        return Response(_append_front_quiz_payload(serializer.data, item, request=request))
+        serializer = RegulationSerializer(item, context={"request": request, "ack_map": {item.id: ack} if ack else {}})
+        return Response(serializer.data)
 
     def patch(self, request, regulation_id):
         _ensure_content_manager(request.user)
         item = Regulation.objects.filter(id=regulation_id).first()
         if not item:
             raise NotFound("Regulation not found.")
-        serializer = RegulationAdminSerializer(item, data=request.data, partial=True, context={"request": request})
+        serializer = RegulationAdminSerializer(item, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
-        _apply_front_quiz_patch(item, request.data, partial=True)
-        output = RegulationAdminSerializer(item, context={"request": request}).data
-        return Response(_append_front_quiz_payload(output, item, request=request))
+        return Response(serializer.data)
 
     def delete(self, request, regulation_id):
         _ensure_content_manager(request.user)
@@ -925,343 +921,6 @@ class FrontendRegulationsDetailAPIView(APIView):
             raise NotFound("Regulation not found.")
         item.delete()
         return Response(status=204)
-
-
-def _normalize_bool(value):
-    if isinstance(value, bool):
-        return value
-    return str(value).strip().lower() in {"1", "true", "yes", "y", "on", "да"}
-
-
-def _current_quiz_payload(regulation: Regulation):
-    quiz = (
-        RegulationQuiz.objects.filter(regulation=regulation, is_active=True)
-        .prefetch_related("questions__options")
-        .first()
-    )
-    if not quiz:
-        return {
-            "quiz_required": False,
-            "quiz_question": regulation.quiz_question or "",
-            "quiz_options": [],
-            "quiz_expected_answer": regulation.quiz_expected_answer or "",
-        }
-    question = quiz.questions.order_by("position", "id").first()
-    options = list(question.options.order_by("position", "id")) if question else []
-    expected = next((opt.text for opt in options if opt.is_correct), regulation.quiz_expected_answer or "")
-    return {
-        "quiz_required": True,
-        "quiz_question": question.text if question else (regulation.quiz_question or ""),
-        "quiz_options": [opt.text for opt in options],
-        "quiz_expected_answer": expected or "",
-    }
-
-
-def _regulation_open_url(request, regulation: Regulation) -> str:
-    if regulation.type != Regulation.RegulationType.FILE or not regulation.file:
-        return ""
-    return request.build_absolute_uri(f"/api/v1/content/regulations/{regulation.id}/open/")
-
-
-def _append_front_quiz_payload(data, regulation: Regulation, request=None):
-    payload = dict(data)
-    payload.update(_current_quiz_payload(regulation))
-    if request and regulation.type == Regulation.RegulationType.FILE and regulation.file:
-        open_url = _regulation_open_url(request, regulation)
-        payload["file_url"] = open_url
-        payload["content"] = open_url
-    return payload
-
-
-def _validate_quiz_fields(quiz_question, quiz_options, quiz_expected_answer):
-    if not quiz_question:
-        raise serializers.ValidationError({"quiz_question": ["This field is required when quiz is enabled."]})
-    if not isinstance(quiz_options, list):
-        raise serializers.ValidationError({"quiz_options": ["Must be an array of strings."]})
-    normalized_options = [str(item).strip() for item in quiz_options if str(item).strip()]
-    if len(normalized_options) < 2:
-        raise serializers.ValidationError({"quiz_options": ["Provide at least 2 answer options."]})
-    if not quiz_expected_answer:
-        raise serializers.ValidationError({"quiz_expected_answer": ["This field is required when quiz is enabled."]})
-    if quiz_expected_answer not in normalized_options:
-        raise serializers.ValidationError(
-            {"quiz_expected_answer": ["Must exactly match one of quiz_options."]}
-        )
-    return normalized_options
-
-
-def _apply_front_quiz_patch(regulation: Regulation, data, partial: bool):
-    has_quiz_payload = any(
-        field in data for field in ("quiz_required", "quiz_question", "quiz_options", "quiz_expected_answer")
-    )
-    if not has_quiz_payload:
-        return
-
-    current = _current_quiz_payload(regulation)
-    if "quiz_required" in data:
-        quiz_required = _normalize_bool(data.get("quiz_required"))
-    elif partial:
-        quiz_required = bool(current["quiz_required"])
-    else:
-        quiz_required = False
-
-    if not quiz_required:
-        RegulationQuiz.objects.filter(regulation=regulation).update(is_active=False)
-        regulation.quiz_question = ""
-        regulation.quiz_expected_answer = ""
-        regulation.save(update_fields=["quiz_question", "quiz_expected_answer", "updated_at"])
-        return
-
-    quiz_question = str(data.get("quiz_question", current.get("quiz_question") or "")).strip()
-    quiz_options = data.get("quiz_options", current.get("quiz_options") or [])
-    quiz_expected_answer = str(
-        data.get("quiz_expected_answer", current.get("quiz_expected_answer") or "")
-    ).strip()
-    quiz_options = _validate_quiz_fields(quiz_question, quiz_options, quiz_expected_answer)
-
-    with transaction.atomic():
-        regulation.quiz_question = quiz_question
-        regulation.quiz_expected_answer = quiz_expected_answer
-        regulation.save(update_fields=["quiz_question", "quiz_expected_answer", "updated_at"])
-
-        quiz, _ = RegulationQuiz.objects.get_or_create(
-            regulation=regulation,
-            defaults={
-                "title": f"Мини-тест: {regulation.title}",
-                "description": "",
-                "passing_score": 100,
-                "is_active": True,
-            },
-        )
-        quiz.is_active = True
-        if not quiz.title:
-            quiz.title = f"Мини-тест: {regulation.title}"
-        if not quiz.passing_score:
-            quiz.passing_score = 100
-        quiz.save(update_fields=["title", "is_active", "passing_score", "updated_at"])
-
-        quiz.questions.all().delete()
-        question = RegulationQuizQuestion.objects.create(
-            quiz=quiz,
-            text=quiz_question,
-            position=1,
-        )
-        for idx, option_text in enumerate(quiz_options, start=1):
-            RegulationQuizOption.objects.create(
-                question=question,
-                text=option_text,
-                is_correct=(option_text == quiz_expected_answer),
-                position=idx,
-            )
-
-
-class FrontendRegulationsActionAPIView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request, regulation_id, action):
-        regulation = Regulation.objects.filter(id=regulation_id, is_active=True).first()
-        if not regulation:
-            raise NotFound("Regulation not found.")
-        normalized_action = str(action or "").strip().lower()
-        if normalized_action in {"open", "file"}:
-            if regulation.type != Regulation.RegulationType.FILE or not regulation.file:
-                return Response({"detail": "File is not configured for this regulation."}, status=404)
-            content_type, _ = mimetypes.guess_type(regulation.file.name)
-            response = FileResponse(
-                regulation.file.open("rb"),
-                content_type=content_type or "application/octet-stream",
-            )
-            response["Content-Disposition"] = f'inline; filename="{regulation.file.name.split("/")[-1]}"'
-            return response
-        if normalized_action not in {"quiz", "test"}:
-            raise NotFound("Unknown action.")
-
-        quiz = (
-            RegulationQuiz.objects.filter(regulation=regulation, is_active=True)
-            .prefetch_related("questions__options")
-            .first()
-        )
-        if not quiz:
-            if not (regulation.quiz_question and regulation.quiz_expected_answer):
-                return Response({"detail": "Quiz is not configured for this regulation."}, status=404)
-            options = []
-            if regulation.quiz_expected_answer:
-                options.append(regulation.quiz_expected_answer)
-            return Response(
-                {
-                    "regulation_id": str(regulation.id),
-                    "quiz_required": True,
-                    "question": regulation.quiz_question,
-                    "options": options,
-                }
-            )
-
-        question = quiz.questions.order_by("position", "id").first()
-        if not question:
-            return Response({"detail": "Quiz has no questions."}, status=404)
-        options = [opt.text for opt in question.options.order_by("position", "id")]
-        return Response(
-            {
-                "regulation_id": str(regulation.id),
-                "quiz_required": True,
-                "question": question.text,
-                "options": options,
-            }
-        )
-
-    def post(self, request, regulation_id, action):
-        regulation = Regulation.objects.filter(id=regulation_id, is_active=True).first()
-        if not regulation:
-            raise NotFound("Regulation not found.")
-        normalized_action = str(action or "").strip().lower()
-        if normalized_action in {"acknowledge", "mark-read"}:
-            full_name = f"{request.user.first_name} {request.user.last_name}".strip() or request.user.username
-            RegulationAcknowledgement.objects.get_or_create(
-                user=request.user,
-                regulation=regulation,
-                defaults={
-                    "user_full_name": full_name,
-                    "regulation_title": regulation.title,
-                },
-            )
-            progress, _ = RegulationReadProgress.objects.get_or_create(
-                user=request.user,
-                regulation=regulation,
-            )
-            if not progress.is_read:
-                progress.is_read = True
-                progress.read_at = timezone.now()
-                progress.save(update_fields=["is_read", "read_at"])
-            quiz_required = RegulationQuiz.objects.filter(regulation=regulation, is_active=True).exists()
-            quiz_passed = RegulationQuizAttempt.objects.filter(
-                user=request.user,
-                quiz__regulation=regulation,
-                quiz__is_active=True,
-                passed=True,
-            ).exists()
-            needs_quiz = AccessPolicy.is_intern(request.user) and quiz_required and not quiz_passed
-            return Response({"status": "ok", "is_acknowledged": True, "needs_quiz": needs_quiz})
-
-        if normalized_action == "feedback":
-            text = (
-                request.data.get("text")
-                or request.data.get("message")
-                or request.data.get("feedback")
-                or ""
-            ).strip()
-            if not text:
-                return Response({"text": ["This field is required."]}, status=400)
-            feedback = RegulationFeedback.objects.create(
-                user=request.user,
-                regulation=regulation,
-                text=text,
-            )
-            return Response({"id": feedback.id, "created_at": feedback.created_at}, status=201)
-
-        if normalized_action in {"read-report", "report"}:
-            text = (
-                request.data.get("report_text")
-                or request.data.get("report")
-                or request.data.get("text")
-                or request.data.get("message")
-                or ""
-            ).strip()
-            if not text:
-                return Response({"report_text": ["This field is required."]}, status=400)
-            progress = RegulationReadProgress.objects.filter(
-                user=request.user,
-                regulation=regulation,
-                is_read=True,
-            ).first()
-            if not progress or not progress.read_at:
-                return Response({"detail": "Read/open regulation first before submitting report."}, status=400)
-            opened_on = progress.read_at.date()
-            today = timezone.localdate()
-            report, created = RegulationReadReport.objects.get_or_create(
-                user=request.user,
-                regulation=regulation,
-                opened_on=opened_on,
-                defaults={
-                    "report_text": text,
-                    "submitted_at": timezone.now(),
-                    "is_late": today > opened_on,
-                },
-            )
-            if not created:
-                report.report_text = text
-                report.submitted_at = timezone.now()
-                report.is_late = today > opened_on
-                report.save(update_fields=["report_text", "submitted_at", "is_late"])
-            return Response(
-                {
-                    "id": report.id,
-                    "opened_on": report.opened_on,
-                    "is_late": report.is_late,
-                    "submitted_at": report.submitted_at,
-                },
-                status=201 if created else 200,
-            )
-
-        if normalized_action in {"quiz", "test"}:
-            answer = str(request.data.get("answer") or request.data.get("user_answer") or "").strip()
-            if not answer:
-                return Response({"answer": ["This field is required."]}, status=400)
-
-            quiz = (
-                RegulationQuiz.objects.filter(regulation=regulation, is_active=True)
-                .prefetch_related("questions__options")
-                .first()
-            )
-            expected_answer = ""
-            passing_score = 100
-            if quiz:
-                question = quiz.questions.order_by("position", "id").first()
-                if question:
-                    correct_option = question.options.filter(is_correct=True).order_by("position", "id").first()
-                    if correct_option:
-                        expected_answer = correct_option.text
-                passing_score = int(quiz.passing_score or 100)
-            if not expected_answer:
-                expected_answer = regulation.quiz_expected_answer or ""
-            if not expected_answer:
-                return Response({"detail": "Quiz is not configured for this regulation."}, status=404)
-
-            progress, _ = RegulationReadProgress.objects.get_or_create(
-                user=request.user,
-                regulation=regulation,
-            )
-            if not progress.is_read:
-                progress.is_read = True
-                progress.read_at = timezone.now()
-                progress.save(update_fields=["is_read", "read_at"])
-
-            passed = answer.casefold() == expected_answer.strip().casefold()
-            score_percent = 100 if passed else 0
-            result_payload = {
-                "score_percent": score_percent,
-                "passed": passed,
-                "submitted_at": timezone.now(),
-            }
-            if quiz:
-                attempt = RegulationQuizAttempt.objects.create(
-                    user=request.user,
-                    quiz=quiz,
-                    score_percent=score_percent,
-                    passed=passed,
-                )
-                result_payload["submitted_at"] = attempt.submitted_at
-
-            return Response(
-                {
-                    "result": result_payload,
-                    "passing_score": passing_score,
-                    "correct_answers": 1 if passed else 0,
-                    "questions_total": 1,
-                },
-                status=201,
-            )
-
-        raise NotFound("Unknown action.")
 
 
 class FrontendInstructionsAPIView(APIView):
@@ -1362,7 +1021,7 @@ class FrontendOnboardingReportsAPIView(APIView):
 
     def get(self, request):
         qs = OnboardingReport.objects.select_related("day", "user").order_by("-updated_at", "day__day_number")
-        if (_is_department_scoped_admin(request.user) or AccessPolicy.is_admin(request.user)) and not AccessPolicy.is_super_admin(request.user):
+        if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
             if request.user.department_id:
                 qs = qs.filter(user__department_id=request.user.department_id)
         elif not AccessPolicy.is_admin_like(request.user):
@@ -1379,6 +1038,9 @@ class FrontendOnboardingReportsAPIView(APIView):
                     "did": item.did,
                     "will_do": item.will_do,
                     "problems": item.problems,
+                    "report_title": item.report_title,
+                    "report_description": item.report_description,
+                    "github_url": item.github_url,
                     "status": item.status,
                     "reviewer_comment": item.reviewer_comment,
                     "updated_at": item.updated_at,
@@ -1396,14 +1058,41 @@ class FrontendOnboardingReportsAPIView(APIView):
         did = (request.data.get("did") or "").strip()
         will_do = (request.data.get("will_do") or "").strip()
         problems = (request.data.get("problems") or "").strip()
+        report_title = (request.data.get("report_title") or "").strip()
+        report_description = (request.data.get("report_description") or "").strip()
+        github_url = (request.data.get("github_url") or "").strip()
+        day = OnboardingDay.objects.filter(id=day_id, is_active=True).first()
+        if not day:
+            return Response({"detail": "Day not found."}, status=404)
+        if day.day_number == 2:
+            if github_url and "github.com" not in github_url.lower():
+                return Response({"github_url": ["Use GitHub URL."]}, status=400)
+            did = did or report_title
+            will_do = will_do or report_description
         report, _ = OnboardingReport.objects.update_or_create(
             user=request.user,
             day_id=day_id,
-            defaults={"did": did, "will_do": will_do, "problems": problems},
+            defaults={
+                "did": did,
+                "will_do": will_do,
+                "problems": problems,
+                "report_title": report_title,
+                "report_description": report_description,
+                "github_url": github_url,
+            },
         )
-        if did and will_do:
+        if report.can_be_sent():
             report.status = OnboardingReport.Status.SENT
             report.save(update_fields=["status", "updated_at"])
+            if day.day_number == 2:
+                OnboardingProgress.objects.update_or_create(
+                    user=request.user,
+                    day=day,
+                    defaults={
+                        "status": OnboardingProgress.Status.DONE,
+                        "completed_at": timezone.now(),
+                    },
+                )
         return Response({"id": str(report.id), "status": report.status}, status=201)
 
 
@@ -1416,10 +1105,34 @@ class FrontendOnboardingReportDetailAPIView(APIView):
             raise NotFound("Report not found.")
         if not report.can_be_modified():
             return Response({"detail": "Report cannot be modified"}, status=409)
-        for field in ("did", "will_do", "problems"):
+        for field in ("did", "will_do", "problems", "report_title", "report_description", "github_url"):
             if field in request.data:
                 setattr(report, field, request.data.get(field) or "")
-        report.save(update_fields=["did", "will_do", "problems", "updated_at"])
+        if report.github_url and "github.com" not in report.github_url.lower():
+            return Response({"github_url": ["Use GitHub URL."]}, status=400)
+        report.save(
+            update_fields=[
+                "did",
+                "will_do",
+                "problems",
+                "report_title",
+                "report_description",
+                "github_url",
+                "updated_at",
+            ]
+        )
+        if report.can_be_sent():
+            report.status = OnboardingReport.Status.SENT
+            report.save(update_fields=["status", "updated_at"])
+            if report.day.day_number == 2:
+                OnboardingProgress.objects.update_or_create(
+                    user=request.user,
+                    day=report.day,
+                    defaults={
+                        "status": OnboardingProgress.Status.DONE,
+                        "completed_at": timezone.now(),
+                    },
+                )
         return Response({"id": str(report.id), "status": report.status})
 
 
@@ -1431,7 +1144,7 @@ class FrontendOnboardingReportReviewAPIView(APIView):
         report = OnboardingReport.objects.filter(id=report_id).first()
         if not report:
             raise NotFound("Report not found.")
-        if (_is_department_scoped_admin(request.user) or AccessPolicy.is_admin(request.user)) and not AccessPolicy.is_super_admin(request.user):
+        if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
             if request.user.department_id and report.user.department_id != request.user.department_id:
                 raise PermissionDenied("Access denied for this department.")
         status_value = request.data.get("status")
@@ -1463,7 +1176,6 @@ class FrontendSchedulesHolidaysAPIView(APIView):
 
 class FrontendFeedbackTicketsAPIView(APIView):
     permission_classes = [IsAuthenticated]
-    throttle_classes = []
 
     @staticmethod
     def _to_bool(value, default=True):
@@ -1530,7 +1242,6 @@ class FrontendFeedbackReplyAPIView(APIView):
         item.is_read = True
         item.save(update_fields=["status", "is_read"])
         return Response({"id": item.id, "status": item.status})
-
 
 
 

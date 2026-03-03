@@ -41,33 +41,72 @@ export default function Onboarding() {
   const [reports, setReports] = useState([]);
   const [activeDayId, setActiveDayId] = useState('');
   const [dayDetails, setDayDetails] = useState({});
-  const [reportData, setReportData] = useState({ did: '', will_do: '', problems: '' });
+  const [reportData, setReportData] = useState({
+    did: '',
+    will_do: '',
+    problems: '',
+    report_title: '',
+    report_description: '',
+    github_url: '',
+  });
   const [feedbackDrafts, setFeedbackDrafts] = useState({});
   const [quizDrafts, setQuizDrafts] = useState({});
   const [stepView, setStepView] = useState({});
   const [activeRegIndex, setActiveRegIndex] = useState(0);
   const [selectedRegulation, setSelectedRegulation] = useState(null);
+  const [internRoleState, setInternRoleState] = useState(null);
+  const [pendingRoleId, setPendingRoleId] = useState(null);
   const [busyMap, setBusyMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [roleSubmitting, setRoleSubmitting] = useState(false);
   const [error, setError] = useState('');
 
   const activeDay = useMemo(() => days.find((d) => String(d.id) === String(activeDayId)) || null, [days, activeDayId]);
+  const dayStatusById = useMemo(() => {
+    const map = {};
+    (overview?.days || []).forEach((item) => {
+      map[String(item.day_id)] = item.status;
+    });
+    return map;
+  }, [overview]);
   const activeDetail = activeDay ? dayDetails[String(activeDay.id)] : null;
+  const activeDayStatus = activeDay ? String(dayStatusById[String(activeDay.id)] || '').toUpperCase() : '';
   const activeReport = activeDay ? findReportByDay(reports, activeDay.id) : null;
   const tasks = activeDetail?.tasks || [];
   const regulations = activeDetail?.regulations || [];
   const reportStatus = normStatus(activeReport?.status);
   const firstTask = tasks[0] || null;
   const isDayOne = Number(activeDay?.day_number) === 1;
+  const isDayTwo = Number(activeDay?.day_number) === 2;
+  const selectedInternRoleId = internRoleState?.selected_subdivision_id || null;
+  const dayOneCompleted = !!internRoleState?.day_one_completed;
+  const isActiveDayDone = activeDayStatus === 'DONE';
+  const isDayOneDone = isDayOne && (dayOneCompleted || isActiveDayDone);
+  const availableRoles = internRoleState?.available_subdivisions || [];
   const completedRegCount = regulations.filter((item) => item.is_read && item.has_feedback && item.has_passed_quiz).length;
   const activeRegulation = regulations[activeRegIndex] || null;
+  const allRegulationsCompleted = regulations.length > 0 && completedRegCount === regulations.length;
+  const mandatoryForSignature = regulations.filter((item) => item.is_mandatory_on_day_one);
+  const signatureTargets = mandatoryForSignature.length > 0 ? mandatoryForSignature : regulations;
+  const isSigned = signatureTargets.length > 0 && signatureTargets.every((item) => item.is_acknowledged);
+  const mustSignBeforeComplete = isDayOne && allRegulationsCompleted && !isSigned;
+  const canCompleteDayTwo =
+    isDayTwo &&
+    !!selectedInternRoleId &&
+    (reportStatus === 'sent' || reportStatus === 'accepted');
 
   const loadDayDetail = async (dayId, force = false) => {
     if (!dayId || (!force && dayDetails[String(dayId)])) return;
     const res = await onboardingAPI.getDay(dayId);
     const detail = res.data || {};
     setDayDetails((prev) => ({ ...prev, [String(dayId)]: detail }));
+  };
+
+  const extractSpecUrl = (text) => {
+    const raw = String(text || '');
+    const m = raw.match(/https?:\/\/[^\s]+/i);
+    return m ? m[0] : '';
   };
 
   const load = async () => {
@@ -84,13 +123,30 @@ export default function Onboarding() {
       setDays(nextDays);
       setOverview(myRes.data || null);
       setReports(nextReports);
+      try {
+        const roleRes = await onboardingAPI.getInternRole();
+        setInternRoleState(roleRes.data || null);
+      } catch {
+        setInternRoleState(null);
+      }
 
       if (nextDays.length > 0) {
         const dayNumberParam = Number(new URLSearchParams(location.search).get('day') || 0);
         const preferredByParam = dayNumberParam
           ? nextDays.find((d) => Number(d.day_number) === dayNumberParam)?.id
           : null;
-        const current = preferredByParam || myRes.data?.current_day?.id || nextDays[0].id;
+        const statusById = {};
+        (myRes.data?.days || []).forEach((item) => {
+          statusById[String(item.day_id)] = item.status;
+        });
+        const preferredIsLocked =
+          preferredByParam && statusById[String(preferredByParam)] === 'LOCKED';
+        const firstUnlocked = nextDays.find((d) => statusById[String(d.id)] !== 'LOCKED')?.id;
+        const current =
+          (!preferredIsLocked && preferredByParam) ||
+          myRes.data?.current_day?.id ||
+          firstUnlocked ||
+          nextDays[0].id;
         setActiveDayId(String(current));
       }
     } catch (e) {
@@ -131,6 +187,9 @@ export default function Onboarding() {
       did: report?.did || '',
       will_do: report?.will_do || '',
       problems: report?.problems || '',
+      report_title: report?.report_title || '',
+      report_description: report?.report_description || '',
+      github_url: report?.github_url || '',
     });
   }, [activeDay, reports]);
 
@@ -153,9 +212,51 @@ export default function Onboarding() {
     }
   };
 
+  const acknowledgeRegulations = async () => {
+    if (!activeDay || !signatureTargets.length) return;
+    markBusy('acknowledge-day1', true);
+    setError('');
+    try {
+      const pending = signatureTargets.filter((item) => !item.is_acknowledged);
+      await Promise.all(pending.map((item) => regulationsAPI.acknowledge(item.id)));
+      await loadDayDetail(activeDay.id, true);
+    } catch (e) {
+      setError(e.response?.data?.detail || 'Не удалось подтвердить подпись регламентов.');
+    } finally {
+      markBusy('acknowledge-day1', false);
+    }
+  };
+
+  const chooseInternRole = async (subdivisionId) => {
+    if (!subdivisionId) return;
+    setRoleSubmitting(true);
+    setError('');
+    try {
+      await onboardingAPI.setInternRole(subdivisionId);
+      const roleRes = await onboardingAPI.getInternRole();
+      setInternRoleState(roleRes.data || null);
+      if (activeDayId) {
+        await loadDayDetail(activeDayId, true);
+      }
+    } catch (e) {
+      setError(e.response?.data?.detail || 'Не удалось выбрать роль.');
+    } finally {
+      setRoleSubmitting(false);
+    }
+  };
+
   const submitReport = async () => {
     if (!activeDay) return;
-    if (!reportData.did.trim() || !reportData.will_do.trim()) {
+    if (isDayTwo) {
+      if (!reportData.report_title.trim() || !reportData.report_description.trim() || !reportData.github_url.trim()) {
+        setError('Для 2-го дня заполните название, описание и ссылку на GitHub.');
+        return;
+      }
+      if (!reportData.github_url.includes('github.com')) {
+        setError('Ссылка должна вести на GitHub.');
+        return;
+      }
+    } else if (!reportData.did.trim() || !reportData.will_do.trim()) {
       setError('Заполните поля "Что сделал" и "Что буду делать".');
       return;
     }
@@ -171,6 +272,8 @@ export default function Onboarding() {
       }
       const reportsRes = await onboardingAPI.getReports();
       setReports(Array.isArray(reportsRes.data) ? reportsRes.data : []);
+      const myRes = await onboardingAPI.getMy();
+      setOverview(myRes.data || null);
     } catch (e) {
       setError(e.response?.data?.detail || 'Не удалось отправить отчет.');
     } finally {
@@ -291,28 +394,43 @@ export default function Onboarding() {
         <>
           <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
             {days.map((day) => {
-              const done = overview?.days?.find((d) => String(d.day_id) === String(day.id))?.status === 'DONE';
+              const status = dayStatusById[String(day.id)] || 'IN_PROGRESS';
+              const done = status === 'DONE';
+              const locked = status === 'LOCKED';
               return (
                 <button
                   key={day.id}
-                  onClick={() => setActiveDayId(String(day.id))}
+                  onClick={() => {
+                    if (!locked) setActiveDayId(String(day.id));
+                  }}
+                  disabled={locked}
                   style={{
                     padding: '8px 18px',
                     borderRadius: 'var(--radius)',
                     border: '1px solid',
                     borderColor: String(activeDayId) === String(day.id) ? 'var(--primary)' : 'var(--gray-200)',
-                    background: String(activeDayId) === String(day.id) ? 'var(--primary-light)' : 'white',
-                    color: String(activeDayId) === String(day.id) ? 'var(--primary)' : 'var(--gray-700)',
+                    background: locked
+                      ? 'var(--gray-100)'
+                      : String(activeDayId) === String(day.id)
+                        ? 'var(--primary-light)'
+                        : 'white',
+                    color: locked
+                      ? 'var(--gray-400)'
+                      : String(activeDayId) === String(day.id)
+                        ? 'var(--primary)'
+                        : 'var(--gray-700)',
                     fontWeight: 600,
                     fontSize: 13,
-                    cursor: 'pointer',
+                    cursor: locked ? 'not-allowed' : 'pointer',
                     display: 'flex',
                     alignItems: 'center',
                     gap: 8,
+                    opacity: locked ? 0.8 : 1,
                   }}
                 >
                   День {day.day_number}
                   {done && <CheckCircle size={13} color="#16A34A" />}
+                  {locked && <span style={{ fontSize: 11 }}>закрыт</span>}
                 </button>
               );
             })}
@@ -333,6 +451,59 @@ export default function Onboarding() {
                 Дедлайн: {activeDay.deadline_time || 'Не задан'}
               </div>
 
+              {isDayTwo && (
+                <div className="card" style={{ marginBottom: 16, border: '1px solid var(--gray-200)' }}>
+                  <div className="card-body" style={{ padding: 16 }}>
+                    <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>Выбор роли на 2-й день</div>
+                    {!dayOneCompleted && (
+                      <div style={{ color: '#991b1b', fontSize: 13 }}>
+                        Роль можно выбрать только после завершения 1-го дня.
+                      </div>
+                    )}
+                    {dayOneCompleted && (
+                      <>
+                        <div style={{ fontSize: 13, color: 'var(--gray-600)', marginBottom: 10 }}>
+                          Выберите подотдел/роль. От этого зависит ваша задача на 2-й день.
+                        </div>
+                        {availableRoles.length === 0 && (
+                          <div style={{ fontSize: 13, color: '#b45309', marginBottom: 10 }}>
+                            Нет доступных ролей для выбора. Обратитесь к администратору: нужно добавить подотделы в вашем отделе.
+                          </div>
+                        )}
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                          {availableRoles.map((item) => (
+                            <button
+                              key={item.id}
+                              className={String((pendingRoleId ?? selectedInternRoleId) || '') === String(item.id) ? 'btn btn-primary' : 'btn btn-secondary'}
+                              onClick={() => setPendingRoleId(item.id)}
+                              disabled={roleSubmitting || !!selectedInternRoleId}
+                            >
+                              {item.name}
+                            </button>
+                          ))}
+                        </div>
+                        {!selectedInternRoleId && (
+                          <div style={{ marginTop: 10 }}>
+                            <button
+                              className="btn btn-primary"
+                              onClick={() => chooseInternRole(pendingRoleId)}
+                              disabled={roleSubmitting || !pendingRoleId}
+                            >
+                              {roleSubmitting ? 'Подтверждаем...' : 'Подтвердить роль'}
+                            </button>
+                          </div>
+                        )}
+                        {!!selectedInternRoleId && (
+                          <div style={{ marginTop: 10, fontSize: 13, color: '#166534' }}>
+                            Роль подтверждена: {internRoleState?.selected_subdivision_name}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {isDayOne && (
                 <div className="card" style={{ marginBottom: 16, border: '1px solid var(--gray-200)' }}>
                   <div className="card-body" style={{ padding: 16 }}>
@@ -345,7 +516,13 @@ export default function Onboarding() {
                         Дедлайн задачи: {firstTask.due_date}
                       </div>
                     )}
-                    <button className="btn btn-primary" onClick={() => setTab('tasks')}>Открыть задачу</button>
+                    <button
+                      className={`btn ${isDayOneDone ? 'btn-secondary' : 'btn-primary'}`}
+                      onClick={() => setTab('tasks')}
+                      disabled={isDayOneDone}
+                    >
+                      Открыть задачу
+                    </button>
                   </div>
                 </div>
               )}
@@ -354,9 +531,53 @@ export default function Onboarding() {
                 Регламенты и шаги выполнения находятся во вкладке <b>Задачи</b>.
               </div>
 
-              <button className="btn btn-primary" disabled={submitting} onClick={completeCurrentDay}>
-                Завершить день адаптации
-              </button>
+              {isDayOne && !allRegulationsCompleted && (
+                <div className="card" style={{ marginBottom: 12, border: '1px solid #fecaca', background: '#fef2f2' }}>
+                  <div className="card-body" style={{ padding: 14, color: '#991b1b' }}>
+                    Сначала завершите все шаги по регламентам (прочитан, фидбек, тест), потом можно будет подписать и завершить 1-й день.
+                  </div>
+                </div>
+              )}
+
+              {mustSignBeforeComplete && (
+                <div className="card" style={{ marginBottom: 12, border: '1px solid #bfdbfe', background: '#eff6ff' }}>
+                  <div className="card-body" style={{ padding: 14 }}>
+                    <div style={{ fontSize: 14, color: '#1e3a8a', marginBottom: 10 }}>
+                      Вы завершили ознакомление с регламентами. Подойдите к Жибек и подпишите, что ознакомлены с регламентами.
+                    </div>
+                    <button
+                      className="btn btn-primary"
+                      type="button"
+                      onClick={acknowledgeRegulations}
+                      disabled={!!busyMap['acknowledge-day1']}
+                    >
+                      {busyMap['acknowledge-day1'] ? 'Сохраняем...' : 'Подписал'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {!isDayTwo && isDayOneDone && (
+                <button className="btn btn-secondary" disabled type="button">
+                  Первый день адаптации завершен
+                </button>
+              )}
+              {(!isDayOne || (allRegulationsCompleted && isSigned)) && !isDayTwo && !isDayOneDone && (
+                <button className="btn btn-primary" disabled={submitting} onClick={completeCurrentDay}>
+                  {isDayOne ? 'Закончить первый день адаптации' : 'Завершить день адаптации'}
+                </button>
+              )}
+
+              {isDayTwo && !canCompleteDayTwo && (
+                <div style={{ fontSize: 13, color: 'var(--gray-600)' }}>
+                  Для завершения 2-го дня выберите роль и отправьте отчет во вкладке "Отчет".
+                </div>
+              )}
+              {isDayTwo && canCompleteDayTwo && (
+                <button className="btn btn-primary" disabled={submitting} onClick={completeCurrentDay}>
+                  Завершить 2-й день
+                </button>
+              )}
             </div>
           )}
 
@@ -378,6 +599,24 @@ export default function Onboarding() {
                       </div>
                     )}
                     {task.due_date && <div style={{ fontSize: 12, color: 'var(--gray-500)', marginTop: 6 }}>Дедлайн: {task.due_date}</div>}
+                    {extractSpecUrl(task.description) && (
+                      <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
+                        <button
+                          className="btn btn-outline"
+                          onClick={() => window.open(extractSpecUrl(task.description), '_blank', 'noopener,noreferrer')}
+                        >
+                          Открыть ТЗ
+                        </button>
+                        <a
+                          className="btn btn-secondary"
+                          href={extractSpecUrl(task.description)}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Скачать
+                        </a>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -564,6 +803,42 @@ export default function Onboarding() {
                   </div>
                 </div>
               )}
+
+              {isDayOne && allRegulationsCompleted && (
+                <div className="card" style={{ marginTop: 14, border: '1px solid #bfdbfe', background: '#eff6ff' }}>
+                  <div className="card-body" style={{ padding: 14 }}>
+                    {!isSigned ? (
+                      <>
+                        <div style={{ fontSize: 14, color: '#1e3a8a', marginBottom: 10 }}>
+                          Вы завершили все 10 шагов. Подойдите к Жибек и подпишите, что ознакомлены с регламентами.
+                        </div>
+                        <button
+                          className={`btn ${isDayOneDone ? 'btn-secondary' : 'btn-primary'}`}
+                          type="button"
+                          onClick={acknowledgeRegulations}
+                          disabled={isDayOneDone || !!busyMap['acknowledge-day1']}
+                        >
+                          {busyMap['acknowledge-day1'] ? 'Сохраняем...' : 'Подписал'}
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <div style={{ fontSize: 14, color: '#1e3a8a', marginBottom: 10 }}>
+                          Подпись подтверждена. Подтвердите окончание первого дня адаптации.
+                        </div>
+                        <button
+                          className={`btn ${isDayOneDone ? 'btn-secondary' : 'btn-primary'}`}
+                          type="button"
+                          onClick={completeCurrentDay}
+                          disabled={isDayOneDone || submitting}
+                        >
+                          {isDayOneDone ? 'Первый день завершен' : submitting ? 'Сохраняем...' : 'Подтвердить окончание дня'}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -573,37 +848,75 @@ export default function Onboarding() {
                 Статус: {STATUS_LABELS[reportStatus]}
               </div>
 
-              <div className="form-group" style={{ marginBottom: 14 }}>
-                <label className="form-label">Что сделал</label>
-                <textarea
-                  className="form-textarea"
-                  value={reportData.did}
-                  onChange={(e) => setReportData((prev) => ({ ...prev, did: e.target.value }))}
-                  style={{ minHeight: 120 }}
-                />
-              </div>
+              {isDayTwo ? (
+                <>
+                  <div className="form-group" style={{ marginBottom: 14 }}>
+                    <label className="form-label">Название работы</label>
+                    <input
+                      className="form-input"
+                      value={reportData.report_title}
+                      onChange={(e) => setReportData((prev) => ({ ...prev, report_title: e.target.value }))}
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 14 }}>
+                    <label className="form-label">Описание</label>
+                    <textarea
+                      className="form-textarea"
+                      value={reportData.report_description}
+                      onChange={(e) => setReportData((prev) => ({ ...prev, report_description: e.target.value }))}
+                      style={{ minHeight: 120 }}
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 14 }}>
+                    <label className="form-label">Ссылка на GitHub</label>
+                    <input
+                      className="form-input"
+                      value={reportData.github_url}
+                      onChange={(e) => setReportData((prev) => ({ ...prev, github_url: e.target.value }))}
+                      placeholder="https://github.com/..."
+                    />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="form-group" style={{ marginBottom: 14 }}>
+                    <label className="form-label">Что сделал</label>
+                    <textarea
+                      className="form-textarea"
+                      value={reportData.did}
+                      onChange={(e) => setReportData((prev) => ({ ...prev, did: e.target.value }))}
+                      style={{ minHeight: 120 }}
+                    />
+                  </div>
 
-              <div className="form-group" style={{ marginBottom: 14 }}>
-                <label className="form-label">Что буду делать</label>
-                <textarea
-                  className="form-textarea"
-                  value={reportData.will_do}
-                  onChange={(e) => setReportData((prev) => ({ ...prev, will_do: e.target.value }))}
-                  style={{ minHeight: 120 }}
-                />
-              </div>
+                  <div className="form-group" style={{ marginBottom: 14 }}>
+                    <label className="form-label">Что буду делать</label>
+                    <textarea
+                      className="form-textarea"
+                      value={reportData.will_do}
+                      onChange={(e) => setReportData((prev) => ({ ...prev, will_do: e.target.value }))}
+                      style={{ minHeight: 120 }}
+                    />
+                  </div>
 
-              <div className="form-group" style={{ marginBottom: 14 }}>
-                <label className="form-label">Проблемы</label>
-                <textarea
-                  className="form-textarea"
-                  value={reportData.problems}
-                  onChange={(e) => setReportData((prev) => ({ ...prev, problems: e.target.value }))}
-                  style={{ minHeight: 100 }}
-                />
-              </div>
+                  <div className="form-group" style={{ marginBottom: 14 }}>
+                    <label className="form-label">Проблемы</label>
+                    <textarea
+                      className="form-textarea"
+                      value={reportData.problems}
+                      onChange={(e) => setReportData((prev) => ({ ...prev, problems: e.target.value }))}
+                      style={{ minHeight: 100 }}
+                    />
+                  </div>
+                </>
+              )}
 
-              <button className="btn btn-primary" disabled={submitting} onClick={submitReport} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <button
+                className="btn btn-primary"
+                disabled={submitting || (isDayTwo && !selectedInternRoleId)}
+                onClick={submitReport}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              >
                 <Send size={14} /> {submitting ? 'Отправка...' : 'Сохранить отчет'}
               </button>
             </div>

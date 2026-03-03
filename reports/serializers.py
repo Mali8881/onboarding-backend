@@ -9,19 +9,9 @@ from .models import (
 )
 
 
-# =====================================================
-# USER SERIALIZER
-# =====================================================
-
 class OnboardingReportSerializer(serializers.ModelSerializer):
-    user_email = serializers.EmailField(
-        source="user.email",
-        read_only=True
-    )
-    day_number = serializers.IntegerField(
-        source="day.day_number",
-        read_only=True
-    )
+    user_email = serializers.EmailField(source="user.email", read_only=True)
+    day_number = serializers.IntegerField(source="day.day_number", read_only=True)
 
     class Meta:
         model = OnboardingReport
@@ -34,38 +24,32 @@ class OnboardingReportSerializer(serializers.ModelSerializer):
             "did",
             "will_do",
             "problems",
+            "report_title",
+            "report_description",
+            "github_url",
             "status",
             "reviewer_comment",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = (
-            "status",
-            "reviewer_comment",
-            "created_at",
-            "updated_at",
-        )
+        read_only_fields = ("status", "reviewer_comment", "created_at", "updated_at")
 
-
-# =====================================================
-# CREATE SERIALIZER
-# =====================================================
 
 class OnboardingReportCreateSerializer(serializers.Serializer):
     day_id = serializers.UUIDField()
-    did = serializers.CharField(allow_blank=True)
-    will_do = serializers.CharField(allow_blank=True)
+    did = serializers.CharField(allow_blank=True, required=False)
+    will_do = serializers.CharField(allow_blank=True, required=False)
     problems = serializers.CharField(allow_blank=True, required=False)
+    report_title = serializers.CharField(allow_blank=True, required=False)
+    report_description = serializers.CharField(allow_blank=True, required=False)
+    github_url = serializers.URLField(allow_blank=True, required=False)
 
     def validate(self, data):
-        # НИЧЕГО не запрещаем.
-        # Логика пустого отчёта обрабатывается в модели.
+        github_url = (data.get("github_url") or "").strip()
+        if github_url and "github.com" not in github_url.lower():
+            raise serializers.ValidationError({"github_url": "Укажите ссылку на GitHub."})
         return data
 
-
-# =====================================================
-# ADMIN SERIALIZER
-# =====================================================
 
 class AdminOnboardingReportSerializer(serializers.ModelSerializer):
     user = serializers.SerializerMethodField()
@@ -81,9 +65,7 @@ class AdminOnboardingReportSerializer(serializers.ModelSerializer):
             "reviewer_comment",
             "created_at",
         )
-        read_only_fields = (
-            "created_at",
-        )
+        read_only_fields = ("created_at",)
 
     @extend_schema_field(
         {
@@ -95,10 +77,7 @@ class AdminOnboardingReportSerializer(serializers.ModelSerializer):
         }
     )
     def get_user(self, obj):
-        return {
-            "id": obj.user.id,
-            "username": obj.user.username,
-        }
+        return {"id": obj.user.id, "username": obj.user.username}
 
     @extend_schema_field(
         {
@@ -119,25 +98,14 @@ class AdminOnboardingReportSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         new_status = attrs.get("status")
-
         if new_status in [OnboardingReport.Status.REVISION, OnboardingReport.Status.REJECTED]:
             if not attrs.get("reviewer_comment"):
-                raise serializers.ValidationError(
-                    {"reviewer_comment": "Комментарий обязателен"}
-                )
-
+                raise serializers.ValidationError({"reviewer_comment": "Комментарий обязателен"})
         return attrs
 
 
-# =====================================================
-# LOG SERIALIZER
-# =====================================================
-
 class OnboardingReportLogSerializer(serializers.ModelSerializer):
-    author_username = serializers.CharField(
-        source="author.username",
-        read_only=True
-    )
+    author_username = serializers.CharField(source="author.username", read_only=True)
 
     class Meta:
         model = OnboardingReportLog
@@ -151,20 +119,10 @@ class OnboardingReportLogSerializer(serializers.ModelSerializer):
         )
 
 
-
-# =====================================================
-# NOTIFICATION SERIALIZER
-# =====================================================
-
 class ReportNotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = ReportNotification
-        fields = (
-            "id",
-            "report",
-            "text",
-            "created_at",
-        )
+        fields = ("id", "report", "text", "created_at")
 
 
 class EmployeeDailyReportSerializer(serializers.ModelSerializer):

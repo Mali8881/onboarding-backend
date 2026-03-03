@@ -32,6 +32,9 @@ class OnboardingReportAdminForm(forms.ModelForm):
             "did": "Что сделал сегодня",
             "will_do": "План на завтра",
             "problems": "Блокеры / вопросы",
+            "report_title": "Название отчета (2-й день)",
+            "report_description": "Описание выполненной работы",
+            "github_url": "Ссылка на GitHub",
             "status": "Статус отчёта",
             "reviewer_comment": "Комментарий наставника",
         }
@@ -49,7 +52,7 @@ class OnboardingReportAdmin(admin.ModelAdmin):
 
     fieldsets = (
         ("Стажёр и день", {"fields": ("user", "day", "status")}),
-        ("Отчёт", {"fields": ("did", "will_do", "problems")}),
+        ("Отчёт", {"fields": ("did", "will_do", "problems", "report_title", "report_description", "github_url")}),
         ("Проверка", {"fields": ("reviewer_comment",)}),
         ("Система", {"fields": ("created_at", "updated_at"), "classes": ("collapse",)}),
     )

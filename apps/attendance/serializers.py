@@ -3,7 +3,7 @@ from datetime import date
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
-from .models import AttendanceMark, AttendanceSession, OfficeNetwork, WorkCalendarDay
+from .models import AttendanceMark, AttendanceSession, WorkCalendarDay
 from .policies import AttendancePolicy
 
 
@@ -89,15 +89,18 @@ class WorkCalendarDayUpsertSerializer(serializers.ModelSerializer):
 
 
 class OfficeCheckInSerializer(serializers.Serializer):
-    class WorkMode:
-        OFFICE = "office"
-        ONLINE = "online"
-        CHOICES = (
-            (OFFICE, "Office"),
-            (ONLINE, "Online"),
-        )
+    latitude = serializers.FloatField(min_value=-90, max_value=90, required=False)
+    longitude = serializers.FloatField(min_value=-180, max_value=180, required=False)
+    accuracy_m = serializers.FloatField(required=False, min_value=0)
 
-    work_mode = serializers.ChoiceField(choices=WorkMode.CHOICES)
+    def validate(self, attrs):
+        has_lat = "latitude" in attrs
+        has_lon = "longitude" in attrs
+        if has_lat != has_lon:
+            raise serializers.ValidationError(
+                "Provide both latitude and longitude, or omit both for IP/Wi-Fi check."
+            )
+        return attrs
 
 
 class AttendanceSessionSerializer(serializers.ModelSerializer):
@@ -107,14 +110,14 @@ class AttendanceSessionSerializer(serializers.ModelSerializer):
             "id",
             "user",
             "checked_at",
+            "latitude",
+            "longitude",
+            "accuracy_m",
             "ip_address",
+            "distance_m",
+            "office_latitude",
+            "office_longitude",
+            "radius_m",
             "result",
             "attendance_mark",
         )
-
-
-class OfficeNetworkSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = OfficeNetwork
-        fields = ("id", "name", "cidr", "is_active", "created_at", "updated_at")
-        read_only_fields = ("created_at", "updated_at")
