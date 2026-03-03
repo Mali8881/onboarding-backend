@@ -36,6 +36,7 @@ urlpatterns = [
     path("admin/panel/work-schedule-board/", work_schedule_board_page, name="admin-work-schedule-board"),
     path("admin/panel/login/", RedirectView.as_view(url="/admin/login/", permanent=False), name="admin-panel-login-redirect"),
     path("admin/panel/", admin.site.urls),
+    re_path(r"^admin/(?!login(?:/|$)|panel(?:/|$)).*$", spa_portal, name="spa-admin-catch-all"),
 
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),

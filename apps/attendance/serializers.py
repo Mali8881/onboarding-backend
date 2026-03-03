@@ -103,6 +103,10 @@ class OfficeCheckInSerializer(serializers.Serializer):
         return attrs
 
 
+class AttendanceCheckinReportQuerySerializer(serializers.Serializer):
+    date = serializers.DateField(required=False)
+
+
 class AttendanceSessionSerializer(serializers.ModelSerializer):
     class Meta:
         model = AttendanceSession

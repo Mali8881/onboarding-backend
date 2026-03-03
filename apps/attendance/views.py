@@ -1,7 +1,11 @@
 import calendar
 from datetime import date
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from rest_framework.authentication import SessionAuthentication
 from rest_framework import status
 from rest_framework.exceptions import PermissionDenied
@@ -18,6 +22,7 @@ from .audit import AttendanceAuditService
 from .models import AttendanceMark, AttendanceSession, WorkCalendarDay
 from .policies import AttendancePolicy
 from .serializers import (
+    AttendanceCheckinReportQuerySerializer,
     AttendanceTeamFilterSerializer,
     AttendanceMarkSerializer,
     AttendanceMarkUpsertSerializer,
@@ -38,6 +43,7 @@ from .services import (
     month_bounds,
     office_geofence,
 )
+from work_schedule.models import UserWorkSchedule, WeeklyWorkPlan
 
 
 User = get_user_model()
@@ -263,6 +269,180 @@ class AttendanceTeamAPIView(APIView):
         if status_filter:
             qs = qs.filter(status=status_filter)
         return Response(AttendanceMarkSerializer(qs, many=True).data)
+
+
+class AttendanceCheckinReportAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _scope_users(self, actor):
+        if AccessPolicy.is_super_admin(actor) or AccessPolicy.is_main_admin(actor):
+            return User.objects.filter(is_active=True).exclude(role__name=Role.Name.SUPER_ADMIN)
+
+        if AccessPolicy.is_admin(actor):
+            if not actor.department_id:
+                return User.objects.none()
+            return User.objects.filter(is_active=True, department_id=actor.department_id).exclude(
+                role__name__in=[Role.Name.SUPER_ADMIN, Role.Name.ADMIN]
+            )
+
+        if AccessPolicy.is_teamlead(actor):
+            return actor.team_members.filter(is_active=True).exclude(role__name=Role.Name.SUPER_ADMIN)
+
+        return User.objects.none()
+
+    @staticmethod
+    def _week_monday(day: date) -> date:
+        return day.fromordinal(day.toordinal() - day.weekday())
+
+    @staticmethod
+    def _format_hhmm(value):
+        if not value:
+            return None
+        return value.strftime("%H:%M")
+
+    def _resolve_shift(self, *, actor, target_user, target_date, plan_by_user, user_schedule_by_user):
+        # First priority: approved weekly plan for target date.
+        plan = plan_by_user.get(target_user.id)
+        if plan and isinstance(plan.days, list):
+            for item in plan.days:
+                if str(item.get("date")) == str(target_date):
+                    mode = item.get("mode") or ""
+                    if mode == "day_off":
+                        return None, None, mode
+                    return item.get("start_time"), item.get("end_time"), mode
+
+        # Fallback: assigned template schedule.
+        user_schedule = user_schedule_by_user.get(target_user.id)
+        if user_schedule and user_schedule.schedule:
+            weekday = target_date.weekday()  # Monday=0
+            work_days = user_schedule.schedule.work_days or []
+            if weekday in work_days:
+                return (
+                    self._format_hhmm(user_schedule.schedule.start_time),
+                    self._format_hhmm(user_schedule.schedule.end_time),
+                    "office",
+                )
+            return None, None, "day_off"
+
+        return None, None, ""
+
+    @staticmethod
+    def _parse_shift_hhmm(value: str | None):
+        if not value:
+            return None
+        chunks = str(value).split(":")
+        if len(chunks) < 2:
+            return None
+        try:
+            return int(chunks[0]), int(chunks[1])
+        except Exception:
+            return None
+
+    @classmethod
+    def _compute_late_minutes(cls, target_date: date, shift_start_hhmm: str | None, checked_at):
+        if not shift_start_hhmm or not checked_at:
+            return None
+        parsed = cls._parse_shift_hhmm(shift_start_hhmm)
+        if not parsed:
+            return None
+        start_h, start_m = parsed
+
+        report_tz_name = getattr(settings, "ATTENDANCE_REPORT_TIMEZONE", "Asia/Bishkek")
+        try:
+            report_tz = ZoneInfo(report_tz_name)
+        except Exception:
+            report_tz = timezone.get_current_timezone()
+
+        start_dt = datetime(
+            year=target_date.year,
+            month=target_date.month,
+            day=target_date.day,
+            hour=start_h,
+            minute=start_m,
+            tzinfo=report_tz,
+        )
+
+        local_checked = checked_at.astimezone(report_tz)
+        delta_minutes = int((local_checked - start_dt).total_seconds() // 60)
+        return max(0, delta_minutes)
+
+    def get(self, request):
+        if not AttendancePolicy.can_view_team(request.user):
+            return Response({"detail": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+
+        query = AttendanceCheckinReportQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        target_date = query.validated_data.get("date") or timezone.localdate()
+        users_qs = self._scope_users(request.user).select_related("department", "subdivision", "role").order_by(
+            "department__name", "last_name", "first_name", "username"
+        )
+
+        user_ids = list(users_qs.values_list("id", flat=True))
+        if not user_ids:
+            return Response({"date": target_date, "rows": []})
+
+        marks = AttendanceMark.objects.filter(user_id__in=user_ids, date=target_date).select_related("user")
+        marks_by_user = {item.user_id: item for item in marks}
+
+        successful_sessions = (
+            AttendanceSession.objects.filter(
+                user_id__in=user_ids,
+                checked_at__date=target_date,
+                result=AttendanceSession.Result.IN_OFFICE,
+            )
+            .select_related("user")
+            .order_by("checked_at")
+        )
+        first_session_by_user = {}
+        for session in successful_sessions:
+            first_session_by_user.setdefault(session.user_id, session)
+
+        monday = self._week_monday(target_date)
+        plans = WeeklyWorkPlan.objects.filter(
+            user_id__in=user_ids,
+            week_start=monday,
+            status=WeeklyWorkPlan.Status.APPROVED,
+        ).select_related("user")
+        plans_by_user = {plan.user_id: plan for plan in plans}
+
+        user_schedules = UserWorkSchedule.objects.filter(user_id__in=user_ids).select_related("schedule")
+        user_schedule_by_user = {item.user_id: item for item in user_schedules}
+
+        rows = []
+        for user in users_qs:
+            mark = marks_by_user.get(user.id)
+            shift_from, shift_to, shift_mode = self._resolve_shift(
+                actor=request.user,
+                target_user=user,
+                target_date=target_date,
+                plan_by_user=plans_by_user,
+                user_schedule_by_user=user_schedule_by_user,
+            )
+            session = first_session_by_user.get(user.id)
+            if shift_mode == "office":
+                checkin_dt = session.checked_at if session else None
+            else:
+                checkin_dt = session.checked_at if session else (mark.created_at if mark else None)
+
+            late_minutes = self._compute_late_minutes(target_date, shift_from, checkin_dt)
+            rows.append(
+                {
+                    "user_id": user.id,
+                    "username": user.username,
+                    "full_name": (f"{user.first_name} {user.last_name}".strip() or user.username),
+                    "role": user.role.name if user.role_id else "",
+                    "department": user.department.name if user.department_id else "",
+                    "subdivision": user.subdivision.name if user.subdivision_id else "",
+                    "shift_from": shift_from,
+                    "shift_to": shift_to,
+                    "shift_mode": shift_mode,
+                    "mark_status": mark.status if mark else "",
+                    "checked_at": checkin_dt,
+                    "late_minutes": late_minutes,
+                }
+            )
+
+        return Response({"date": target_date, "rows": rows})
 
 
 class AttendanceOfficeCheckInAPIView(APIView):

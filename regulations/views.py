@@ -638,7 +638,7 @@ class AdminInternOnboardingRequestListAPIView(ListAPIView):
     serializer_class = InternOnboardingRequestSerializer
 
     def get_queryset(self):
-        if not (AccessPolicy.is_admin(self.request.user) or AccessPolicy.is_super_admin(self.request.user)):
+        if not AccessPolicy.is_admin_like(self.request.user):
             return InternOnboardingRequest.objects.none()
         status_value = self.request.query_params.get("status")
         qs = InternOnboardingRequest.objects.select_related("user", "reviewed_by")
@@ -651,7 +651,7 @@ class AdminApproveInternOnboardingAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, request_id):
-        if not (AccessPolicy.is_admin(request.user) or AccessPolicy.is_super_admin(request.user)):
+        if not AccessPolicy.is_admin_like(request.user):
             return Response(
                 {"detail": "Only admin or super admin can approve onboarding."},
                 status=status.HTTP_403_FORBIDDEN,
