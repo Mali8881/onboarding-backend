@@ -426,7 +426,12 @@ class DepartmentListCreateAPIView(_OrgAdminMixin, ListCreateAPIView):
     serializer_class = DepartmentSerializer
 
     def get_queryset(self):
-        qs = Department.objects.select_related("parent").annotate(users_count=Count("user"))
+        qs = Department.objects.select_related("parent").annotate(
+            users_count=Count("user"),
+            children_count=Count("children"),
+        )
+        if "subdivisions" in (self.request.path or ""):
+            qs = qs.filter(parent__isnull=False)
         is_active = self.request.query_params.get("is_active")
         if is_active is not None:
             qs = qs.filter(is_active=str(is_active).lower() in {"1", "true", "yes"})
@@ -440,6 +445,8 @@ class DepartmentListCreateAPIView(_OrgAdminMixin, ListCreateAPIView):
 
     def create(self, request, *args, **kwargs):
         self._ensure_can_manage(request)
+        if "subdivisions" in (request.path or "") and not request.data.get("parent"):
+            return Response({"parent": ["Subdivision must have a parent department."]}, status=status.HTTP_400_BAD_REQUEST)
         return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
@@ -455,7 +462,10 @@ class DepartmentListCreateAPIView(_OrgAdminMixin, ListCreateAPIView):
 
 
 class DepartmentDetailAPIView(_OrgAdminMixin, RetrieveUpdateDestroyAPIView):
-    queryset = Department.objects.select_related("parent").annotate(users_count=Count("user"))
+    queryset = Department.objects.select_related("parent").annotate(
+        users_count=Count("user"),
+        children_count=Count("children"),
+    )
     serializer_class = DepartmentSerializer
 
     def update(self, request, *args, **kwargs):
@@ -638,7 +648,11 @@ class OrgStructureAPIView(APIView):
         for user in users_qs:
             users_by_department.setdefault(user.department_id, []).append(user)
 
-        departments = Department.objects.select_related("parent").order_by("name")
+        departments = list(Department.objects.select_related("parent").order_by("name"))
+        children_counter = {}
+        for dep in departments:
+            if dep.parent_id:
+                children_counter[dep.parent_id] = children_counter.get(dep.parent_id, 0) + 1
         result = []
 
         is_admin_like = AccessPolicy.is_admin_like(actor)
@@ -675,7 +689,9 @@ class OrgStructureAPIView(APIView):
                 {
                     "id": department.id,
                     "name": department.name,
+                    "comment": department.comment or "",
                     "parent_id": department.parent_id,
+                    "children_count": children_counter.get(department.id, 0),
                     "members": payload_members,
                 }
             )
@@ -742,8 +758,16 @@ class CompanyStructureAPIView(APIView):
                 }
             )
 
+        department_rows = list(
+            Department.objects.filter(is_active=True).select_related("parent").order_by("name")
+        )
+        children_counter = {}
+        for dep in department_rows:
+            if dep.parent_id:
+                children_counter[dep.parent_id] = children_counter.get(dep.parent_id, 0) + 1
+
         departments = []
-        for department in Department.objects.filter(is_active=True).select_related("parent").order_by("name"):
+        for department in department_rows:
             members = users_by_department.get(department.id, [])
             head = next(
                 (
@@ -757,7 +781,9 @@ class CompanyStructureAPIView(APIView):
                 {
                     "id": department.id,
                     "name": department.name,
+                    "comment": department.comment or "",
                     "parent_id": department.parent_id,
+                    "children_count": children_counter.get(department.id, 0),
                     "head": head,
                     "members": members,
                 }

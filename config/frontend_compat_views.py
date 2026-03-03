@@ -481,14 +481,23 @@ class FrontendDepartmentsAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        items = Department.objects.select_related("parent").order_by("name")
+        items_qs = Department.objects.select_related("parent")
+        if "subdivisions" in (request.path or ""):
+            items_qs = items_qs.filter(parent__isnull=False)
+        items = list(items_qs.order_by("name"))
+        children_counter = {}
+        for dep in items:
+            if dep.parent_id:
+                children_counter[dep.parent_id] = children_counter.get(dep.parent_id, 0) + 1
         return Response(
             [
                 {
                     "id": item.id,
                     "name": item.name,
+                    "comment": item.comment or "",
                     "parent": item.parent_id,
                     "is_active": item.is_active,
+                    "children_count": children_counter.get(item.id, 0),
                 }
                 for item in items
             ]
@@ -499,17 +508,81 @@ class FrontendDepartmentsAPIView(APIView):
         name = (request.data.get("name") or "").strip()
         if not name:
             return Response({"name": ["This field is required."]}, status=400)
+        if "subdivisions" in (request.path or "") and not request.data.get("parent"):
+            return Response({"parent": ["Subdivision must have a parent department."]}, status=400)
         parent_id = request.data.get("parent")
+        parent = None
+        if parent_id:
+            parent = Department.objects.filter(id=parent_id).first()
+            if not parent:
+                return Response({"parent": ["Parent department not found."]}, status=400)
         item = Department.objects.create(
             name=name,
-            parent_id=parent_id if parent_id else None,
+            comment=(request.data.get("comment") or "").strip(),
+            parent=parent,
             is_active=bool(request.data.get("is_active", True)),
         )
-        return Response({"id": item.id, "name": item.name, "parent": item.parent_id, "is_active": item.is_active}, status=201)
+        return Response(
+            {
+                "id": item.id,
+                "name": item.name,
+                "comment": item.comment or "",
+                "parent": item.parent_id,
+                "is_active": item.is_active,
+                "children_count": 0,
+            },
+            status=201,
+        )
 
 
 class FrontendDepartmentsDetailAPIView(APIView):
     permission_classes = [IsAuthenticated]
+
+    def patch(self, request, department_id: int):
+        _ensure_structure_editor(request.user)
+        item = Department.objects.filter(id=department_id).first()
+        if not item:
+            raise NotFound("Department not found.")
+
+        if "name" in request.data:
+            name = (request.data.get("name") or "").strip()
+            if not name:
+                return Response({"name": ["This field is required."]}, status=400)
+            item.name = name
+
+        if "comment" in request.data:
+            item.comment = (request.data.get("comment") or "").strip()
+
+        if "is_active" in request.data:
+            item.is_active = bool(request.data.get("is_active"))
+
+        if "parent" in request.data:
+            parent_id = request.data.get("parent")
+            if not parent_id:
+                item.parent = None
+            else:
+                parent = Department.objects.filter(id=parent_id).first()
+                if not parent:
+                    return Response({"parent": ["Parent department not found."]}, status=400)
+                if parent.id == item.id:
+                    return Response({"parent": ["Department cannot be parent of itself."]}, status=400)
+                cursor = parent
+                while cursor is not None:
+                    if cursor.id == item.id:
+                        return Response({"parent": ["Department hierarchy cycle is not allowed."]}, status=400)
+                    cursor = cursor.parent
+                item.parent = parent
+
+        item.save()
+        return Response(
+            {
+                "id": item.id,
+                "name": item.name,
+                "comment": item.comment or "",
+                "parent": item.parent_id,
+                "is_active": item.is_active,
+            }
+        )
 
     def delete(self, request, department_id: int):
         _ensure_structure_editor(request.user)

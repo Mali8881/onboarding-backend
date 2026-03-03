@@ -102,10 +102,11 @@ class DepartmentSerializer(serializers.ModelSerializer):
         allow_null=True,
     )
     users_count = serializers.IntegerField(read_only=True)
+    children_count = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = Department
-        fields = ("id", "name", "parent", "is_active", "users_count")
+        fields = ("id", "name", "comment", "parent", "is_active", "users_count", "children_count")
 
     def validate_parent(self, value):
         instance = getattr(self, "instance", None)

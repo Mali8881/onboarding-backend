@@ -68,11 +68,17 @@ class OrgApiTests(TestCase):
         parent = Department.objects.create(name="IT", is_active=True)
         response = self.client.post(
             "/api/v1/accounts/org/departments/",
-            {"name": "Backend", "parent": parent.id, "is_active": True},
+            {
+                "name": "Backend",
+                "parent": parent.id,
+                "comment": "Подраздел backend-платформы",
+                "is_active": True,
+            },
             format="json",
         )
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.data["parent"], parent.id)
+        self.assertEqual(response.data["comment"], "Подраздел backend-платформы")
 
     def test_employee_cannot_create_department(self):
         self.client.force_authenticate(self.employee)
@@ -82,6 +88,52 @@ class OrgApiTests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 403)
+
+    def test_admin_can_update_department_comment_via_compat_endpoint(self):
+        self.client.force_authenticate(self.admin)
+        parent = Department.objects.create(name="Finance")
+        item = Department.objects.create(name="Payroll", parent=parent)
+        response = self.client.patch(
+            f"/api/v1/auth/departments/{item.id}/",
+            {"comment": "Ответственный за начисления и сверку", "parent": parent.id},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        item.refresh_from_db()
+        self.assertEqual(item.comment, "Ответственный за начисления и сверку")
+        self.assertEqual(item.parent_id, parent.id)
+
+    def test_employee_cannot_update_department_via_compat_endpoint(self):
+        self.client.force_authenticate(self.employee)
+        item = Department.objects.create(name="Support")
+        response = self.client.patch(
+            f"/api/v1/auth/departments/{item.id}/",
+            {"comment": "forbidden"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_admin_can_create_subdivision_via_alias_endpoint(self):
+        self.client.force_authenticate(self.admin)
+        parent = Department.objects.create(name="Operations")
+        response = self.client.post(
+            "/api/v1/auth/subdivisions/",
+            {"name": "Operations QA", "parent": parent.id, "comment": "Контроль качества"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["parent"], parent.id)
+        self.assertEqual(response.data["comment"], "Контроль качества")
+
+    def test_subdivision_requires_parent(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(
+            "/api/v1/accounts/org/subdivisions/",
+            {"name": "No parent subdivision"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("parent", response.data)
 
     def test_cannot_delete_department_with_users(self):
         self.client.force_authenticate(self.admin)

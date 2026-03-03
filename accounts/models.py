@@ -69,6 +69,7 @@ class Role(models.Model):
 # ================= Reference Tables =================
 class Department(models.Model):
     name = models.CharField("Название", max_length=150, unique=True)
+    comment = models.TextField("Комментарий", blank=True, default="")
     parent = models.ForeignKey(
         "self",
         on_delete=models.SET_NULL,

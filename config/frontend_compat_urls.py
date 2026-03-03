@@ -47,6 +47,9 @@ urlpatterns = [
     path("auth/users/<int:user_id>/set_role/", FrontendUsersSetRoleAPIView.as_view()),
     path("auth/departments/", FrontendDepartmentsAPIView.as_view()),
     path("auth/departments/<int:department_id>/", FrontendDepartmentsDetailAPIView.as_view()),
+    # Alias for frontend wording: subdivisions are child departments.
+    path("auth/subdivisions/", FrontendDepartmentsAPIView.as_view()),
+    path("auth/subdivisions/<int:department_id>/", FrontendDepartmentsDetailAPIView.as_view()),
     path("auth/positions/", FrontendPositionsAPIView.as_view()),
     path("auth/positions/<int:position_id>/", FrontendPositionsDetailAPIView.as_view()),
     path("auth/promotion-requests/", FrontendPromotionRequestsAPIView.as_view()),
