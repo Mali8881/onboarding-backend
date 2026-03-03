@@ -57,8 +57,14 @@ urlpatterns = [
     path("auth/subdivisions/", FrontendSubdivisionsAPIView.as_view()),
     path("auth/subdivisions/<int:subdivision_id>/", FrontendSubdivisionsDetailAPIView.as_view()),
     path("auth/promotion-requests/", FrontendPromotionRequestsAPIView.as_view()),
+    # Alias for clients using /accounts/* namespace.
+    path("accounts/promotion-requests/", FrontendPromotionRequestsAPIView.as_view()),
     path(
         "auth/promotion-requests/<int:request_id>/<str:action>/",
+        FrontendPromotionRequestsActionAPIView.as_view(),
+    ),
+    path(
+        "accounts/promotion-requests/<int:request_id>/<str:action>/",
         FrontendPromotionRequestsActionAPIView.as_view(),
     ),
     path("core/news/", FrontendNewsCollectionAPIView.as_view()),

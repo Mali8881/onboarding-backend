@@ -19,8 +19,8 @@ from regulations.models import (
     Regulation,
     RegulationAcknowledgement,
     RegulationFeedback,
-    RegulationKnowledgeCheck,
     RegulationReadProgress,
+    RegulationKnowledgeCheck,
 )
 from reports.models import OnboardingReport
 
@@ -691,4 +691,6 @@ class InternOnboardingProgressDetailView(APIView):
                 "reports": reports,
             }
         )
+
+
 

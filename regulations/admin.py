@@ -2,15 +2,7 @@
 
 from accounts.access_policy import AccessPolicy
 
-from .models import (
-    Regulation,
-    RegulationQuiz,
-)
-
-class RegulationQuizInline(admin.StackedInline):
-    model = RegulationQuiz
-    extra = 0
-    max_num = 1
+from .models import Regulation
 
 
 @admin.register(Regulation)
@@ -20,7 +12,6 @@ class RegulationAdmin(admin.ModelAdmin):
         "type",
         "is_active",
         "is_mandatory_on_day_one",
-        "read_deadline_at",
         "position",
         "created_at",
         "updated_at",
@@ -43,12 +34,13 @@ class RegulationAdmin(admin.ModelAdmin):
         "is_mandatory_on_day_one",
         "quiz_question",
         "quiz_expected_answer",
+        "quiz_questions",
+        "quiz_allowed_mistakes",
         "created_at",
         "updated_at",
     )
     ordering = ("position",)
     readonly_fields = ("created_at", "updated_at")
-    inlines = (RegulationQuizInline,)
 
     def has_module_permission(self, request):
         return AccessPolicy.is_admin_like(request.user)

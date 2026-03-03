@@ -1,4 +1,4 @@
-from urllib.parse import urlparse
+﻿from urllib.parse import urlparse
 
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema_field
@@ -12,7 +12,7 @@ from regulations.models import (
     Regulation,
     RegulationAcknowledgement,
     RegulationFeedback,
-    RegulationQuizAttempt,
+    RegulationKnowledgeCheck,
     RegulationReadProgress,
 )
 
@@ -153,11 +153,11 @@ class OnboardingDayDetailSerializer(serializers.ModelSerializer):
         }
         knowledge_map = {
             regulation_id: True
-            for regulation_id in RegulationQuizAttempt.objects.filter(
+            for regulation_id in RegulationKnowledgeCheck.objects.filter(
                 user=user,
-                quiz__regulation__in=regulations_qs,
+                regulation__in=regulations_qs,
                 passed=True,
-            ).values_list("quiz__regulation_id", flat=True)
+            ).values_list("regulation_id", flat=True)
         }
         read_progress = RegulationReadProgress.objects.filter(
             user=user,
@@ -351,3 +351,4 @@ class AdminOnboardingProgressSerializer(serializers.ModelSerializer):
             "completed_at",
             "created_at",
         )
+

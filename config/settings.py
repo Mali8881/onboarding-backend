@@ -358,6 +358,12 @@ REST_FRAMEWORK = {
     },
 }
 
+# Local development can generate many parallel/polling API calls from SPA tabs.
+# Relax throttle limits in DEBUG to avoid false-positive 429 responses.
+if DEBUG:
+    REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"]["user"] = os.environ.get("DRF_THROTTLE_USER", "100000/day")
+    REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"]["anon"] = os.environ.get("DRF_THROTTLE_ANON", "10000/day")
+
 SIMPLE_JWT = {
     "TOKEN_OBTAIN_SERIALIZER": "accounts.tokens.CustomTokenSerializer",
 }

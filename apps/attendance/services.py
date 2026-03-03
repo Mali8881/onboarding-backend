@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import calendar
 import ipaddress
+import math
 from datetime import date
 from datetime import timedelta
 from typing import Optional
 
 from django.contrib.auth import get_user_model
+from django.conf import settings
 from accounts.models import Role
 from accounts.access_policy import AccessPolicy
 
@@ -165,6 +167,27 @@ def get_client_ip(request) -> str | None:
     if x_forwarded_for:
         return x_forwarded_for.split(",")[0].strip()
     return request.META.get("REMOTE_ADDR")
+
+
+def office_geofence() -> tuple[float, float, int] | None:
+    lat = getattr(settings, "OFFICE_GEOFENCE_LATITUDE", None)
+    lon = getattr(settings, "OFFICE_GEOFENCE_LONGITUDE", None)
+    radius = int(getattr(settings, "OFFICE_GEOFENCE_RADIUS_M", 150))
+    if lat is None or lon is None:
+        return None
+    return float(lat), float(lon), radius
+
+
+def haversine_distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    # Great-circle distance on Earth in meters.
+    r = 6371000.0
+    phi1 = math.radians(float(lat1))
+    phi2 = math.radians(float(lat2))
+    d_phi = math.radians(float(lat2) - float(lat1))
+    d_lambda = math.radians(float(lon2) - float(lon1))
+    a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return r * c
 
 
 def planned_work_mode_for_date(*, user, target_date: date) -> str | None:

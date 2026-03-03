@@ -13,8 +13,9 @@ from regulations.models import (
     Regulation,
     RegulationAcknowledgement,
     RegulationFeedback,
-    RegulationKnowledgeCheck,
     RegulationReadProgress,
+    RegulationQuiz,
+    RegulationQuizAttempt,
 )
 
 
@@ -109,12 +110,8 @@ class OnboardingFlowTests(TestCase):
             regulation=reg,
             text="ok",
         )
-        RegulationKnowledgeCheck.objects.create(
-            user=self.user,
-            regulation=reg,
-            answer="ok",
-            is_passed=True,
-        )
+        quiz = RegulationQuiz.objects.create(regulation=reg, title="Day 1 quiz", is_active=True)
+        RegulationQuizAttempt.objects.create(user=self.user, quiz=quiz, score_percent=100, passed=True)
         response = self.client.post(f"/api/v1/onboarding/days/{self.day1.id}/complete/")
         self.assertEqual(response.status_code, 200)
 
@@ -141,7 +138,8 @@ class OnboardingFlowTests(TestCase):
 
         RegulationReadProgress.objects.create(user=self.user, regulation=reg, is_read=True)
         RegulationFeedback.objects.create(user=self.user, regulation=reg, text="ok")
-        RegulationKnowledgeCheck.objects.create(user=self.user, regulation=reg, answer="ok", is_passed=True)
+        quiz = RegulationQuiz.objects.create(regulation=reg, title="Day 1 flow quiz", is_active=True)
+        RegulationQuizAttempt.objects.create(user=self.user, quiz=quiz, score_percent=100, passed=True)
 
         second = self.client.post(f"/api/v1/onboarding/days/{self.day1.id}/complete/")
         self.assertEqual(second.status_code, 200)

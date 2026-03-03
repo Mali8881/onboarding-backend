@@ -40,16 +40,22 @@ from work_schedule.views import MyScheduleAPIView, WorkScheduleListAPIView
 from django.contrib.sessions.models import Session
 
 
+def _department_head_role_name():
+    # Legacy compatibility: old branches used DEPARTMENT_HEAD role.
+    return getattr(Role.Name, "DEPARTMENT_HEAD", "DEPARTMENT_HEAD")
+
+
 def _role_to_front(role: Role | None) -> str:
     if not role:
         return ""
     mapping = {
         Role.Name.SUPER_ADMIN: "superadmin",
+        Role.Name.ADMINISTRATOR: "administrator",
         Role.Name.ADMIN: "admin",
-        Role.Name.DEPARTMENT_HEAD: "department_head",
         Role.Name.TEAMLEAD: "projectmanager",
         Role.Name.EMPLOYEE: "employee",
         Role.Name.INTERN: "intern",
+        _department_head_role_name(): "department_head",
     }
     return mapping.get(role.name, role.name.lower())
 
@@ -107,7 +113,12 @@ def _ensure_content_manager(user: User):
 def _is_privileged_target(target: User) -> bool:
     if not getattr(target, "role_id", None):
         return False
-    return target.role.name in {Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN}
+    return target.role.name in {
+        _department_head_role_name(),
+        Role.Name.ADMINISTRATOR,
+        Role.Name.ADMIN,
+        Role.Name.SUPER_ADMIN,
+    }
 
 
 def _resolve_role(value: str | None) -> Role | None:
@@ -119,8 +130,9 @@ def _resolve_role(value: str | None) -> Role | None:
         "PROJECT_MANAGER": Role.Name.TEAMLEAD,
         "TEAMLEAD": Role.Name.TEAMLEAD,
         "TEAM_LEAD": Role.Name.TEAMLEAD,
-        "DEPARTMENTHEAD": Role.Name.DEPARTMENT_HEAD,
-        "DEPARTMENT_HEAD": Role.Name.DEPARTMENT_HEAD,
+        "DEPARTMENTHEAD": Role.Name.ADMINISTRATOR,
+        "DEPARTMENT_HEAD": Role.Name.ADMINISTRATOR,
+        "ADMINISTRATOR": Role.Name.ADMINISTRATOR,
         "ADMIN": Role.Name.ADMIN,
         "SUPERADMIN": Role.Name.SUPER_ADMIN,
         "SUPER_ADMIN": Role.Name.SUPER_ADMIN,
@@ -293,7 +305,12 @@ class FrontendUsersCollectionAPIView(APIView):
             if not user.department_id:
                 user.department_id = subdivision.department_id
         if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
-            if user.role and user.role.name in {Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN}:
+            if user.role and user.role.name in {
+                _department_head_role_name(),
+                Role.Name.ADMINISTRATOR,
+                Role.Name.ADMIN,
+                Role.Name.SUPER_ADMIN,
+            }:
                 return Response({"detail": "Department head cannot create privileged users."}, status=403)
         if not user.role:
             return Response({"detail": "Default role INTERN not found. Run role seed first."}, status=400)
@@ -327,7 +344,12 @@ class FrontendUsersDetailAPIView(APIView):
         password = validated.pop("password", None)
         next_role = _resolve_role(role_name) if role_name else target.role
         if role_name and AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
-            if next_role and next_role.name in {Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN}:
+            if next_role and next_role.name in {
+                _department_head_role_name(),
+                Role.Name.ADMINISTRATOR,
+                Role.Name.ADMIN,
+                Role.Name.SUPER_ADMIN,
+            }:
                 return Response({"detail": "Department head cannot assign privileged role."}, status=403)
 
         if next_role and next_role.name == Role.Name.TEAMLEAD:
@@ -410,7 +432,12 @@ class FrontendUsersSetRoleAPIView(APIView):
         if not role:
             return Response({"detail": "Invalid role."}, status=400)
         if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
-            if role.name in {Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN}:
+            if role.name in {
+                _department_head_role_name(),
+                Role.Name.ADMINISTRATOR,
+                Role.Name.ADMIN,
+                Role.Name.SUPER_ADMIN,
+            }:
                 return Response({"detail": "Department head cannot assign privileged role."}, status=403)
         target.role = role
         if role.name == Role.Name.TEAMLEAD:
