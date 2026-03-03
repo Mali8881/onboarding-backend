@@ -193,3 +193,19 @@ class TasksApiTests(TestCase):
             ).exists()
         )
 
+    def test_assignees_endpoint_for_teamlead_returns_only_subordinates(self):
+        self.client.force_authenticate(user=self.lead)
+        response = self.client.get("/api/v1/tasks/assignees/")
+        self.assertEqual(response.status_code, 200)
+        returned_ids = {item["id"] for item in response.data}
+        self.assertIn(self.subordinate.id, returned_ids)
+        self.assertIn(self.lead.id, returned_ids)
+        self.assertNotIn(self.outsider.id, returned_ids)
+
+    def test_assignees_endpoint_for_employee_returns_self_only(self):
+        self.client.force_authenticate(user=self.subordinate)
+        response = self.client.get("/api/v1/tasks/assignees/")
+        self.assertEqual(response.status_code, 200)
+        returned_ids = [item["id"] for item in response.data]
+        self.assertEqual(returned_ids, [self.subordinate.id])
+

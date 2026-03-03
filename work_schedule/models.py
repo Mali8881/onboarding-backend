@@ -223,10 +223,7 @@ class WeeklyWorkPlan(models.Model):
             if duration_hours <= 0:
                 raise ValidationError({"days": f"Item #{idx}: shift duration must be at least 1 hour."})
 
-            if mode == "online":
-                if breaks or lunch_start_raw is not None or lunch_end_raw is not None:
-                    raise ValidationError({"days": f"Item #{idx}: breaks/lunch are allowed only for office mode."})
-            else:
+            if mode in {"office", "online"}:
                 self._validate_office_breaks_and_lunch(
                     idx=idx,
                     start_time=start_time,
@@ -311,9 +308,9 @@ class WeeklyWorkPlan(models.Model):
         lunch_end_raw,
     ):
         if duration_hours < 7 and breaks:
-            raise ValidationError({"days": f"Item #{idx}: breaks are allowed only when office shift is 7+ hours."})
+            raise ValidationError({"days": f"Item #{idx}: breaks are allowed only when shift is 7+ hours."})
         if duration_hours < 8 and (lunch_start_raw is not None or lunch_end_raw is not None):
-            raise ValidationError({"days": f"Item #{idx}: lunch is allowed only when office shift is 8+ hours."})
+            raise ValidationError({"days": f"Item #{idx}: lunch is allowed only when shift is 8+ hours."})
 
         if (lunch_start_raw is None) != (lunch_end_raw is None):
             raise ValidationError({"days": f"Item #{idx}: lunch_start and lunch_end must be set together."})

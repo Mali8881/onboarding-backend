@@ -16,10 +16,12 @@ from accounts.models import (
     AuditLog,
     Department,
     DepartmentSubdivision,
+    PasswordResetToken,
     Position,
     PromotionRequest,
     Role,
     User,
+    UserSession,
 )
 from accounts.serializers import PasswordChangeSerializer, UserProfileUpdateSerializer
 from content.models import Feedback, Instruction, News
@@ -35,6 +37,7 @@ from regulations.serializers import RegulationAdminSerializer, RegulationSeriali
 from reports.models import OnboardingReport
 from work_schedule.models import ProductionCalendar
 from work_schedule.views import MyScheduleAPIView, WorkScheduleListAPIView
+from django.contrib.sessions.models import Session
 
 
 def _role_to_front(role: Role | None) -> str:
@@ -878,6 +881,8 @@ class FrontendRegulationsCollectionAPIView(APIView):
         regulation_type = request.query_params.get("type")
         if regulation_type in {Regulation.RegulationType.LINK, Regulation.RegulationType.FILE}:
             qs = qs.filter(type=regulation_type)
+        if AccessPolicy.is_main_admin(request.user) or AccessPolicy.is_super_admin(request.user):
+            return Response(RegulationAdminSerializer(qs, many=True).data)
         ack_map = {
             ack.regulation_id: ack
             for ack in RegulationAcknowledgement.objects.filter(user=request.user, regulation__in=qs)
@@ -900,6 +905,8 @@ class FrontendRegulationsDetailAPIView(APIView):
         item = Regulation.objects.filter(id=regulation_id, is_active=True).first()
         if not item:
             raise NotFound("Regulation not found.")
+        if AccessPolicy.is_main_admin(request.user) or AccessPolicy.is_super_admin(request.user):
+            return Response(RegulationAdminSerializer(item).data)
         ack = RegulationAcknowledgement.objects.filter(user=request.user, regulation=item).first()
         serializer = RegulationSerializer(item, context={"request": request, "ack_map": {item.id: ack} if ack else {}})
         return Response(serializer.data)
@@ -1041,6 +1048,7 @@ class FrontendOnboardingReportsAPIView(APIView):
                     "report_title": item.report_title,
                     "report_description": item.report_description,
                     "github_url": item.github_url,
+                    "attachment": item.attachment.url if item.attachment else "",
                     "status": item.status,
                     "reviewer_comment": item.reviewer_comment,
                     "updated_at": item.updated_at,
@@ -1061,6 +1069,7 @@ class FrontendOnboardingReportsAPIView(APIView):
         report_title = (request.data.get("report_title") or "").strip()
         report_description = (request.data.get("report_description") or "").strip()
         github_url = (request.data.get("github_url") or "").strip()
+        attachment = request.FILES.get("attachment")
         day = OnboardingDay.objects.filter(id=day_id, is_active=True).first()
         if not day:
             return Response({"detail": "Day not found."}, status=404)
@@ -1079,6 +1088,7 @@ class FrontendOnboardingReportsAPIView(APIView):
                 "report_title": report_title,
                 "report_description": report_description,
                 "github_url": github_url,
+                "attachment": attachment,
             },
         )
         if report.can_be_sent():
@@ -1108,6 +1118,9 @@ class FrontendOnboardingReportDetailAPIView(APIView):
         for field in ("did", "will_do", "problems", "report_title", "report_description", "github_url"):
             if field in request.data:
                 setattr(report, field, request.data.get(field) or "")
+        attachment = request.FILES.get("attachment")
+        if attachment is not None:
+            report.attachment = attachment
         if report.github_url and "github.com" not in report.github_url.lower():
             return Response({"github_url": ["Use GitHub URL."]}, status=400)
         report.save(
@@ -1118,6 +1131,7 @@ class FrontendOnboardingReportDetailAPIView(APIView):
                 "report_title",
                 "report_description",
                 "github_url",
+                "attachment",
                 "updated_at",
             ]
         )
@@ -1171,6 +1185,50 @@ class FrontendSchedulesHolidaysAPIView(APIView):
             qs = qs.filter(date__year=year)
         return Response(
             [{"date": item.date, "name": item.holiday_name or "", "is_holiday": True} for item in qs]
+        )
+
+
+class FrontendSecurityUnlockUsersAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        _ensure_admin_like(request.user)
+        user_ids = request.data.get("user_ids") or []
+        reset_all = bool(request.data.get("all"))
+
+        qs = User.objects.all()
+        if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
+            if request.user.department_id:
+                qs = qs.filter(department_id=request.user.department_id)
+            else:
+                qs = qs.none()
+
+        if not reset_all:
+            if not isinstance(user_ids, list) or not user_ids:
+                return Response({"detail": "Provide user_ids or set all=true."}, status=400)
+            qs = qs.filter(id__in=user_ids)
+
+        updated = qs.update(failed_login_attempts=0, lockout_until=None, is_blocked=False)
+        return Response({"updated_users": int(updated)})
+
+
+class FrontendSecurityForceLogoutAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        _ensure_admin_like(request.user)
+        if AccessPolicy.is_admin(request.user) and not AccessPolicy.is_super_admin(request.user):
+            return Response({"detail": "Only admin/superadmin can force logout all users."}, status=403)
+
+        deleted_sessions, _ = Session.objects.all().delete()
+        deleted_custom_sessions, _ = UserSession.objects.all().delete()
+        deleted_tokens, _ = PasswordResetToken.objects.filter(is_used=False).delete()
+        return Response(
+            {
+                "deleted_sessions": int(deleted_sessions),
+                "deleted_custom_sessions": int(deleted_custom_sessions),
+                "deleted_unused_reset_tokens": int(deleted_tokens),
+            }
         )
 
 

@@ -1,31 +1,26 @@
-﻿from django.utils import timezone
-from rest_framework import serializers
+﻿from rest_framework import serializers
 
 from .models import (
     InternOnboardingRequest,
     Regulation,
     RegulationAcknowledgement,
     RegulationFeedback,
-    RegulationReadReport,
-    RegulationQuiz,
-    RegulationQuizAttempt,
-    RegulationQuizOption,
-    RegulationQuizQuestion,
+    RegulationKnowledgeCheck,
     RegulationReadProgress,
 )
 
 
 class RegulationSerializer(serializers.ModelSerializer):
     content = serializers.SerializerMethodField()
-    file_url = serializers.SerializerMethodField()
     action = serializers.SerializerMethodField()
     is_acknowledged = serializers.SerializerMethodField()
     acknowledged_at = serializers.SerializerMethodField()
-    is_overdue = serializers.SerializerMethodField()
-    quiz_required = serializers.SerializerMethodField()
-    quiz_passed = serializers.SerializerMethodField()
-    report_required_today = serializers.SerializerMethodField()
-    report_submitted_today = serializers.SerializerMethodField()
+    has_feedback = serializers.SerializerMethodField()
+    has_passed_quiz = serializers.SerializerMethodField()
+    is_read = serializers.SerializerMethodField()
+    read_at = serializers.SerializerMethodField()
+    requires_quiz = serializers.SerializerMethodField()
+    quiz_questions = serializers.SerializerMethodField()
 
     class Meta:
         model = Regulation
@@ -35,41 +30,31 @@ class RegulationSerializer(serializers.ModelSerializer):
             "description",
             "type",
             "content",
-            "file_url",
             "action",
             "is_mandatory_on_day_one",
-            "read_deadline_at",
-            "is_overdue",
-            "quiz_required",
-            "quiz_passed",
-            "report_required_today",
-            "report_submitted_today",
             "is_acknowledged",
             "acknowledged_at",
             "position",
+            "quiz_question",
+            "quiz_questions",
+            "requires_quiz",
+            "has_feedback",
+            "has_passed_quiz",
+            "is_read",
+            "read_at",
         )
 
     def get_content(self, obj):
         if obj.type == Regulation.RegulationType.LINK:
             return obj.external_url
         if obj.type == Regulation.RegulationType.FILE and obj.file:
-            request = self.context.get("request")
-            if request:
-                return request.build_absolute_uri(obj.file.url)
-            return obj.file.url
-        return None
-
-    def get_file_url(self, obj):
-        if obj.type == Regulation.RegulationType.FILE and obj.file:
-            request = self.context.get("request")
-            if request:
-                return request.build_absolute_uri(obj.file.url)
             return obj.file.url
         return None
 
     def get_action(self, obj):
-        # File can also be opened by URL in browser; keep action unified for frontend.
-        return "open"
+        if obj.type == Regulation.RegulationType.LINK:
+            return "open"
+        return "download"
 
     def _ack(self, obj):
         request = self.context.get("request")
@@ -92,53 +77,82 @@ class RegulationSerializer(serializers.ModelSerializer):
         ack = self._ack(obj)
         return ack.acknowledged_at if ack else None
 
-    def get_is_overdue(self, obj):
-        if not obj.read_deadline_at:
-            return False
+    def get_has_feedback(self, obj):
+        feedback_map = self.context.get("feedback_map")
+        if feedback_map is not None:
+            return bool(feedback_map.get(obj.id))
+
         request = self.context.get("request")
         if not request or not request.user.is_authenticated:
             return False
+        return RegulationFeedback.objects.filter(user=request.user, regulation=obj).exists()
 
-        progress_map = self.context.get("read_progress_map") or {}
-        progress = progress_map.get(obj.id)
-        if progress and progress.is_read:
-            return False
-        return timezone.now() > obj.read_deadline_at
+    def get_has_passed_quiz(self, obj):
+        if not obj.requires_quiz:
+            return True
+        knowledge_map = self.context.get("knowledge_map")
+        if knowledge_map is not None:
+            return bool(knowledge_map.get(obj.id))
 
-    def get_quiz_required(self, obj):
-        quiz_required_map = self.context.get("quiz_required_map")
-        if quiz_required_map is not None:
-            return bool(quiz_required_map.get(obj.id, False))
-        return RegulationQuiz.objects.filter(regulation=obj, is_active=True).exists()
-
-    def get_quiz_passed(self, obj):
         request = self.context.get("request")
         if not request or not request.user.is_authenticated:
             return False
-        quiz_passed_map = self.context.get("quiz_passed_map") or {}
-        return bool(quiz_passed_map.get(obj.id, False))
+        return RegulationKnowledgeCheck.objects.filter(
+            user=request.user,
+            regulation=obj,
+            is_passed=True,
+        ).exists()
 
-    def get_report_required_today(self, obj):
+    def get_requires_quiz(self, obj):
+        return obj.requires_quiz
+
+    def get_quiz_questions(self, obj):
+        questions = obj.quiz_questions or []
+        sanitized = []
+        for item in questions:
+            if not isinstance(item, dict):
+                continue
+            question = str(item.get("question", "")).strip()
+            options = item.get("options") or []
+            if question:
+                sanitized.append(
+                    {
+                        "question": question,
+                        "options": [str(opt).strip() for opt in options if str(opt).strip()],
+                    }
+                )
+        return sanitized
+
+    def get_is_read(self, obj):
+        read_map = self.context.get("read_map")
+        if read_map is not None:
+            return bool(read_map.get(obj.id))
+
         request = self.context.get("request")
         if not request or not request.user.is_authenticated:
             return False
-        progress_map = self.context.get("read_progress_map") or {}
-        progress = progress_map.get(obj.id)
-        if not progress or not progress.is_read or not progress.read_at:
-            return False
-        return progress.read_at.date() == timezone.localdate()
+        return RegulationReadProgress.objects.filter(
+            user=request.user,
+            regulation=obj,
+            is_read=True,
+        ).exists()
 
-    def get_report_submitted_today(self, obj):
+    def get_read_at(self, obj):
+        read_at_map = self.context.get("read_at_map")
+        if read_at_map is not None:
+            return read_at_map.get(obj.id)
+
         request = self.context.get("request")
         if not request or not request.user.is_authenticated:
-            return False
-        report_map = self.context.get("read_report_map") or {}
-        return bool(report_map.get(obj.id, False))
+            return None
+        progress = RegulationReadProgress.objects.filter(
+            user=request.user,
+            regulation=obj,
+        ).first()
+        return progress.read_at if progress and progress.is_read else None
 
 
 class RegulationAdminSerializer(serializers.ModelSerializer):
-    file_url = serializers.SerializerMethodField(read_only=True)
-
     class Meta:
         model = Regulation
         fields = (
@@ -148,23 +162,18 @@ class RegulationAdminSerializer(serializers.ModelSerializer):
             "type",
             "external_url",
             "file",
-            "file_url",
             "position",
             "is_active",
             "is_mandatory_on_day_one",
-            "read_deadline_at",
+            "language",
+            "quiz_question",
+            "quiz_expected_answer",
+            "quiz_questions",
+            "quiz_allowed_mistakes",
             "created_at",
             "updated_at",
         )
         read_only_fields = ("id", "created_at", "updated_at")
-
-    def get_file_url(self, obj):
-        if obj.type == Regulation.RegulationType.FILE and obj.file:
-            request = self.context.get("request")
-            if request:
-                return request.build_absolute_uri(obj.file.url)
-            return obj.file.url
-        return None
 
     def validate(self, attrs):
         reg_type = attrs.get("type", getattr(self.instance, "type", None))
@@ -174,14 +183,14 @@ class RegulationAdminSerializer(serializers.ModelSerializer):
         if reg_type == Regulation.RegulationType.LINK:
             if not external_url:
                 raise serializers.ValidationError(
-                    {"external_url": "Для типа 'link' ссылка обязательна."}
+                    {"external_url": "For type 'link' external_url is required."}
                 )
             attrs["file"] = None
 
         if reg_type == Regulation.RegulationType.FILE:
             if not file:
                 raise serializers.ValidationError(
-                    {"file": "Для типа 'file' файл обязателен."}
+                    {"file": "For type 'file' file is required."}
                 )
             attrs["external_url"] = None
 
@@ -216,47 +225,17 @@ class RegulationFeedbackCreateSerializer(serializers.ModelSerializer):
         fields = ("text",)
 
 
-class RegulationReadReportCreateSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = RegulationReadReport
-        fields = ("report_text",)
-
-
-class RegulationQuizOptionSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = RegulationQuizOption
-        fields = ("id", "text", "position")
-
-
-class RegulationQuizQuestionSerializer(serializers.ModelSerializer):
-    options = RegulationQuizOptionSerializer(many=True, read_only=True)
-
-    class Meta:
-        model = RegulationQuizQuestion
-        fields = ("id", "text", "position", "options")
-
-
-class RegulationQuizSerializer(serializers.ModelSerializer):
-    questions = RegulationQuizQuestionSerializer(many=True, read_only=True)
-
-    class Meta:
-        model = RegulationQuiz
-        fields = ("id", "regulation", "title", "description", "passing_score", "questions")
-        read_only_fields = fields
-
-
 class RegulationQuizSubmitSerializer(serializers.Serializer):
-    answers = serializers.DictField(
-        child=serializers.IntegerField(min_value=1),
-        allow_empty=False,
-        help_text="Mapping question_id -> selected option_id",
+    answer = serializers.CharField(required=False, allow_blank=False, trim_whitespace=True)
+    answers = serializers.ListField(
+        required=False,
+        child=serializers.CharField(allow_blank=True, trim_whitespace=True),
     )
 
-
-class RegulationQuizResultSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = RegulationQuizAttempt
-        fields = ("score_percent", "passed", "submitted_at")
+    def validate(self, attrs):
+        if not attrs.get("answer") and not attrs.get("answers"):
+            raise serializers.ValidationError("Either 'answer' or 'answers' must be provided.")
+        return attrs
 
 
 class InternOnboardingRequestSerializer(serializers.ModelSerializer):

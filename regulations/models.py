@@ -4,7 +4,6 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import FileExtensionValidator
 from django.db import models
-from django.utils import timezone
 
 
 def validate_regulation_file_size(value):
@@ -38,7 +37,7 @@ class Regulation(models.Model):
         verbose_name="Файл",
         validators=[
             FileExtensionValidator(
-                allowed_extensions=["pdf", "doc", "docx", "xls", "xlsx", "txt", "ppt", "pptx"]
+                allowed_extensions=["pdf"]
             ),
             validate_regulation_file_size,
         ],
@@ -55,11 +54,20 @@ class Regulation(models.Model):
         default=Language.RU,
         verbose_name="Язык",
     )
-    # Legacy inline quiz fields kept for DB compatibility with old schema.
-    # New quiz flow uses RegulationQuiz* models below.
-    quiz_question = models.TextField(blank=True, default="")
-    quiz_expected_answer = models.TextField(blank=True, default="")
-    read_deadline_at = models.DateTimeField(null=True, blank=True, verbose_name="Дедлайн прочтения")
+    quiz_question = models.TextField(blank=True)
+    quiz_expected_answer = models.TextField(
+        blank=True,
+        help_text="If empty, non-empty user answer is enough to pass knowledge check.",
+    )
+    quiz_questions = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="List of quiz questions: [{question, options: [], correct_answer}]",
+    )
+    quiz_allowed_mistakes = models.PositiveSmallIntegerField(
+        default=1,
+        help_text="How many mistakes are allowed to pass quiz.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True, null=True)
 
@@ -89,10 +97,18 @@ class Regulation(models.Model):
         self.full_clean()
         return super().save(*args, **kwargs)
 
+    @property
+    def requires_quiz(self) -> bool:
+        return bool(
+            (self.quiz_question or "").strip()
+            or (self.quiz_expected_answer or "").strip()
+            or len(self.quiz_questions or []) > 0
+        )
+
 
 class RegulationAcknowledgement(models.Model):
     user = models.ForeignKey(
-        "accounts.User",
+        settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name="regulation_acknowledgements",
         verbose_name="Пользователь",
@@ -153,103 +169,27 @@ class RegulationFeedback(models.Model):
         ordering = ["-created_at"]
 
 
-class RegulationReadReport(models.Model):
+class RegulationKnowledgeCheck(models.Model):
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name="regulation_read_reports",
+        related_name="regulation_knowledge_checks",
     )
     regulation = models.ForeignKey(
         Regulation,
         on_delete=models.CASCADE,
-        related_name="read_reports",
+        related_name="knowledge_checks",
     )
-    report_text = models.TextField()
-    # Calendar date when regulation was opened/read by the user.
-    opened_on = models.DateField()
-    submitted_at = models.DateTimeField(default=timezone.now)
-    is_late = models.BooleanField(default=False)
+    answer = models.TextField()
+    answers_json = models.JSONField(default=list, blank=True)
+    score = models.PositiveIntegerField(default=0)
+    total_questions = models.PositiveIntegerField(default=0)
+    incorrect_answers = models.PositiveIntegerField(default=0)
+    is_passed = models.BooleanField(default=False)
+    submitted_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ("user", "regulation", "opened_on")
-        ordering = ["-submitted_at"]
-
-
-class RegulationQuiz(models.Model):
-    regulation = models.OneToOneField(
-        Regulation,
-        on_delete=models.CASCADE,
-        related_name="quiz",
-    )
-    title = models.CharField(max_length=255)
-    description = models.TextField(blank=True)
-    is_active = models.BooleanField(default=True)
-    passing_score = models.PositiveSmallIntegerField(default=70)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ["-created_at"]
-
-    def clean(self):
-        super().clean()
-        if self.passing_score < 1 or self.passing_score > 100:
-            raise ValidationError({"passing_score": "Passing score must be between 1 and 100."})
-
-    def __str__(self):
-        return f"Quiz for {self.regulation.title}"
-
-
-class RegulationQuizQuestion(models.Model):
-    quiz = models.ForeignKey(
-        RegulationQuiz,
-        on_delete=models.CASCADE,
-        related_name="questions",
-    )
-    text = models.TextField()
-    position = models.PositiveIntegerField(default=0)
-
-    class Meta:
-        ordering = ["position", "id"]
-
-    def __str__(self):
-        return f"Q{self.position}: {self.text[:60]}"
-
-
-class RegulationQuizOption(models.Model):
-    question = models.ForeignKey(
-        RegulationQuizQuestion,
-        on_delete=models.CASCADE,
-        related_name="options",
-    )
-    text = models.CharField(max_length=500)
-    is_correct = models.BooleanField(default=False)
-    position = models.PositiveIntegerField(default=0)
-
-    class Meta:
-        ordering = ["position", "id"]
-
-    def __str__(self):
-        return self.text
-
-
-class RegulationQuizAttempt(models.Model):
-    user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="regulation_quiz_attempts",
-    )
-    quiz = models.ForeignKey(
-        RegulationQuiz,
-        on_delete=models.CASCADE,
-        related_name="attempts",
-    )
-    score_percent = models.PositiveSmallIntegerField(default=0)
-    passed = models.BooleanField(default=False)
-    submitted_at = models.DateTimeField(default=timezone.now)
-
-    class Meta:
-        ordering = ["-submitted_at"]
+        unique_together = ("user", "regulation")
 
 
 class InternOnboardingRequest(models.Model):

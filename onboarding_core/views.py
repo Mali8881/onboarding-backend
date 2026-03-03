@@ -11,7 +11,8 @@ from rest_framework.viewsets import ModelViewSet
 from rest_framework.views import APIView
 
 from accounts.permissions import HasPermission
-from accounts.models import Role
+from accounts.access_policy import AccessPolicy
+from accounts.models import Role, User
 from apps.audit import AuditEvents, log_event
 from apps.tasks.models import Board, Column, Task
 from regulations.models import (
@@ -53,6 +54,10 @@ def _get_day_one_regulations_queryset(day):
     if day.day_number == 1:
         return Regulation.objects.filter(is_active=True).order_by("position", "-created_at")
     return day.regulations.filter(is_active=True).order_by("position", "-created_at")
+
+
+def _regulation_requires_quiz(regulation: Regulation) -> bool:
+    return bool(regulation.requires_quiz)
 
 
 def _get_first_incomplete_previous_day(user, day):
@@ -269,7 +274,7 @@ class CompleteOnboardingDayView(APIView):
                             steps.append("read")
                         if reg.id not in feedback_ids:
                             steps.append("feedback")
-                        if reg.id not in quiz_ids:
+                        if _regulation_requires_quiz(reg) and reg.id not in quiz_ids:
                             steps.append("quiz")
                         if steps:
                             missing_steps.append(
@@ -522,4 +527,168 @@ class AdminOnboardingProgressViewSet(ModelViewSet):
             qs = qs.filter(day__day_number=day_number)
 
         return qs
+
+
+class InternOnboardingProgressDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _can_view(self, actor, target):
+        if actor.id == target.id:
+            return True
+        if AccessPolicy.is_super_admin(actor) or AccessPolicy.is_main_admin(actor):
+            return True
+        if AccessPolicy.is_admin(actor):
+            return bool(actor.department_id and actor.department_id == target.department_id)
+        if AccessPolicy.is_teamlead(actor):
+            return target.manager_id == actor.id
+        return False
+
+    def get(self, request, user_id):
+        target = get_object_or_404(
+            User.objects.select_related("role", "department", "subdivision", "manager"),
+            id=user_id,
+            is_active=True,
+        )
+        if not self._can_view(request.user, target):
+            return Response({"detail": "Access denied."}, status=drf_status.HTTP_403_FORBIDDEN)
+
+        days = list(OnboardingDay.objects.filter(is_active=True).order_by("position", "day_number"))
+        progress_qs = OnboardingProgress.objects.filter(user=target, day__in=days).select_related("day")
+        progress_map = {item.day_id: item for item in progress_qs}
+
+        report_qs = OnboardingReport.objects.filter(user=target, day__in=days).select_related("day")
+        reports = [
+            {
+                "id": str(item.id),
+                "day_id": str(item.day_id),
+                "day_number": item.day.day_number if item.day_id else None,
+                "status": item.status,
+                "updated_at": item.updated_at,
+            }
+            for item in report_qs
+        ]
+
+        day_progress = []
+        current_day = None
+        completed_days = 0
+        for day in days:
+            progress = progress_map.get(day.id)
+            status = progress.status if progress else OnboardingProgress.Status.NOT_STARTED
+            if status == OnboardingProgress.Status.DONE:
+                completed_days += 1
+            if current_day is None and status != OnboardingProgress.Status.DONE:
+                current_day = day
+            day_progress.append(
+                {
+                    "day_id": str(day.id),
+                    "day_number": day.day_number,
+                    "status": status,
+                    "completed_at": progress.completed_at if progress else None,
+                }
+            )
+        if current_day is None and days:
+            current_day = days[-1]
+
+        tasks = (
+            Task.objects.filter(assignee=target)
+            .select_related("column", "onboarding_day")
+            .order_by("-updated_at")
+        )
+        task_rows = [
+            {
+                "id": item.id,
+                "title": item.title,
+                "column": item.column.name if item.column_id else "",
+                "priority": item.priority,
+                "onboarding_day_id": str(item.onboarding_day_id) if item.onboarding_day_id else None,
+                "onboarding_day_number": item.onboarding_day.day_number if item.onboarding_day_id else None,
+                "updated_at": item.updated_at,
+            }
+            for item in tasks
+        ]
+
+        regulation_rows = []
+        is_intern = bool(target.role_id and target.role.name == Role.Name.INTERN)
+        if is_intern:
+            regulations = list(Regulation.objects.filter(is_active=True).order_by("position", "-created_at"))
+            reg_ids = [item.id for item in regulations]
+            read_map = {
+                item.regulation_id: item
+                for item in RegulationReadProgress.objects.filter(user=target, regulation_id__in=reg_ids)
+            }
+            feedback_map = {
+                item.regulation_id: item
+                for item in RegulationFeedback.objects.filter(user=target, regulation_id__in=reg_ids).order_by("-created_at")
+            }
+            quiz_map = {
+                item.regulation_id: item
+                for item in RegulationKnowledgeCheck.objects.filter(user=target, regulation_id__in=reg_ids)
+            }
+            day_relations = {}
+            for day in days:
+                for reg_id in day.regulations.values_list("id", flat=True):
+                    current = day_relations.get(reg_id)
+                    if current is None or day.day_number < current:
+                        day_relations[reg_id] = day.day_number
+
+            for reg in regulations:
+                read_item = read_map.get(reg.id)
+                feedback_item = feedback_map.get(reg.id)
+                quiz_item = quiz_map.get(reg.id)
+                requires_quiz = bool(reg.requires_quiz)
+                if not read_item or not read_item.is_read:
+                    step = "read"
+                elif not feedback_item:
+                    step = "feedback"
+                elif requires_quiz and not (quiz_item and quiz_item.is_passed):
+                    step = "quiz"
+                else:
+                    step = "done"
+
+                regulation_rows.append(
+                    {
+                        "id": str(reg.id),
+                        "title": reg.title,
+                        "day_number": day_relations.get(reg.id, 1),
+                        "position": reg.position,
+                        "step": step,
+                        "is_read": bool(read_item and read_item.is_read),
+                        "read_at": read_item.read_at if read_item else None,
+                        "feedback": feedback_item.text if feedback_item else "",
+                        "feedback_at": feedback_item.created_at if feedback_item else None,
+                        "quiz_required": requires_quiz,
+                        "quiz_passed": bool(quiz_item and quiz_item.is_passed) if requires_quiz else True,
+                        "quiz_score": quiz_item.score if quiz_item else 0,
+                        "quiz_total": quiz_item.total_questions if quiz_item else 0,
+                        "quiz_incorrect": quiz_item.incorrect_answers if quiz_item else 0,
+                        "quiz_submitted_at": quiz_item.submitted_at if quiz_item else None,
+                    }
+                )
+
+        return Response(
+            {
+                "user": {
+                    "id": target.id,
+                    "username": target.username,
+                    "full_name": f"{target.first_name} {target.last_name}".strip() or target.username,
+                    "role": target.role.name if target.role_id else "",
+                    "department": target.department.name if target.department_id else "",
+                    "subdivision": target.subdivision.name if target.subdivision_id else "",
+                    "manager": (
+                        f"{target.manager.first_name} {target.manager.last_name}".strip() or target.manager.username
+                        if target.manager_id
+                        else ""
+                    ),
+                },
+                "overview": {
+                    "completed_days": completed_days,
+                    "total_days": len(days),
+                    "current_day_number": current_day.day_number if current_day else None,
+                },
+                "day_progress": day_progress,
+                "regulations": regulation_rows,
+                "tasks": task_rows,
+                "reports": reports,
+            }
+        )
 

@@ -1,4 +1,4 @@
-from django.urls import path
+﻿from django.urls import path
 from .views import (
     AdminApproveInternOnboardingAPIView,
     AdminInternOnboardingRequestListAPIView,
@@ -9,9 +9,9 @@ from .views import (
     RegulationAdminDetailAPIView,
     RegulationAdminListCreateAPIView,
     RegulationDetailAPIView,
+    RegulationDownloadAPIView,
+    RegulationViewAPIView,
     RegulationFeedbackCreateAPIView,
-    RegulationReadReportCreateAPIView,
-    RegulationQuizDetailAPIView,
     RegulationQuizSubmitAPIView,
     RegulationListAPIView,
     StartInternOnboardingAPIView,
@@ -24,10 +24,10 @@ urlpatterns = [
     path("intern/start/", StartInternOnboardingAPIView.as_view(), name="intern-onboarding-start"),
     path("intern/submit/", SubmitInternOnboardingAPIView.as_view(), name="intern-onboarding-submit"),
     path("<uuid:regulation_id>/read/", MarkRegulationReadAPIView.as_view(), name="regulation-read"),
-    path("<uuid:regulation_id>/read-report/", RegulationReadReportCreateAPIView.as_view(), name="regulation-read-report"),
-    path("<uuid:regulation_id>/quiz/", RegulationQuizDetailAPIView.as_view(), name="regulation-quiz"),
-    path("<uuid:regulation_id>/quiz/submit/", RegulationQuizSubmitAPIView.as_view(), name="regulation-quiz-submit"),
     path("<uuid:regulation_id>/feedback/", RegulationFeedbackCreateAPIView.as_view(), name="regulation-feedback"),
+    path("<uuid:regulation_id>/quiz/", RegulationQuizSubmitAPIView.as_view(), name="regulation-quiz"),
+    path("<uuid:regulation_id>/download/", RegulationDownloadAPIView.as_view(), name="regulation-download"),
+    path("<uuid:regulation_id>/view/", RegulationViewAPIView.as_view(), name="regulation-view"),
     path("first-day/mandatory/", FirstDayMandatoryRegulationsAPIView.as_view(), name="regulations-first-day-mandatory"),
     path("<uuid:id>/acknowledge/", RegulationAcknowledgeAPIView.as_view(), name="regulations-acknowledge"),
     path("<uuid:id>/", RegulationDetailAPIView.as_view(), name="regulations-detail"),

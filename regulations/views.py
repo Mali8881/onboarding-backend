@@ -1,5 +1,10 @@
+import mimetypes
+from pathlib import Path
+from django.http import FileResponse
 from django.db import transaction
 from django.utils import timezone
+from django.shortcuts import get_object_or_404
+
 from accounts.access_policy import AccessPolicy
 from accounts.models import Role, User
 from common.models import Notification
@@ -10,10 +15,9 @@ from rest_framework.generics import (
     RetrieveAPIView,
     RetrieveUpdateDestroyAPIView,
 )
-from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from django.shortcuts import get_object_or_404
+from rest_framework.views import APIView
 
 from .audit import RegulationsAuditService
 from .models import (
@@ -21,24 +25,18 @@ from .models import (
     Regulation,
     RegulationAcknowledgement,
     RegulationFeedback,
-    RegulationReadReport,
-    RegulationQuiz,
-    RegulationQuizAttempt,
-    RegulationQuizOption,
+    RegulationKnowledgeCheck,
     RegulationReadProgress,
 )
 from .permissions import IsAdminLike
 from .serializers import (
     InternOnboardingRequestSerializer,
-    RegulationSerializer,
-    RegulationAdminSerializer,
     RegulationAcknowledgementSerializer,
+    RegulationAdminSerializer,
     RegulationFeedbackCreateSerializer,
-    RegulationReadReportCreateSerializer,
-    RegulationQuizResultSerializer,
-    RegulationQuizSerializer,
     RegulationQuizSubmitSerializer,
     RegulationReadProgressSerializer,
+    RegulationSerializer,
 )
 
 
@@ -47,11 +45,13 @@ class RegulationListAPIView(ListAPIView):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        queryset = Regulation.objects.filter(
-            is_active=True,
-        )
+        queryset = Regulation.objects.filter(is_active=True)
+        language = (self.request.query_params.get("language") or "").strip().lower()
         regulation_type = self.request.query_params.get("type")
         query = self.request.query_params.get("q")
+
+        if language in {Regulation.Language.RU, Regulation.Language.EN}:
+            queryset = queryset.filter(language=language)
         if regulation_type in {Regulation.RegulationType.LINK, Regulation.RegulationType.FILE}:
             queryset = queryset.filter(type=regulation_type)
         if query:
@@ -60,61 +60,44 @@ class RegulationListAPIView(ListAPIView):
 
     def list(self, request, *args, **kwargs):
         queryset = self.get_queryset()
-        read_progress_map = {
-            progress.regulation_id: progress
-            for progress in RegulationReadProgress.objects.filter(
-                user=request.user,
-                regulation__in=queryset,
-            )
-        }
-        today = timezone.localdate()
-        required_today_ids = {
-            rid
-            for rid, progress in read_progress_map.items()
-            if progress.is_read and progress.read_at and progress.read_at.date() == today
-        }
-        read_report_map = {
-            report.regulation_id: True
-            for report in RegulationReadReport.objects.filter(
-                user=request.user,
-                regulation__in=queryset,
-                opened_on=today,
-            )
-        }
-        quiz_required_map = {
-            regulation_id: True
-            for regulation_id in RegulationQuiz.objects.filter(
-                regulation__in=queryset,
-                is_active=True,
-            ).values_list("regulation_id", flat=True)
-        }
-        quiz_passed_map = {
-            attempt.quiz.regulation_id: True
-            for attempt in RegulationQuizAttempt.objects.filter(
-                user=request.user,
-                passed=True,
-                quiz__regulation__in=queryset,
-                quiz__is_active=True,
-            ).select_related("quiz")
-        }
+
         ack_map = {
             ack.regulation_id: ack
-            for ack in RegulationAcknowledgement.objects.filter(
+            for ack in RegulationAcknowledgement.objects.filter(user=request.user, regulation__in=queryset)
+        }
+        feedback_map = {
+            regulation_id: True
+            for regulation_id in RegulationFeedback.objects.filter(
                 user=request.user,
                 regulation__in=queryset,
-            )
+            ).values_list("regulation_id", flat=True)
         }
+        knowledge_map = {
+            regulation_id: True
+            for regulation_id in RegulationKnowledgeCheck.objects.filter(
+                user=request.user,
+                regulation__in=queryset,
+                is_passed=True,
+            ).values_list("regulation_id", flat=True)
+        }
+        read_progress = RegulationReadProgress.objects.filter(
+            user=request.user,
+            regulation__in=queryset,
+            is_read=True,
+        )
+        read_map = {item.regulation_id: True for item in read_progress}
+        read_at_map = {item.regulation_id: item.read_at for item in read_progress}
+
         serializer = self.get_serializer(
             queryset,
             many=True,
             context={
                 "request": request,
                 "ack_map": ack_map,
-                "read_progress_map": read_progress_map,
-                "read_report_map": read_report_map,
-                "quiz_required_map": quiz_required_map,
-                "quiz_passed_map": quiz_passed_map,
-                "required_today_ids": required_today_ids,
+                "feedback_map": feedback_map,
+                "knowledge_map": knowledge_map,
+                "read_map": read_map,
+                "read_at_map": read_at_map,
             },
         )
         return Response(serializer.data)
@@ -126,49 +109,77 @@ class RegulationDetailAPIView(RetrieveAPIView):
     lookup_field = "id"
 
     def get_queryset(self):
-        return Regulation.objects.filter(
-            is_active=True,
-        )
+        return Regulation.objects.filter(is_active=True)
 
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
         regulation_id = self.kwargs.get("id")
+
         if self.request.user.is_authenticated and regulation_id:
             ack = RegulationAcknowledgement.objects.filter(
                 user=self.request.user,
                 regulation_id=regulation_id,
             ).first()
+            has_feedback = RegulationFeedback.objects.filter(
+                user=self.request.user,
+                regulation_id=regulation_id,
+            ).exists()
+            has_passed_quiz = RegulationKnowledgeCheck.objects.filter(
+                user=self.request.user,
+                regulation_id=regulation_id,
+                is_passed=True,
+            ).exists()
             ctx["ack_map"] = {ack.regulation_id: ack} if ack else {}
+            ctx["feedback_map"] = {regulation_id: has_feedback}
+            ctx["knowledge_map"] = {regulation_id: has_passed_quiz}
             progress = RegulationReadProgress.objects.filter(
                 user=self.request.user,
                 regulation_id=regulation_id,
+                is_read=True,
             ).first()
-            ctx["read_progress_map"] = {progress.regulation_id: progress} if progress else {}
-            if progress and progress.read_at:
-                opened_on = progress.read_at.date()
-                has_report = RegulationReadReport.objects.filter(
-                    user=self.request.user,
-                    regulation_id=regulation_id,
-                    opened_on=opened_on,
-                ).exists()
-                ctx["read_report_map"] = {regulation_id: has_report}
-            else:
-                ctx["read_report_map"] = {}
-            quiz_required = RegulationQuiz.objects.filter(
-                regulation_id=regulation_id,
-                is_active=True,
-            ).exists()
-            ctx["quiz_required_map"] = {regulation_id: quiz_required}
-            quiz_passed = RegulationQuizAttempt.objects.filter(
-                user=self.request.user,
-                quiz__regulation_id=regulation_id,
-                quiz__is_active=True,
-                passed=True,
-            ).exists()
-            ctx["quiz_passed_map"] = {regulation_id: quiz_passed}
+            ctx["read_map"] = {regulation_id: bool(progress)}
+            ctx["read_at_map"] = {regulation_id: progress.read_at if progress else None}
+
         return ctx
 
 
+
+class RegulationDownloadAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, regulation_id):
+        regulation = get_object_or_404(Regulation, id=regulation_id, is_active=True)
+        if not regulation.file:
+            return Response({"detail": "Regulation file not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        file_path = Path(regulation.file.path)
+        if not file_path.exists():
+            return Response({"detail": "Regulation file not found on disk."}, status=status.HTTP_404_NOT_FOUND)
+
+        return FileResponse(file_path.open("rb"), as_attachment=True, filename=file_path.name)
+
+
+class RegulationViewAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, regulation_id):
+        regulation = get_object_or_404(Regulation, id=regulation_id, is_active=True)
+        if not regulation.file:
+            return Response({"detail": "Regulation file not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        file_path = Path(regulation.file.path)
+        if not file_path.exists():
+            return Response({"detail": "Regulation file not found on disk."}, status=status.HTTP_404_NOT_FOUND)
+
+        content_type, _ = mimetypes.guess_type(str(file_path))
+        response = FileResponse(
+            file_path.open("rb"),
+            as_attachment=False,
+            filename=file_path.name,
+            content_type=content_type or "application/octet-stream",
+        )
+        response["Content-Disposition"] = f'inline; filename="{file_path.name}"'
+        return response
 class RegulationAdminListCreateAPIView(ListCreateAPIView):
     serializer_class = RegulationAdminSerializer
     permission_classes = [IsAuthenticated, IsAdminLike]
@@ -271,37 +282,6 @@ class FirstDayMandatoryRegulationsAPIView(ListAPIView):
 
     def list(self, request, *args, **kwargs):
         queryset = self.get_queryset()
-        read_progress_map = {
-            progress.regulation_id: progress
-            for progress in RegulationReadProgress.objects.filter(
-                user=request.user,
-                regulation__in=queryset,
-            )
-        }
-        read_report_map = {
-            report.regulation_id: True
-            for report in RegulationReadReport.objects.filter(
-                user=request.user,
-                regulation__in=queryset,
-                opened_on=timezone.localdate(),
-            )
-        }
-        quiz_required_map = {
-            regulation_id: True
-            for regulation_id in RegulationQuiz.objects.filter(
-                regulation__in=queryset,
-                is_active=True,
-            ).values_list("regulation_id", flat=True)
-        }
-        quiz_passed_map = {
-            attempt.quiz.regulation_id: True
-            for attempt in RegulationQuizAttempt.objects.filter(
-                user=request.user,
-                passed=True,
-                quiz__regulation__in=queryset,
-                quiz__is_active=True,
-            ).select_related("quiz")
-        }
         ack_map = {
             ack.regulation_id: ack
             for ack in RegulationAcknowledgement.objects.filter(
@@ -309,16 +289,38 @@ class FirstDayMandatoryRegulationsAPIView(ListAPIView):
                 regulation__in=queryset,
             )
         }
+        feedback_map = {
+            regulation_id: True
+            for regulation_id in RegulationFeedback.objects.filter(
+                user=request.user,
+                regulation__in=queryset,
+            ).values_list("regulation_id", flat=True)
+        }
+        knowledge_map = {
+            regulation_id: True
+            for regulation_id in RegulationKnowledgeCheck.objects.filter(
+                user=request.user,
+                regulation__in=queryset,
+                is_passed=True,
+            ).values_list("regulation_id", flat=True)
+        }
+        read_progress = RegulationReadProgress.objects.filter(
+            user=request.user,
+            regulation__in=queryset,
+            is_read=True,
+        )
+        read_map = {item.regulation_id: True for item in read_progress}
+        read_at_map = {item.regulation_id: item.read_at for item in read_progress}
         serializer = self.get_serializer(
             queryset,
             many=True,
             context={
                 "request": request,
                 "ack_map": ack_map,
-                "read_progress_map": read_progress_map,
-                "read_report_map": read_report_map,
-                "quiz_required_map": quiz_required_map,
-                "quiz_passed_map": quiz_passed_map,
+                "feedback_map": feedback_map,
+                "knowledge_map": knowledge_map,
+                "read_map": read_map,
+                "read_at_map": read_at_map,
             },
         )
         data = serializer.data
@@ -347,42 +349,19 @@ class InternOnboardingOverviewAPIView(APIView):
             regulation__in=regulations,
         ).select_related("regulation")
         progress_map = {item.regulation_id: item for item in progresses}
-        required_report_ids = {
-            rid
-            for rid, progress in progress_map.items()
-            if progress.is_read and progress.read_at and progress.read_at.date() == timezone.localdate()
-        }
-        report_map = {
-            report.regulation_id: True
-            for report in RegulationReadReport.objects.filter(
+
+        feedback_ids = set(
+            RegulationFeedback.objects.filter(user=request.user, regulation__in=regulations).values_list(
+                "regulation_id", flat=True
+            )
+        )
+        quiz_ids = set(
+            RegulationKnowledgeCheck.objects.filter(
                 user=request.user,
                 regulation__in=regulations,
-                opened_on=timezone.localdate(),
-            )
-        }
-        quiz_required_map = {
-            regulation_id: True
-            for regulation_id in RegulationQuiz.objects.filter(
-                regulation__in=regulations,
-                is_active=True,
+                is_passed=True,
             ).values_list("regulation_id", flat=True)
-        }
-        quiz_passed_map = {
-            attempt.quiz.regulation_id: True
-            for attempt in RegulationQuizAttempt.objects.filter(
-                user=request.user,
-                passed=True,
-                quiz__regulation__in=regulations,
-                quiz__is_active=True,
-            ).select_related("quiz")
-        }
-        ack_map = {
-            ack.regulation_id: ack
-            for ack in RegulationAcknowledgement.objects.filter(
-                user=request.user,
-                regulation__in=regulations,
-            )
-        }
+        )
 
         items = []
         read_count = 0
@@ -393,27 +372,16 @@ class InternOnboardingOverviewAPIView(APIView):
                 read_count += 1
             items.append(
                 {
-                    "regulation": RegulationSerializer(
-                        regulation,
-                        context={
-                            "request": request,
-                            "ack_map": ack_map,
-                            "read_progress_map": progress_map,
-                            "read_report_map": report_map,
-                            "quiz_required_map": quiz_required_map,
-                            "quiz_passed_map": quiz_passed_map,
-                        },
-                    ).data,
+                    "regulation": RegulationSerializer(regulation, context={"request": request}).data,
                     "is_read": is_read,
                     "read_at": progress.read_at if progress else None,
+                    "has_feedback": regulation.id in feedback_ids,
+                    "has_passed_quiz": regulation.id in quiz_ids,
                 }
             )
 
         total_count = len(regulations)
         all_read = total_count > 0 and read_count == total_count
-        report_required_count = len(required_report_ids)
-        report_submitted_count = len([rid for rid in required_report_ids if report_map.get(rid)])
-        all_reports_submitted = report_required_count == report_submitted_count
         progress_percent = int((read_count / total_count) * 100) if total_count else 0
         latest_request = InternOnboardingRequest.objects.filter(user=request.user).first()
 
@@ -425,12 +393,9 @@ class InternOnboardingOverviewAPIView(APIView):
                 "read_regulations": read_count,
                 "progress_percent": progress_percent,
                 "all_read": all_read,
-                "report_required_count": report_required_count,
-                "report_submitted_count": report_submitted_count,
-                "all_reports_submitted": all_reports_submitted,
                 "next_step_message": (
-                    "Вы прочитали все регламенты. Подойдите к Жибек и подпишите документы об ознакомлении."
-                    if all_read and all_reports_submitted
+                    "Вы прочитали все регламенты. Подойдите к HR и подпишите документы об ознакомлении."
+                    if all_read
                     else ""
                 ),
                 "request_status": latest_request.status if latest_request else None,
@@ -504,139 +469,107 @@ class RegulationFeedbackCreateAPIView(APIView):
         )
 
 
-class RegulationReadReportCreateAPIView(APIView):
+class RegulationQuizSubmitAPIView(APIView):
     permission_classes = [IsAuthenticated]
+
+    @staticmethod
+    def _normalize(value: str) -> str:
+        return " ".join((value or "").strip().lower().split())
 
     def post(self, request, regulation_id):
         if not AccessPolicy.is_intern(request.user):
             return Response(
-                {"detail": "Only intern can submit regulation read report."},
+                {"detail": "Only intern can submit regulation quiz."},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
         regulation = Regulation.objects.filter(id=regulation_id, is_active=True).first()
         if not regulation:
             return Response({"detail": "Regulation not found."}, status=404)
-
-        progress = RegulationReadProgress.objects.filter(
-            user=request.user,
-            regulation=regulation,
-            is_read=True,
-        ).first()
-        if not progress or not progress.read_at:
+        if not regulation.requires_quiz:
             return Response(
-                {"detail": "Read/open regulation first before submitting report."},
-                status=status.HTTP_400_BAD_REQUEST,
+                {
+                    "is_passed": True,
+                    "detail": "Тест для этого регламента не требуется.",
+                }
             )
-
-        opened_on = progress.read_at.date()
-        serializer = RegulationReadReportCreateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        now_local_date = timezone.localdate()
-        report, created = RegulationReadReport.objects.get_or_create(
-            user=request.user,
-            regulation=regulation,
-            opened_on=opened_on,
-            defaults={
-                "report_text": serializer.validated_data["report_text"],
-                "submitted_at": timezone.now(),
-                "is_late": now_local_date > opened_on,
-            },
-        )
-        if not created:
-            report.report_text = serializer.validated_data["report_text"]
-            report.submitted_at = timezone.now()
-            report.is_late = now_local_date > opened_on
-            report.save(update_fields=["report_text", "submitted_at", "is_late"])
-
-        return Response(
-            {
-                "id": report.id,
-                "opened_on": report.opened_on,
-                "is_late": report.is_late,
-                "submitted_at": report.submitted_at,
-            },
-            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
-        )
-
-
-class RegulationQuizDetailAPIView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request, regulation_id):
-        regulation = Regulation.objects.filter(id=regulation_id, is_active=True).first()
-        if not regulation:
-            return Response({"detail": "Regulation not found."}, status=404)
-        quiz = RegulationQuiz.objects.filter(regulation=regulation, is_active=True).prefetch_related(
-            "questions__options"
-        ).first()
-        if not quiz:
-            return Response({"detail": "Quiz is not configured for this regulation."}, status=404)
-        return Response(RegulationQuizSerializer(quiz).data)
-
-
-class RegulationQuizSubmitAPIView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request, regulation_id):
-        regulation = Regulation.objects.filter(id=regulation_id, is_active=True).first()
-        if not regulation:
-            return Response({"detail": "Regulation not found."}, status=404)
-        quiz = RegulationQuiz.objects.filter(regulation=regulation, is_active=True).prefetch_related(
-            "questions__options"
-        ).first()
-        if not quiz:
-            return Response({"detail": "Quiz is not configured for this regulation."}, status=404)
 
         serializer = RegulationQuizSubmitSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        raw_questions = regulation.quiz_questions or []
+        quiz_questions = [item for item in raw_questions if isinstance(item, dict) and str(item.get("question", "")).strip()]
+        answer = serializer.validated_data.get("answer", "")
+        answers = serializer.validated_data.get("answers") or []
 
-        # Mark read automatically when user takes quiz after opening regulation.
-        progress, _ = RegulationReadProgress.objects.get_or_create(
+        if quiz_questions:
+            total = len(quiz_questions)
+            if len(answers) < total:
+                return Response(
+                    {
+                        "detail": f"Ответьте на все вопросы теста. Требуется: {total}.",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            normalized_answers = [self._normalize(value) for value in answers[:total]]
+            correct_answers = [self._normalize(str(item.get("correct_answer", ""))) for item in quiz_questions]
+            score = 0
+            for idx, expected in enumerate(correct_answers):
+                current = normalized_answers[idx] if idx < len(normalized_answers) else ""
+                if expected and current == expected:
+                    score += 1
+                elif not expected and len(current) >= 2:
+                    score += 1
+            incorrect = max(total - score, 0)
+            allowed = int(regulation.quiz_allowed_mistakes or 0)
+            is_passed = incorrect <= allowed
+            answer = "\n".join(answers[:total]).strip()
+        else:
+            normalized_answer = self._normalize(answer)
+            expected = self._normalize(regulation.quiz_expected_answer)
+            if expected:
+                is_passed = normalized_answer == expected
+            else:
+                is_passed = len(normalized_answer) >= 3
+            score = 1 if is_passed else 0
+            total = 1
+            incorrect = 0 if is_passed else 1
+            normalized_answers = [answer]
+
+        check, _ = RegulationKnowledgeCheck.objects.update_or_create(
             user=request.user,
             regulation=regulation,
+            defaults={
+                "answer": answer,
+                "answers_json": normalized_answers,
+                "score": score,
+                "total_questions": total,
+                "incorrect_answers": incorrect,
+                "is_passed": is_passed,
+            },
         )
-        if not progress.is_read:
-            progress.is_read = True
-            progress.read_at = timezone.now()
-            progress.save(update_fields=["is_read", "read_at"])
 
-        answers = serializer.validated_data["answers"]
-        questions = list(quiz.questions.all())
-        if not questions:
-            return Response({"detail": "Quiz has no questions."}, status=400)
+        if not is_passed:
+            RegulationReadProgress.objects.update_or_create(
+                user=request.user,
+                regulation=regulation,
+                defaults={"is_read": False, "read_at": None},
+            )
 
-        correct_count = 0
-        for question in questions:
-            selected = answers.get(str(question.id))
-            if selected is None:
-                continue
-            is_correct = RegulationQuizOption.objects.filter(
-                id=selected,
-                question=question,
-                is_correct=True,
-            ).exists()
-            if is_correct:
-                correct_count += 1
-
-        total = len(questions)
-        score_percent = int((correct_count / total) * 100) if total else 0
-        passed = score_percent >= quiz.passing_score
-
-        attempt = RegulationQuizAttempt.objects.create(
-            user=request.user,
-            quiz=quiz,
-            score_percent=score_percent,
-            passed=passed,
-        )
         return Response(
             {
-                "result": RegulationQuizResultSerializer(attempt).data,
-                "passing_score": quiz.passing_score,
-                "correct_answers": correct_count,
-                "questions_total": total,
-            },
-            status=201,
+                "id": check.id,
+                "is_passed": check.is_passed,
+                "score": check.score,
+                "total_questions": check.total_questions,
+                "incorrect_answers": check.incorrect_answers,
+                "submitted_at": check.submitted_at,
+                "restart_required": not check.is_passed,
+                "detail": (
+                    "Тест пройден."
+                    if check.is_passed
+                    else "Тест не пройден. Вернитесь к чтению этого регламента и попробуйте снова."
+                ),
+            }
         )
 
 
@@ -669,64 +602,12 @@ class SubmitInternOnboardingAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        today = timezone.localdate()
-        opened_today_ids = set(
-            RegulationReadProgress.objects.filter(
-                user=request.user,
-                regulation__in=active_regulations,
-                is_read=True,
-                read_at__date=today,
-            ).values_list("regulation_id", flat=True)
-        )
-        if opened_today_ids:
-            reported_today_ids = set(
-                RegulationReadReport.objects.filter(
-                    user=request.user,
-                    regulation_id__in=opened_today_ids,
-                    opened_on=today,
-                ).values_list("regulation_id", flat=True)
-            )
-            missing_report_ids = [str(reg_id) for reg_id in opened_today_ids if reg_id not in reported_today_ids]
-            if missing_report_ids:
-                return Response(
-                    {
-                        "detail": "Submit daily report for every regulation opened today.",
-                        "missing_report_regulation_ids": missing_report_ids,
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-        quiz_regulation_ids = list(
-            RegulationQuiz.objects.filter(
-                regulation__in=active_regulations,
-                is_active=True,
-            ).values_list("regulation_id", flat=True)
-        )
-        if quiz_regulation_ids:
-            passed_regulation_ids = set(
-                RegulationQuizAttempt.objects.filter(
-                    user=request.user,
-                    passed=True,
-                    quiz__is_active=True,
-                    quiz__regulation_id__in=quiz_regulation_ids,
-                ).values_list("quiz__regulation_id", flat=True)
-            )
-            missing_quiz_ids = [str(reg_id) for reg_id in quiz_regulation_ids if reg_id not in passed_regulation_ids]
-            if missing_quiz_ids:
-                return Response(
-                    {
-                        "detail": "Pass mini tests for all required regulations before completion submit.",
-                        "missing_quiz_regulation_ids": missing_quiz_ids,
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
         onboarding_request = InternOnboardingRequest.objects.create(user=request.user)
         request.user.intern_onboarding_completed_at = timezone.now()
         request.user.save(update_fields=["intern_onboarding_completed_at"])
 
         admin_qs = User.objects.filter(
-            role__name__in=[Role.Name.ADMINISTRATOR, Role.Name.ADMIN]
+            role__name__in=[Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN]
         ).select_related("role")
         Notification.objects.bulk_create(
             [
@@ -746,7 +627,7 @@ class SubmitInternOnboardingAPIView(APIView):
         return Response(
             {
                 "request_id": onboarding_request.id,
-                "message": "Заявка отправлена. Подойдите к Жибек и подпишите документы об ознакомлении.",
+                "message": "Заявка отправлена. Подойдите к HR и подпишите документы об ознакомлении.",
             },
             status=status.HTTP_201_CREATED,
         )
@@ -757,7 +638,7 @@ class AdminInternOnboardingRequestListAPIView(ListAPIView):
     serializer_class = InternOnboardingRequestSerializer
 
     def get_queryset(self):
-        if not AccessPolicy.is_admin_like(self.request.user):
+        if not (AccessPolicy.is_admin(self.request.user) or AccessPolicy.is_super_admin(self.request.user)):
             return InternOnboardingRequest.objects.none()
         status_value = self.request.query_params.get("status")
         qs = InternOnboardingRequest.objects.select_related("user", "reviewed_by")
@@ -770,9 +651,9 @@ class AdminApproveInternOnboardingAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, request_id):
-        if not AccessPolicy.is_admin_like(request.user):
+        if not (AccessPolicy.is_admin(request.user) or AccessPolicy.is_super_admin(request.user)):
             return Response(
-                {"detail": "Only operational admin can approve onboarding."},
+                {"detail": "Only admin or super admin can approve onboarding."},
                 status=status.HTTP_403_FORBIDDEN,
             )
 

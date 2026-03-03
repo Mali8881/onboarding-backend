@@ -30,6 +30,8 @@ from .frontend_compat_views import (
     FrontendSchedulesHolidaysAPIView,
     FrontendSchedulesMineAPIView,
     FrontendSchedulesWorkSchedulesAPIView,
+    FrontendSecurityForceLogoutAPIView,
+    FrontendSecurityUnlockUsersAPIView,
     FrontendUsersCollectionAPIView,
     FrontendUsersDetailAPIView,
     FrontendUsersSetRoleAPIView,
@@ -73,6 +75,8 @@ urlpatterns = [
     path("schedules/work-schedules/", FrontendSchedulesWorkSchedulesAPIView.as_view()),
     path("schedules/user-schedules/mine/", FrontendSchedulesMineAPIView.as_view()),
     path("schedules/holidays/", FrontendSchedulesHolidaysAPIView.as_view()),
+    path("security/unlock-users/", FrontendSecurityUnlockUsersAPIView.as_view()),
+    path("security/force-logout/", FrontendSecurityForceLogoutAPIView.as_view()),
     path("feedback/tickets/", FrontendFeedbackTicketsAPIView.as_view()),
     path("feedback/tickets/<uuid:ticket_id>/reply/", FrontendFeedbackReplyAPIView.as_view()),
 ]
