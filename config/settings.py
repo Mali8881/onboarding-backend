@@ -35,12 +35,15 @@ _load_dotenv(BASE_DIR / ".env")
 # ======================
 # SECURITY
 # ======================
-SECRET_KEY = os.environ.get(
-    "SECRET_KEY",
-    "dev-secret-key-change-me",
-)
-
 DEBUG = os.environ.get("DEBUG", "true").lower() == "true"
+
+_secret_key = os.environ.get("SECRET_KEY")
+if not _secret_key:
+    if DEBUG:
+        _secret_key = "dev-secret-key-change-me"
+    else:
+        raise RuntimeError("SECRET_KEY environment variable must be set in production (DEBUG=false)")
+SECRET_KEY = _secret_key
 
 ALLOWED_HOSTS = [
     host.strip()
@@ -136,7 +139,7 @@ else:
             "ENGINE": "django.db.backends.postgresql",
             "NAME": os.environ.get("DB_NAME", "onboarding"),
             "USER": os.environ.get("DB_USER", "postgres"),
-            "PASSWORD": os.environ.get("DB_PASSWORD", "baschytanka"),
+            "PASSWORD": os.environ.get("DB_PASSWORD", ""),
             "HOST": os.environ.get("DB_HOST", "127.0.0.1"),
             "PORT": os.environ.get("DB_PORT", "5432"),
         }

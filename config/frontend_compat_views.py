@@ -706,7 +706,10 @@ class FrontendPromotionRequestsAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        _ensure_admin_like(request.user)
+        if not AccessPolicy.is_admin_like(request.user):
+            # Frontend polls this endpoint for multiple roles.
+            # Return empty collection instead of 403 to keep non-admin dashboards stable.
+            return Response([])
         qs = PromotionRequest.objects.select_related("user", "requested_role", "reviewed_by").order_by("-created_at")
         status_value = (request.query_params.get("status") or "").strip().lower()
         if status_value in {PromotionRequest.Status.PENDING, PromotionRequest.Status.APPROVED, PromotionRequest.Status.REJECTED}:
@@ -1277,7 +1280,9 @@ class FrontendFeedbackTicketsAPIView(APIView):
         return bool(value)
 
     def get(self, request):
-        _ensure_admin_like(request.user)
+        if not AccessPolicy.is_admin_like(request.user):
+            # Keep endpoint readable for non-admin roles that still request it.
+            return Response([])
         qs = Feedback.objects.all().order_by("-created_at")
         return Response(
             [

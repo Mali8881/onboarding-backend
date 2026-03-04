@@ -1,6 +1,23 @@
 from django.urls import path
-from .views import *
-from .views import MyProfileAPIView, MyProfilePasswordAPIView
+from .views import (
+    LoginView,
+    MyProfileAPIView,
+    MyProfilePasswordAPIView,
+    MeTeamAPIView,
+    EmployeeHomeAPIView,
+    CompanyStructureAPIView,
+    PositionListAPIView,
+    PasswordResetRequestAPIView,
+    PasswordResetConfirmAPIView,
+    DepartmentListCreateAPIView,
+    DepartmentDetailAPIView,
+    SubdivisionListCreateAPIView,
+    SubdivisionDetailAPIView,
+    PositionListCreateAPIView,
+    PositionDetailAPIView,
+    OrgStructureAPIView,
+    MyInternSubdivisionAPIView,
+)
 
 
 
