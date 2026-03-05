@@ -10,6 +10,11 @@ class NotificationSerializer(serializers.ModelSerializer):
             "title",
             "message",
             "type",
+            "code",
+            "severity",
+            "entity_type",
+            "entity_id",
+            "action_url",
             "is_read",
             "created_at",
         )

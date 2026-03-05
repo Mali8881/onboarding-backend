@@ -6,8 +6,10 @@ from datetime import timedelta
 from django.db import transaction
 from django.utils import timezone
 
-from accounts.models import Role, User
+from accounts.access_policy import AccessPolicy
+from accounts.models import User
 from common.models import Notification
+from common.notification_codes import NotificationCode, NotificationEntity
 
 from .models import (
     ProductionCalendar,
@@ -233,7 +235,7 @@ def notify_admins_about_weekly_plan_deadline_miss(*, now=None):
         }
 
     target_users = User.objects.filter(is_active=True).exclude(
-        role__name__in=[Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN]
+        role__name__in=AccessPolicy.admin_recipient_role_names()
     )
     submitted_user_ids = set(
         WeeklyWorkPlan.objects.filter(week_start=week_start).values_list("user_id", flat=True)
@@ -251,7 +253,7 @@ def notify_admins_about_weekly_plan_deadline_miss(*, now=None):
 
     admins = User.objects.filter(
         is_active=True,
-        role__name__in=[Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN],
+        role__name__in=AccessPolicy.admin_recipient_role_names(),
     ).order_by("id")
     notified_count = 0
 
@@ -277,6 +279,11 @@ def notify_admins_about_weekly_plan_deadline_miss(*, now=None):
                         title="Не заполнен недельный график до дедлайна",
                         message=message,
                         type=Notification.Type.SYSTEM,
+                        code=NotificationCode.SCHEDULE_WEEKLY_PLAN_DEADLINE_MISSED,
+                        severity=Notification.Severity.WARNING,
+                        entity_type=NotificationEntity.WEEKLY_WORK_PLAN,
+                        entity_id=str(week_start),
+                        action_url=f"/admin/schedules?week_start={week_start.isoformat()}",
                     )
                     for admin in admins
                 ]

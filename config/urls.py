@@ -57,11 +57,11 @@ urlpatterns = [
     path("api/v1/kb/", include("apps.kb.urls")),
     path("api/v1/metrics/", include("apps.metrics.urls")),
     path("api/v1/bpm/", include("apps.bpm.urls")),
-    # Frontend compatibility endpoints are also exposed under /api/v1/*
-    # to support clients using the versioned prefix.
+    # Frontend compatibility endpoints: exposed on both /api/ and /api/v1/
+    # because the frontend uses /api/auth/*, /api/v1/auth/* paths interchangeably.
     path("api/v1/", include("config.frontend_compat_urls")),
-    path("api/", include("work_schedule.urls")),
     path("api/", include("config.frontend_compat_urls")),
+    path("api/", include("work_schedule.urls")),
 
     path("assets/<path:asset_path>", spa_asset, name="spa-asset"),
     path("vite.svg", spa_vite_icon, name="spa-vite-icon"),

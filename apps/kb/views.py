@@ -13,7 +13,7 @@ from accounts.access_policy import AccessPolicy
 from accounts.models import Role
 
 from .models import KBArticle, KBCategory, KBViewLog
-from .permissions import IsAdminLike
+from .permissions import CanManageKb
 from .serializers import KBArticleSerializer, KBCategorySerializer
 
 
@@ -131,13 +131,13 @@ class KBReportAPIView(APIView):
 class KBCategoryAdminViewSet(ModelViewSet):
     queryset = KBCategory.objects.all().order_by("name")
     serializer_class = KBCategorySerializer
-    permission_classes = [IsAuthenticated, IsAdminLike]
+    permission_classes = [IsAuthenticated, CanManageKb]
 
 
 class KBArticleAdminViewSet(ModelViewSet):
     queryset = KBArticle.objects.select_related("category", "department", "created_by").all()
     serializer_class = KBArticleSerializer
-    permission_classes = [IsAuthenticated, IsAdminLike]
+    permission_classes = [IsAuthenticated, CanManageKb]
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)

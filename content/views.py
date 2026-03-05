@@ -5,12 +5,16 @@ from rest_framework.views import APIView
 from rest_framework import status
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
+from typing import Optional
 
 from accounts.access_policy import AccessPolicy
 from accounts.models import Role, User
+from common.models import Notification
+from common.notification_codes import NotificationCode, NotificationEntity
 
 from .models import (
     News, WelcomeBlock, Feedback, Employee,
@@ -62,6 +66,18 @@ def has_courses_menu_access(user) -> tuple[bool, str]:
     return False, "Intern must complete regulation onboarding before accessing courses."
 
 
+def _feedback_admin_recipients(*, exclude_user_id: Optional[int] = None):
+    role_names = {
+        Role.Name.SUPER_ADMIN,
+        Role.Name.ADMINISTRATOR,
+        *AccessPolicy.LEGACY_SYSTEM_ADMIN_NAMES,
+    }
+    qs = User.objects.filter(is_active=True, role__name__in=role_names)
+    if exclude_user_id:
+        qs = qs.exclude(id=exclude_user_id)
+    return qs
+
+
 # ---------------- NEWS ----------------
 
 class NewsListAPIView(ListAPIView):
@@ -69,7 +85,7 @@ class NewsListAPIView(ListAPIView):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        language = self.request.query_params.get("language", "ru")
+        language = self.request.query_params.get("language") or getattr(self.request, "LANGUAGE_CODE", "ru")
         return News.objects.filter(
             is_active=True,
             language=language
@@ -231,6 +247,9 @@ class FeedbackCreateView(CreateAPIView):
 
     def perform_create(self, serializer):
         user = self.request.user
+        if AccessPolicy.is_super_admin(user) or AccessPolicy.is_administrator(user):
+            raise PermissionDenied("Superadmin/administrator should use feedback dashboard.")
+
         is_anonymous = serializer.validated_data.get("is_anonymous", True)
         full_name = None if is_anonymous else (f"{user.first_name} {user.last_name}".strip() or user.username)
         contact = None if is_anonymous else (user.email or user.phone or user.username)
@@ -240,6 +259,25 @@ class FeedbackCreateView(CreateAPIView):
             full_name=full_name,
             contact=contact,
         )
+
+        recipients = list(_feedback_admin_recipients(exclude_user_id=user.id).values_list("id", flat=True))
+        if recipients:
+            Notification.objects.bulk_create(
+                [
+                    Notification(
+                        user_id=recipient_id,
+                        title="Новый отзыв",
+                        message=f"Поступил новый отзыв от {user.username}.",
+                        type=Notification.Type.INFO,
+                        code=NotificationCode.FEEDBACK_NEW,
+                        severity=Notification.Severity.INFO,
+                        entity_type=NotificationEntity.FEEDBACK,
+                        entity_id=str(feedback.id),
+                        action_url="/admin/feedback",
+                    )
+                    for recipient_id in recipients
+                ]
+            )
         ContentAuditService.log_feedback_created(self.request, feedback)
 
 
@@ -265,7 +303,7 @@ class InstructionAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        lang = request.query_params.get("lang", "ru")
+        lang = request.query_params.get("lang") or getattr(request, "LANGUAGE_CODE", "ru")
         instruction = Instruction.objects.filter(language=lang, is_active=True).first()
 
         if not instruction:
@@ -313,7 +351,7 @@ class WelcomeBlockAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        language = request.query_params.get("language", "ru")
+        language = request.query_params.get("language") or getattr(request, "LANGUAGE_CODE", "ru")
         block = WelcomeBlock.objects.filter(
             language=language,
             is_active=True

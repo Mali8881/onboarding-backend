@@ -20,6 +20,9 @@ class TaskPolicy:
     def can_assign_task(cls, actor, assignee) -> bool:
         if cls.is_admin_like(actor):
             return True
+        # Any authenticated user can create a task for themselves
+        if actor.id == assignee.id:
+            return True
         return AccessPolicy.is_teamlead(actor) and assignee.manager_id == actor.id
 
     @classmethod

@@ -1,5 +1,6 @@
 ﻿from rest_framework import serializers
 
+from common.i18n import request_language, status_label
 from .models import (
     InternOnboardingRequest,
     Regulation,
@@ -240,6 +241,7 @@ class RegulationQuizSubmitSerializer(serializers.Serializer):
 
 class InternOnboardingRequestSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source="user.username", read_only=True)
+    status_label = serializers.SerializerMethodField()
 
     class Meta:
         model = InternOnboardingRequest
@@ -248,9 +250,13 @@ class InternOnboardingRequestSerializer(serializers.ModelSerializer):
             "user",
             "username",
             "status",
+            "status_label",
             "note",
             "requested_at",
             "reviewed_at",
             "reviewed_by",
         )
         read_only_fields = ("requested_at", "reviewed_at", "reviewed_by")
+
+    def get_status_label(self, obj):
+        return status_label(obj.status, request_language(self.context.get("request")))

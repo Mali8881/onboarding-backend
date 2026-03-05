@@ -5,6 +5,7 @@ from rest_framework.test import APIRequestFactory, APITestCase, force_authentica
 
 from accounts.models import Department, Permission, Role, User
 from content.models import Course, CourseEnrollment, Feedback
+from common.models import Notification
 from content.views import FeedbackCreateView
 from onboarding_core.models import OnboardingDay, OnboardingProgress
 
@@ -24,6 +25,10 @@ class FeedbackAccessTests(APITestCase):
         self.admin_role, _ = Role.objects.get_or_create(
             name=Role.Name.ADMIN,
             defaults={"level": Role.Level.ADMIN},
+        )
+        self.administrator_role, _ = Role.objects.get_or_create(
+            name=Role.Name.ADMINISTRATOR,
+            defaults={"level": Role.Level.ADMINISTRATOR},
         )
         self.admin_no_perm_role, _ = Role.objects.get_or_create(
             name="ADMIN_NO_FEEDBACK",
@@ -56,6 +61,14 @@ class FeedbackAccessTests(APITestCase):
             first_name="Admin",
             last_name="User",
         )
+        self.administrator = User.objects.create_user(
+            username="content_administrator",
+            password="StrongPass123!",
+            role=self.administrator_role,
+            email="administrator@example.com",
+            first_name="Main",
+            last_name="Admin",
+        )
         self.admin_no_perm = User.objects.create_user(
             username="content_admin_no_perm",
             password="StrongPass123!",
@@ -86,19 +99,28 @@ class FeedbackAccessTests(APITestCase):
         }
 
     @patch("content.views.ContentAuditService.log_feedback_created")
-    def test_all_roles_use_same_feedback_payload_and_can_be_anonymous(self, log_feedback_created):
-        users = [self.superadmin, self.admin, self.employee, self.intern]
+    def test_feedback_create_forbidden_for_superadmin_and_administrator(self, log_feedback_created):
+        for user in [self.superadmin, self.administrator]:
+            self.client.force_authenticate(user=user)
+            response = self.client.post("/api/v1/content/feedback/", self._feedback_payload(True), format="json")
+            self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+            self.assertFalse(Feedback.objects.filter(sender=user).exists())
+        log_feedback_created.assert_not_called()
+
+    @patch("content.views.ContentAuditService.log_feedback_created")
+    def test_allowed_roles_can_create_anonymous_feedback(self, log_feedback_created):
+        users = [self.admin, self.employee, self.intern]
         for user in users:
             self.client.force_authenticate(user=user)
             response = self.client.post("/api/v1/content/feedback/", self._feedback_payload(True), format="json")
             self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
             created = Feedback.objects.filter(sender=user).latest("created_at")
-            self.assertEqual(created.recipient, "SUPER_ADMIN")
+            self.assertEqual(created.recipient, "ADMIN")
             self.assertTrue(created.is_anonymous)
             self.assertIsNone(created.full_name)
             self.assertIsNone(created.contact)
-        self.assertEqual(log_feedback_created.call_count, 4)
+        self.assertEqual(log_feedback_created.call_count, 3)
 
     def test_non_anonymous_feedback_autofills_author(self):
         self.client.force_authenticate(user=self.employee)
@@ -106,10 +128,30 @@ class FeedbackAccessTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         created = Feedback.objects.get(sender=self.employee)
-        self.assertEqual(created.recipient, "SUPER_ADMIN")
+        self.assertEqual(created.recipient, "ADMIN")
         self.assertEqual(created.full_name, "Emp Loyee")
         self.assertEqual(created.contact, "employee@example.com")
         self.assertFalse(created.is_anonymous)
+
+    def test_feedback_create_generates_notifications_for_superadmin_and_administrator(self):
+        self.client.force_authenticate(user=self.employee)
+        response = self.client.post("/api/v1/content/feedback/", self._feedback_payload(True), format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        self.assertTrue(
+            Notification.objects.filter(
+                user=self.superadmin,
+                title="Новый отзыв",
+                type=Notification.Type.INFO,
+            ).exists()
+        )
+        self.assertTrue(
+            Notification.objects.filter(
+                user=self.administrator,
+                title="Новый отзыв",
+                type=Notification.Type.INFO,
+            ).exists()
+        )
 
     def test_feedback_admin_requires_feedback_manage_and_admin_like(self):
         self.client.force_authenticate(user=self.admin_no_perm)

@@ -4,6 +4,7 @@ from decimal import Decimal
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
+from common.i18n import role_label, status_label
 from .models import HourlyRateHistory, PayrollCompensation, PayrollRecord
 
 
@@ -22,6 +23,7 @@ class PayrollRecalculateSerializer(MonthQuerySerializer):
 class PayrollRecordSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source="user.username", read_only=True)
     is_calculated = serializers.BooleanField(read_only=True, default=True)
+    status_label = serializers.SerializerMethodField()
     pay_type = serializers.SerializerMethodField()
     hourly_rate = serializers.SerializerMethodField()
     minute_rate = serializers.SerializerMethodField()
@@ -38,6 +40,7 @@ class PayrollRecordSerializer(serializers.ModelSerializer):
             "total_salary",
             "bonus",
             "status",
+            "status_label",
             "calculated_at",
             "paid_at",
             "is_calculated",
@@ -47,6 +50,11 @@ class PayrollRecordSerializer(serializers.ModelSerializer):
             "fixed_salary",
         )
         read_only_fields = ("calculated_at", "paid_at", "is_calculated")
+
+    def get_status_label(self, obj):
+        request = self.context.get("request")
+        lang = getattr(request, "LANGUAGE_CODE", "ru") if request else "ru"
+        return status_label(obj.status, lang)
 
     @staticmethod
     def _compensation(user):
@@ -188,7 +196,8 @@ class PayrollCompensationUpdateSerializer(serializers.Serializer):
 
 class PayrollCompensationSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source="user.username", read_only=True)
-    role = serializers.CharField(source="user.role.name", read_only=True)
+    role = serializers.SerializerMethodField()
+    role_label = serializers.SerializerMethodField()
     current_hourly_rate = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
 
     class Meta:
@@ -197,6 +206,7 @@ class PayrollCompensationSerializer(serializers.ModelSerializer):
             "user",
             "username",
             "role",
+            "role_label",
             "pay_type",
             "hourly_rate",
             "minute_rate",
@@ -204,6 +214,25 @@ class PayrollCompensationSerializer(serializers.ModelSerializer):
             "current_hourly_rate",
             "updated_at",
         )
+
+    def get_role(self, obj):
+        role_name = str(getattr(getattr(obj.user, "role", None), "name", "")).upper()
+        mapping = {
+            "SUPER_ADMIN": "superadmin",
+            "ADMINISTRATOR": "administrator",
+            "ADMIN": "admin",
+            "TEAMLEAD": "projectmanager",
+            "EMPLOYEE": "employee",
+            "INTERN": "intern",
+            "DEPARTMENT_HEAD": "department_head",
+            "DEPARTMENTHEAD": "department_head",
+        }
+        return mapping.get(role_name, role_name.lower())
+
+    def get_role_label(self, obj):
+        request = self.context.get("request")
+        lang = getattr(request, "LANGUAGE_CODE", "ru") if request else "ru"
+        return role_label(self.get_role(obj), lang)
 
     def to_representation(self, instance):
         data = super().to_representation(instance)

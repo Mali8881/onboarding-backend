@@ -1,5 +1,8 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
+from rest_framework.exceptions import ErrorDetail
+
+from common.i18n import request_language, status_label, tr
 
 from .models import Board, Column, Task
 
@@ -13,6 +16,7 @@ class TaskSerializer(serializers.ModelSerializer):
     column_name = serializers.CharField(source="column.name", read_only=True)
     column_order = serializers.IntegerField(source="column.order", read_only=True)
     board_columns = serializers.SerializerMethodField()
+    priority_label = serializers.SerializerMethodField()
 
     class Meta:
         model = Task
@@ -28,6 +32,7 @@ class TaskSerializer(serializers.ModelSerializer):
             "reporter_username",
             "due_date",
             "priority",
+            "priority_label",
             "onboarding_day",
             "column_name",
             "column_order",
@@ -43,19 +48,30 @@ class TaskSerializer(serializers.ModelSerializer):
             for col in obj.board.columns.order_by("order", "id")
         ]
 
+    def get_priority_label(self, obj):
+        return status_label(obj.priority, request_language(self.context.get("request")))
+
 
 class TaskCreateSerializer(serializers.Serializer):
     title = serializers.CharField(max_length=255)
     description = serializers.CharField(required=False, allow_blank=True)
-    assignee_id = serializers.IntegerField()
+    assignee_id = serializers.IntegerField(required=False, allow_null=True)
     onboarding_day_id = serializers.UUIDField(required=False, allow_null=True)
     due_date = serializers.DateField(required=False, allow_null=True)
     priority = serializers.ChoiceField(choices=Task.Priority.choices, default=Task.Priority.MEDIUM)
 
     def validate_assignee_id(self, value):
+        if value is None:
+            return value
         user = User.objects.filter(id=value).first()
         if not user:
-            raise serializers.ValidationError("Assignee not found.")
+            request = self.context.get("request")
+            raise serializers.ValidationError(
+                ErrorDetail(
+                    tr("assignee_not_found", request_language(request)),
+                    code="assignee_not_found",
+                )
+            )
         return value
 
 
@@ -64,6 +80,12 @@ class TaskMoveSerializer(serializers.Serializer):
 
     def validate_column_id(self, value):
         if not Column.objects.filter(id=value).exists():
-            raise serializers.ValidationError("Column not found.")
+            request = self.context.get("request")
+            raise serializers.ValidationError(
+                ErrorDetail(
+                    tr("column_not_found", request_language(request)),
+                    code="column_not_found",
+                )
+            )
         return value
 

@@ -254,7 +254,7 @@ class AttendanceTeamAPIView(APIView):
             users_qs = User.objects.filter(is_active=True)
             if request.user.department_id:
                 users_qs = users_qs.filter(department_id=request.user.department_id)
-            users_qs = users_qs.exclude(role__name__in=[Role.Name.SUPER_ADMIN, Role.Name.ADMIN, Role.Name.DEPARTMENT_HEAD])
+            users_qs = users_qs.exclude(role__name__in=[Role.Name.SUPER_ADMIN, Role.Name.ADMIN, Role.Name.ADMINISTRATOR])
         else:
             users_qs = request.user.team_members.filter(is_active=True).exclude(role__name=Role.Name.SUPER_ADMIN)
 

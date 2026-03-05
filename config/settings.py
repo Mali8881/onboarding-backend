@@ -32,10 +32,21 @@ def _load_dotenv(path: Path) -> None:
 
 _load_dotenv(BASE_DIR / ".env")
 
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_bool(name: str, default: bool = False) -> bool:
+    return _env_bool(name, default)
+
 # ======================
 # SECURITY
 # ======================
-DEBUG = os.environ.get("DEBUG", "true").lower() == "true"
+DEBUG = os.environ.get("DEBUG", "false").lower() == "true"
 
 _secret_key = os.environ.get("SECRET_KEY")
 if not _secret_key:
@@ -47,7 +58,7 @@ SECRET_KEY = _secret_key
 
 ALLOWED_HOSTS = [
     host.strip()
-    for host in os.environ.get("ALLOWED_HOSTS", "*").split(",")
+    for host in os.environ.get("ALLOWED_HOSTS", "your.domain.com,server_ip").split(",")
     if host.strip()
 ]
 
@@ -104,8 +115,10 @@ MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
+    "config.middleware.APILanguageMiddleware",
     "django.middleware.locale.LocaleMiddleware",
     "django.middleware.common.CommonMiddleware",
+    "config.middleware.APIErrorEnvelopeMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
@@ -125,12 +138,13 @@ WSGI_APPLICATION = "config.wsgi.application"
 # DATABASE
 # ======================
 DATABASE_URL = os.environ.get("DATABASE_URL")
+DB_SSL_REQUIRE = _env_bool("DB_SSL_REQUIRE", False)
 if DATABASE_URL and dj_database_url is not None:
     DATABASES = {
         "default": dj_database_url.parse(
             DATABASE_URL,
             conn_max_age=600,
-            ssl_require=not DEBUG,
+            ssl_require=DB_SSL_REQUIRE,
         )
     }
 else:
@@ -193,6 +207,7 @@ USE_TZ = True
 LANGUAGES = [
     ("ru", "Русский"),
     ("en", "English"),
+    ("kg", "Kyrgyz"),
 ]
 
 # ======================
@@ -207,7 +222,7 @@ if HAS_UNFOLD:
             return True
         role = getattr(user, "role", None)
         role_name = getattr(role, "name", "")
-        return role_name in {"SUPER_ADMIN", "ADMIN", "DEPARTMENT_HEAD"}
+        return role_name in {"SUPER_ADMIN", "ADMINISTRATOR", "ADMIN"}
 
     def _is_employee(request):
         user = getattr(request, "user", None)
@@ -369,6 +384,7 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
+    "EXCEPTION_HANDLER": "config.exceptions.api_exception_handler",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_THROTTLE_CLASSES": (
         "rest_framework.throttling.UserRateThrottle",
@@ -447,12 +463,12 @@ CORS_ALLOWED_ORIGINS = [
 
 CSRF_TRUSTED_ORIGINS = [
     origin.strip()
-    for origin in os.environ.get("CSRF_TRUSTED_ORIGINS", "").split(",")
+    for origin in os.environ.get("CSRF_TRUSTED_ORIGINS", "https://your.domain.com").split(",")
     if origin.strip()
 ]
 
-CSRF_COOKIE_SECURE = not DEBUG
-SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = env_bool("CSRF_COOKIE_SECURE", True)
+SESSION_COOKIE_SECURE = env_bool("SESSION_COOKIE_SECURE", True)
 CSRF_COOKIE_SAMESITE = "Lax"
 SESSION_COOKIE_SAMESITE = "Lax"
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")

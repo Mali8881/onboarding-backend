@@ -11,6 +11,7 @@ from django.utils import timezone
 from accounts.access_policy import AccessPolicy
 from accounts.models import Role, User
 from common.models import Notification
+from common.notification_codes import NotificationCode, NotificationEntity
 from .models import EmployeeDailyReport, OnboardingReport, OnboardingReportLog, ReportNotification
 from .serializers import (
     EmployeeDailyReportSerializer,
@@ -314,16 +315,22 @@ class EmployeeDailyReportAPIView(APIView):
             elif request.user.department_id:
                 teamlead_qs = teamlead_qs.filter(department_id=request.user.department_id)
             recipient_ids.update(teamlead_qs.values_list("id", flat=True))
-        admin_qs = User.objects.filter(role__name=Role.Name.DEPARTMENT_HEAD, is_active=True)
+        admin_qs = User.objects.filter(
+            role__name__in=AccessPolicy.admin_recipient_role_names(),
+            is_active=True,
+        )
         if request.user.department_id:
-            admin_qs = admin_qs.filter(department_id=request.user.department_id)
+            # Keep department heads/administrators scoped to their department,
+            # while global admin roles receive notifications from all departments.
+            global_admin_roles = {
+                Role.Name.ADMIN,
+                Role.Name.SUPER_ADMIN,
+                *AccessPolicy.LEGACY_SYSTEM_ADMIN_NAMES,
+            }
+            admin_qs = admin_qs.filter(
+                Q(department_id=request.user.department_id) | Q(role__name__in=global_admin_roles)
+            )
         recipient_ids.update(admin_qs.values_list("id", flat=True))
-        recipient_ids.update(
-            User.objects.filter(role__name=Role.Name.ADMIN, is_active=True).values_list("id", flat=True)
-        )
-        recipient_ids.update(
-            User.objects.filter(role__name=Role.Name.SUPER_ADMIN, is_active=True).values_list("id", flat=True)
-        )
         recipient_ids.discard(request.user.id)
 
         Notification.objects.bulk_create(
@@ -333,8 +340,15 @@ class EmployeeDailyReportAPIView(APIView):
                     title="Ежедневный отчет сотрудника",
                     message=f"{request.user.username} отправил ежедневный отчет за {report.report_date}.",
                     type=Notification.Type.INFO,
+                    code=NotificationCode.REPORT_DAILY_SUBMITTED,
+                    severity=Notification.Severity.INFO,
+                    entity_type=NotificationEntity.EMPLOYEE_DAILY_REPORT,
+                    entity_id=str(report.id),
+                    action_url=f"/admin/reports/daily?date={report.report_date}",
                 )
                 for recipient_id in recipient_ids
             ]
         )
         return Response(EmployeeDailyReportSerializer(report).data, status=drf_status.HTTP_201_CREATED)
+
+

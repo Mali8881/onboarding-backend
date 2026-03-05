@@ -19,4 +19,6 @@ urlpatterns = [
     path("admin/records/<int:record_id>/status/", PayrollRecordStatusAPIView.as_view(), name="payroll-record-status"),
     path("admin/hourly-rates/", HourlyRateAdminAPIView.as_view(), name="payroll-hourly-rates"),
     path("admin/hourly-rates/<int:user_id>/history/", HourlyRateHistoryAdminAPIView.as_view(), name="payroll-hourly-rates-history"),
+    # Alias: frontend uses /salary-profiles/ but data comes from PayrollCompensation (formerly SalaryProfile)
+    path("admin/salary-profiles/", HourlyRateAdminAPIView.as_view(), name="payroll-salary-profiles"),
 ]

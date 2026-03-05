@@ -3,6 +3,7 @@ from datetime import timedelta
 
 from rest_framework import serializers
 
+from common.i18n import request_language, status_label
 from .models import WeeklyWorkPlan, WeeklyWorkPlanChangeLog, WorkSchedule, UserWorkSchedule
 
 
@@ -298,6 +299,7 @@ class WeeklyWorkPlanUpsertSerializer(serializers.Serializer):
 class WeeklyWorkPlanSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source="user.username", read_only=True)
     reviewed_by_username = serializers.CharField(source="reviewed_by.username", read_only=True)
+    status_label = serializers.SerializerMethodField()
 
     class Meta:
         model = WeeklyWorkPlan
@@ -312,6 +314,7 @@ class WeeklyWorkPlanSerializer(serializers.ModelSerializer):
             "online_reason",
             "employee_comment",
             "status",
+            "status_label",
             "admin_comment",
             "reviewed_by",
             "reviewed_by_username",
@@ -330,6 +333,9 @@ class WeeklyWorkPlanSerializer(serializers.ModelSerializer):
             "updated_at",
             "reviewed_at",
         )
+
+    def get_status_label(self, obj):
+        return status_label(obj.status, request_language(self.context.get("request")))
 
 
 class WeeklyWorkPlanDecisionSerializer(serializers.Serializer):

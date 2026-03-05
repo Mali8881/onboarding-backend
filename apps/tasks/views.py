@@ -90,7 +90,7 @@ class TaskMyAPIView(APIView):
         if auto_task is not None:
             TasksAuditService.log_task_created(request, auto_task)
         qs = Task.objects.filter(assignee=request.user).select_related("assignee", "reporter", "column", "board")
-        return Response(TaskSerializer(qs, many=True).data)
+        return Response(TaskSerializer(qs, many=True, context={"request": request}).data)
 
 
 class TaskTeamAPIView(APIView):
@@ -120,16 +120,20 @@ class TaskTeamAPIView(APIView):
                 TasksAuditService.log_task_created(request, auto_task)
 
         qs = qs.select_related("assignee", "reporter", "column", "board")
-        return Response(TaskSerializer(qs, many=True).data)
+        return Response(TaskSerializer(qs, many=True, context={"request": request}).data)
 
 
 class TaskCreateAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        serializer = TaskCreateSerializer(data=request.data)
+        serializer = TaskCreateSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
-        assignee = get_object_or_404(User, id=serializer.validated_data["assignee_id"])
+        assignee_id = serializer.validated_data.get("assignee_id")
+        if assignee_id is None:
+            assignee = request.user
+        else:
+            assignee = get_object_or_404(User, id=assignee_id)
 
         if not TaskPolicy.can_assign_task(request.user, assignee):
             return Response({"detail": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
@@ -152,7 +156,7 @@ class TaskCreateAPIView(APIView):
             priority=serializer.validated_data.get("priority", Task.Priority.MEDIUM),
         )
         TasksAuditService.log_task_created(request, task)
-        return Response(TaskSerializer(task).data, status=status.HTTP_201_CREATED)
+        return Response(TaskSerializer(task, context={"request": request}).data, status=status.HTTP_201_CREATED)
 
 
 class TaskAssigneesAPIView(APIView):
@@ -196,7 +200,7 @@ class TaskDetailAPIView(APIView):
         task = get_object_or_404(Task.objects.select_related("assignee", "reporter", "column", "board"), pk=pk)
         if not TaskPolicy.can_view_task(request.user, task):
             return Response({"detail": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
-        return Response(TaskSerializer(task).data)
+        return Response(TaskSerializer(task, context={"request": request}).data)
 
     def patch(self, request, pk):
         task = get_object_or_404(Task.objects.select_related("assignee"), pk=pk)
@@ -219,7 +223,7 @@ class TaskMoveAPIView(APIView):
         if not TaskPolicy.can_edit_task(request.user, task):
             return Response({"detail": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
 
-        serializer = TaskMoveSerializer(data=request.data)
+        serializer = TaskMoveSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         new_column = get_object_or_404(Column, id=serializer.validated_data["column_id"])
         if new_column.board_id != task.board_id:
@@ -232,6 +236,6 @@ class TaskMoveAPIView(APIView):
         task.column = new_column
         task.save(update_fields=["column", "updated_at"])
         TasksAuditService.log_task_moved(request, task, old_column_id, task.column_id)
-        return Response(TaskSerializer(task).data)
+        return Response(TaskSerializer(task, context={"request": request}).data)
 
 

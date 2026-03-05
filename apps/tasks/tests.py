@@ -76,6 +76,51 @@ class TasksApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 403)
 
+    @patch("apps.tasks.views.TasksAuditService.log_task_created")
+    def test_employee_can_create_task_for_self_without_assignee_id(self, log_task_created):
+        self.client.force_authenticate(user=self.subordinate)
+        response = self.client.post(
+            "/api/v1/tasks/create/",
+            {
+                "title": "Self task",
+                "description": "Created by employee",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        task = Task.objects.filter(assignee=self.subordinate, reporter=self.subordinate, title="Self task").first()
+        self.assertIsNotNone(task)
+        log_task_created.assert_called_once()
+
+    @patch("apps.tasks.views.TasksAuditService.log_task_created")
+    def test_employee_can_create_task_for_self_with_assignee_id(self, log_task_created):
+        self.client.force_authenticate(user=self.subordinate)
+        response = self.client.post(
+            "/api/v1/tasks/create/",
+            {
+                "title": "Self task explicit",
+                "assignee_id": self.subordinate.id,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        task = Task.objects.filter(
+            assignee=self.subordinate,
+            reporter=self.subordinate,
+            title="Self task explicit",
+        ).first()
+        self.assertIsNotNone(task)
+        log_task_created.assert_called_once()
+
+    def test_employee_cannot_create_task_for_another_user(self):
+        self.client.force_authenticate(user=self.subordinate)
+        response = self.client.post(
+            "/api/v1/tasks/create/",
+            {"title": "Not allowed", "assignee_id": self.outsider.id},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+
     def test_my_endpoint_returns_only_assigned_tasks(self):
         task1 = Task.objects.create(
             board=self._create_default_board(self.subordinate),

@@ -8,6 +8,7 @@ from django.shortcuts import get_object_or_404
 from accounts.access_policy import AccessPolicy
 from accounts.models import Role, User
 from common.models import Notification
+from common.notification_codes import NotificationCode, NotificationEntity
 from rest_framework import status
 from rest_framework.generics import (
     ListAPIView,
@@ -607,7 +608,8 @@ class SubmitInternOnboardingAPIView(APIView):
         request.user.save(update_fields=["intern_onboarding_completed_at"])
 
         admin_qs = User.objects.filter(
-            role__name__in=[Role.Name.DEPARTMENT_HEAD, Role.Name.ADMIN, Role.Name.SUPER_ADMIN]
+            role__name__in=AccessPolicy.admin_recipient_role_names(),
+            is_active=True,
         ).select_related("role")
         Notification.objects.bulk_create(
             [
@@ -619,6 +621,11 @@ class SubmitInternOnboardingAPIView(APIView):
                         "Проверьте и подтвердите перевод в работника."
                     ),
                     type=Notification.Type.LEARNING,
+                    code=NotificationCode.ONBOARDING_INTERN_COMPLETED,
+                    severity=Notification.Severity.INFO,
+                    entity_type=NotificationEntity.INTERN_ONBOARDING_REQUEST,
+                    entity_id=str(onboarding_request.id),
+                    action_url=f"/admin/regulations/intern-requests/{onboarding_request.id}",
                 )
                 for admin_user in admin_qs
             ]
@@ -683,6 +690,11 @@ class AdminApproveInternOnboardingAPIView(APIView):
                 title="Стажировка подтверждена",
                 message="Администратор подтвердил завершение стажировки. Вам назначена роль работника.",
                 type=Notification.Type.LEARNING,
+                code=NotificationCode.ONBOARDING_INTERN_APPROVED,
+                severity=Notification.Severity.INFO,
+                entity_type=NotificationEntity.INTERN_ONBOARDING_REQUEST,
+                entity_id=str(onboarding_request.id),
+                action_url="/my/onboarding",
             )
 
         return Response({"status": "approved"})

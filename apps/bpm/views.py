@@ -10,7 +10,7 @@ from rest_framework.views import APIView
 from accounts.access_policy import AccessPolicy
 
 from .models import ProcessInstance, ProcessTemplate, StepInstance, StepTemplate
-from .permissions import IsAdminLike
+from .permissions import CanManageBpmTemplates
 from .serializers import (
     ProcessInstanceCreateSerializer,
     ProcessInstanceSerializer,
@@ -186,10 +186,10 @@ class StepCompleteAPIView(APIView):
 class ProcessTemplateAdminViewSet(ModelViewSet):
     queryset = ProcessTemplate.objects.all().order_by("name")
     serializer_class = ProcessTemplateSerializer
-    permission_classes = [IsAuthenticated, IsAdminLike]
+    permission_classes = [IsAuthenticated, CanManageBpmTemplates]
 
 
 class StepTemplateAdminViewSet(ModelViewSet):
     queryset = StepTemplate.objects.select_related("process_template").all()
     serializer_class = StepTemplateSerializer
-    permission_classes = [IsAuthenticated, IsAdminLike]
+    permission_classes = [IsAuthenticated, CanManageBpmTemplates]

@@ -1,6 +1,7 @@
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
+from common.i18n import request_language, status_label
 from .models import (
     EmployeeDailyReport,
     OnboardingReport,
@@ -12,6 +13,7 @@ from .models import (
 class OnboardingReportSerializer(serializers.ModelSerializer):
     user_email = serializers.EmailField(source="user.email", read_only=True)
     day_number = serializers.IntegerField(source="day.day_number", read_only=True)
+    status_label = serializers.SerializerMethodField()
 
     class Meta:
         model = OnboardingReport
@@ -29,11 +31,15 @@ class OnboardingReportSerializer(serializers.ModelSerializer):
             "github_url",
             "attachment",
             "status",
+            "status_label",
             "reviewer_comment",
             "created_at",
             "updated_at",
         ]
         read_only_fields = ("status", "reviewer_comment", "created_at", "updated_at")
+
+    def get_status_label(self, obj):
+        return status_label(obj.status, request_language(self.context.get("request")))
 
 
 class OnboardingReportCreateSerializer(serializers.Serializer):
@@ -56,6 +62,7 @@ class OnboardingReportCreateSerializer(serializers.Serializer):
 class AdminOnboardingReportSerializer(serializers.ModelSerializer):
     user = serializers.SerializerMethodField()
     day = serializers.SerializerMethodField()
+    status_label = serializers.SerializerMethodField()
 
     class Meta:
         model = OnboardingReport
@@ -64,10 +71,14 @@ class AdminOnboardingReportSerializer(serializers.ModelSerializer):
             "user",
             "day",
             "status",
+            "status_label",
             "reviewer_comment",
             "created_at",
         )
         read_only_fields = ("created_at",)
+
+    def get_status_label(self, obj):
+        return status_label(obj.status, request_language(self.context.get("request")))
 
     @extend_schema_field(
         {
@@ -108,6 +119,7 @@ class AdminOnboardingReportSerializer(serializers.ModelSerializer):
 
 class OnboardingReportLogSerializer(serializers.ModelSerializer):
     author_username = serializers.CharField(source="author.username", read_only=True)
+    action_label = serializers.SerializerMethodField()
 
     class Meta:
         model = OnboardingReportLog
@@ -115,10 +127,14 @@ class OnboardingReportLogSerializer(serializers.ModelSerializer):
             "id",
             "report",
             "action",
+            "action_label",
             "author",
             "author_username",
             "created_at",
         )
+
+    def get_action_label(self, obj):
+        return status_label(obj.action, request_language(self.context.get("request")))
 
 
 class ReportNotificationSerializer(serializers.ModelSerializer):

@@ -95,12 +95,12 @@ class MetricsTeamAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        if not (AccessPolicy.is_admin_like(request.user) or AccessPolicy.is_teamlead(request.user)):
+        if not AccessPolicy.can_view_team_metrics(request.user):
             return Response({"detail": "Access denied."}, status=403)
         now = timezone.now()
         since = now - timedelta(days=7)
 
-        if AccessPolicy.is_admin_like(request.user):
+        if AccessPolicy.can_manage_tasks(request.user):
             team_ids = list(User.objects.filter(is_active=True).exclude(role__name=Role.Name.SUPER_ADMIN).values_list("id", flat=True))
         else:
             team_ids = list(request.user.team_members.values_list("id", flat=True))

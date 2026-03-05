@@ -4,7 +4,17 @@ from common.models import Notification, NotificationTemplate
 class NotificationService:
 
     @staticmethod
-    def send(template_code, user, context=None):
+    def send(
+        template_code,
+        user,
+        context=None,
+        *,
+        code="generic.info",
+        severity="info",
+        entity_type="",
+        entity_id="",
+        action_url="",
+    ):
 
         template = NotificationTemplate.objects.filter(
             code=template_code,
@@ -23,11 +33,26 @@ class NotificationService:
             user=user,
             title=title,
             message=message,
-            type=template.type
+            type=template.type,
+            code=code,
+            severity=severity,
+            entity_type=entity_type,
+            entity_id=str(entity_id or ""),
+            action_url=action_url or "",
         )
 
     @staticmethod
-    def broadcast(template_code, queryset, context=None):
+    def broadcast(
+        template_code,
+        queryset,
+        context=None,
+        *,
+        code="generic.info",
+        severity="info",
+        entity_type="",
+        entity_id="",
+        action_url="",
+    ):
 
         template = NotificationTemplate.objects.filter(
             code=template_code,
@@ -46,7 +71,12 @@ class NotificationService:
                     user=user,
                     title=template.title_template.format(**context),
                     message=template.message_template.format(**context),
-                    type=template.type
+                    type=template.type,
+                    code=code,
+                    severity=severity,
+                    entity_type=entity_type,
+                    entity_id=str(entity_id or ""),
+                    action_url=action_url or "",
                 )
             )
 

@@ -1,4 +1,4 @@
-from datetime import date
+﻿from datetime import date
 from datetime import timedelta
 
 from django.db.models import Count
@@ -11,6 +11,7 @@ from rest_framework.views import APIView
 
 from accounts.access_policy import AccessPolicy
 from accounts.models import User
+from common.i18n import request_language, status_label
 from .audit import WorkScheduleAuditService
 from .models import (
     ProductionCalendar,
@@ -401,7 +402,7 @@ class WeeklyWorkPlanMyAPIView(APIView):
 
     def get(self, request):
         qs = WeeklyWorkPlan.objects.filter(user=request.user).order_by("-week_start")
-        return Response(WeeklyWorkPlanSerializer(qs, many=True).data)
+        return Response(WeeklyWorkPlanSerializer(qs, many=True, context={"request": request}).data)
 
     def post(self, request):
         if not WorkSchedulePolicy.can_submit_weekly_plan(request.user):
@@ -440,7 +441,7 @@ class WeeklyWorkPlanMyAPIView(APIView):
             )
         WorkScheduleAuditService.log_weekly_plan_submitted(request, plan, was_created=created)
         return Response(
-            WeeklyWorkPlanSerializer(plan).data,
+            WeeklyWorkPlanSerializer(plan, context={"request": request}).data,
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
 
@@ -463,7 +464,8 @@ class WeeklyWorkPlanAdminListAPIView(APIView):
         status_filter = request.query_params.get("status")
         if status_filter:
             qs = qs.filter(status=status_filter)
-        payload = list(WeeklyWorkPlanSerializer(qs, many=True).data)
+        payload = list(WeeklyWorkPlanSerializer(qs, many=True, context={"request": request}).data)
+        lang = request_language(request)
 
         # Include approved template assignments as synthetic approved weekly plans
         # for the week of request/assignment, when explicit weekly plan is absent.
@@ -527,6 +529,7 @@ class WeeklyWorkPlanAdminListAPIView(APIView):
                     "online_reason": "",
                     "employee_comment": "Шаблон графика (на одну неделю).",
                     "status": WeeklyWorkPlan.Status.APPROVED,
+                    "status_label": status_label(WeeklyWorkPlan.Status.APPROVED, lang),
                     "admin_comment": "Сформировано из утвержденного шаблона.",
                     "reviewed_by": None,
                     "reviewed_by_username": "",
@@ -617,4 +620,6 @@ class WeeklyWorkPlanAdminDecisionAPIView(APIView):
             ensure_user_schedule_for_approved_weekly_plan(plan)
 
         WorkScheduleAuditService.log_weekly_plan_decision(request, plan, action=action)
-        return Response(WeeklyWorkPlanSerializer(plan).data, status=status.HTTP_200_OK)
+        return Response(WeeklyWorkPlanSerializer(plan, context={"request": request}).data, status=status.HTTP_200_OK)
+
+

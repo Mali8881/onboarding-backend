@@ -38,6 +38,7 @@ class NotificationsApiTests(TestCase):
         self.notification.refresh_from_db()
         self.assertTrue(self.notification.is_read)
         log_notification_marked_read.assert_called_once()
+        self.assertEqual(response.data.get("unread_count"), 0)
 
     @patch("common.views.CommonAuditService.log_notifications_marked_read_all")
     def test_mark_all_notifications_read(self, log_notifications_marked_read_all):
@@ -53,3 +54,27 @@ class NotificationsApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(Notification.objects.filter(user=self.user, is_read=False).exists())
         log_notifications_marked_read_all.assert_called_once()
+        self.assertEqual(response.data.get("updated_count"), 2)
+        self.assertEqual(response.data.get("unread_count"), 0)
+
+    def test_list_notifications_supports_unread_filter_and_pagination(self):
+        Notification.objects.create(
+            user=self.user,
+            title="Read item",
+            message="Done",
+            type=Notification.Type.SYSTEM,
+            is_read=True,
+        )
+        Notification.objects.create(
+            user=self.user,
+            title="Unread item 2",
+            message="Todo",
+            type=Notification.Type.LEARNING,
+            is_read=False,
+        )
+
+        response = self.client.get("/api/v1/common/notifications/?unread=1&limit=1&offset=0")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data.get("unread_count"), 2)
+        self.assertEqual(response.data.get("total_count"), 2)
+        self.assertEqual(len(response.data.get("items", [])), 1)

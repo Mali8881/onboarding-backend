@@ -48,7 +48,7 @@ class PayrollMyAPIView(APIView):
                 "status": PayrollRecord.Status.CALCULATED,
             },
         )
-        payload = PayrollRecordSerializer(record).data
+        payload = PayrollRecordSerializer(record, context={"request": request}).data
         payload["is_calculated"] = not was_created
         return Response(payload, status=status.HTTP_200_OK)
 
@@ -66,7 +66,10 @@ class PayrollAdminAPIView(APIView):
             qs = qs.order_by("user_id")
         else:
             qs = qs.filter(user__department_id=request.user.department_id).exclude(user=request.user).order_by("user_id")
-        return Response(PayrollRecordSerializer(qs, many=True).data, status=status.HTTP_200_OK)
+        return Response(
+            PayrollRecordSerializer(qs, many=True, context={"request": request}).data,
+            status=status.HTTP_200_OK,
+        )
 
 
 class PayrollFundSummaryAPIView(APIView):
@@ -153,7 +156,10 @@ class PayrollRecordStatusAPIView(APIView):
         new_status = serializer.validated_data["status"]
 
         if record.status == new_status:
-            return Response(PayrollRecordSerializer(record).data, status=status.HTTP_200_OK)
+            return Response(
+                PayrollRecordSerializer(record, context={"request": request}).data,
+                status=status.HTTP_200_OK,
+            )
 
         previous = record.status
         record.status = new_status
@@ -162,7 +168,10 @@ class PayrollRecordStatusAPIView(APIView):
         record.save(update_fields=["status", "paid_at", "updated_at"])
 
         PayrollAuditService.log_period_status_changed(request, record=record, previous_status=previous)
-        return Response(PayrollRecordSerializer(record).data, status=status.HTTP_200_OK)
+        return Response(
+            PayrollRecordSerializer(record, context={"request": request}).data,
+            status=status.HTTP_200_OK,
+        )
 
 
 class HourlyRateAdminAPIView(APIView):
@@ -195,7 +204,7 @@ class HourlyRateAdminAPIView(APIView):
                     minute_rate=0,
                     fixed_salary=0,
                 )
-            payload.append(PayrollCompensationSerializer(comp).data)
+            payload.append(PayrollCompensationSerializer(comp, context={"request": request}).data)
         return Response(payload, status=status.HTTP_200_OK)
 
     def post(self, request):
@@ -237,7 +246,10 @@ class HourlyRateAdminAPIView(APIView):
                 comp.fixed_salary = serializer.validated_data["fixed_salary"]
             comp.save(update_fields=["pay_type", "minute_rate", "fixed_salary", "updated_at"])
 
-        return Response(PayrollCompensationSerializer(comp).data, status=status.HTTP_200_OK)
+        return Response(
+            PayrollCompensationSerializer(comp, context={"request": request}).data,
+            status=status.HTTP_200_OK,
+        )
 
 
 class HourlyRateHistoryAdminAPIView(APIView):
