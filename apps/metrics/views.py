@@ -7,12 +7,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.access_policy import AccessPolicy
-from accounts.models import Role, User
+from apps.accounts.access_policy import AccessPolicy
+from apps.accounts.models import Role, User
 from apps.attendance.models import AttendanceMark, WorkCalendarDay
 from apps.kb.models import KBViewLog
 from apps.tasks.models import Task
-from onboarding_core.models import OnboardingDay, OnboardingProgress
+from apps.onboarding_core.models import OnboardingDay, OnboardingProgress
 
 
 CLOSED_COLUMN_NAMES = {"done", "completed", "closed", "завершено"}

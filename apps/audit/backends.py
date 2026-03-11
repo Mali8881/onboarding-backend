@@ -17,7 +17,7 @@ class AccountsAuditBackend:
     """
 
     def write(self, event: AuditEvent) -> None:
-        from accounts.models import AuditLog
+        from apps.accounts.models import AuditLog
 
         AuditLog.log(
             action=event.action,
@@ -37,7 +37,7 @@ class SecuritySystemLogBackend:
     """
 
     def write(self, event: AuditEvent) -> None:
-        from security.models import SystemLog
+        from apps.security.models import SystemLog
 
         SystemLog.objects.create(
             actor=event.actor,

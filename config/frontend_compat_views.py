@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from django.contrib.auth import authenticate
 from django.db import IntegrityError
@@ -13,8 +13,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from accounts.access_policy import AccessPolicy
-from accounts.models import (
+from apps.accounts.access_policy import AccessPolicy
+from apps.accounts.models import (
     AuditLog,
     Department,
     DepartmentSubdivision,
@@ -25,24 +25,24 @@ from accounts.models import (
     User,
     UserSession,
 )
-from accounts.serializers import PasswordChangeSerializer, UserProfileUpdateSerializer
-from content.models import Feedback, Instruction, News
-from common.models import Notification
-from content.serializers import (
+from apps.accounts.serializers import PasswordChangeSerializer, UserProfileUpdateSerializer
+from apps.content.models import Feedback, Instruction, News
+from apps.common.models import Notification
+from apps.content.serializers import (
     InstructionSerializer,
     NewsDetailSerializer,
     NewsListSerializer,
 )
-from onboarding_core.models import OnboardingDay, OnboardingProgress
-from onboarding_core.views import OnboardingOverviewView
-from regulations.models import Regulation, RegulationAcknowledgement
-from regulations.serializers import RegulationAdminSerializer, RegulationSerializer
-from reports.models import OnboardingReport
-from work_schedule.models import ProductionCalendar
-from work_schedule.views import MyScheduleAPIView, WorkScheduleListAPIView
+from apps.onboarding_core.models import OnboardingDay, OnboardingProgress
+from apps.onboarding_core.views import OnboardingOverviewView
+from apps.regulations.models import Regulation, RegulationAcknowledgement
+from apps.regulations.serializers import RegulationAdminSerializer, RegulationSerializer
+from apps.reports.models import OnboardingReport
+from apps.work_schedule.models import ProductionCalendar
+from apps.work_schedule.views import MyScheduleAPIView, WorkScheduleListAPIView
 from django.contrib.sessions.models import Session
-from common.i18n import request_language, role_label, tr
-from common.notification_codes import NotificationCode, NotificationEntity
+from apps.common.i18n import request_language, role_label, tr
+from apps.common.notification_codes import NotificationCode, NotificationEntity
 
 
 def _department_head_role_name():
@@ -95,6 +95,7 @@ def _user_to_front_payload(user: User) -> dict:
         "photo": user.photo.url if getattr(user, "photo", None) else "",
         "hire_date": user.date_joined.date().isoformat() if user.date_joined else None,
         "is_active": user.is_active,
+        "notes": user.notes or "",
     }
 
 
@@ -238,6 +239,7 @@ class FrontendUsersSerializer(serializers.ModelSerializer):
             "custom_position",
             "telegram",
             "phone",
+            "notes",
             "is_active",
             "role",
             "password",
@@ -483,6 +485,7 @@ class FrontendDepartmentsAPIView(APIView):
                 {
                     "id": item.id,
                     "name": item.name,
+                    "comment": item.comment or "",
                     "parent": item.parent_id,
                     "is_active": item.is_active,
                 }
@@ -496,12 +499,14 @@ class FrontendDepartmentsAPIView(APIView):
         if not name:
             return Response({"name": ["This field is required."]}, status=400)
         parent_id = request.data.get("parent")
+        comment = (request.data.get("comment") or "").strip()
         item = Department.objects.create(
             name=name,
+            comment=comment,
             parent_id=parent_id if parent_id else None,
             is_active=bool(request.data.get("is_active", True)),
         )
-        return Response({"id": item.id, "name": item.name, "parent": item.parent_id, "is_active": item.is_active}, status=201)
+        return Response({"id": item.id, "name": item.name, "comment": item.comment or "", "parent": item.parent_id, "is_active": item.is_active}, status=201)
 
 
 class FrontendDepartmentsDetailAPIView(APIView):
@@ -534,13 +539,16 @@ class FrontendDepartmentsDetailAPIView(APIView):
         if "is_active" in request.data:
             item.is_active = bool(request.data.get("is_active"))
 
+        if "comment" in request.data:
+            item.comment = (request.data.get("comment") or "").strip()
+
         try:
             item.full_clean()
             item.save()
         except IntegrityError:
             return Response({"name": ["Department with this name already exists."]}, status=400)
 
-        return Response({"id": item.id, "name": item.name, "parent": item.parent_id, "is_active": item.is_active})
+        return Response({"id": item.id, "name": item.name, "comment": item.comment or "", "parent": item.parent_id, "is_active": item.is_active})
 
     def delete(self, request, department_id: int):
         _ensure_admin_like(request.user)
@@ -1227,6 +1235,13 @@ class FrontendSchedulesWorkSchedulesAPIView(WorkScheduleListAPIView):
 
 class FrontendSchedulesMineAPIView(MyScheduleAPIView):
     permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        response = super().get(request)
+        # Compatibility behavior for frontend: treat "no selected schedule" as empty payload.
+        if getattr(response, "status_code", None) == status.HTTP_404_NOT_FOUND:
+            return Response(None, status=status.HTTP_200_OK)
+        return response
 
 
 class FrontendSchedulesHolidaysAPIView(APIView):

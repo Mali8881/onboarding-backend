@@ -1,7 +1,0 @@
-from django.apps import AppConfig
-
-
-class WorkScheduleConfig(AppConfig):
-    default_auto_field = 'django.db.models.BigAutoField'
-    name = 'work_schedule'
-    verbose_name = "Графики работы"

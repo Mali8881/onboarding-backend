@@ -1,7 +1,7 @@
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from accounts.models import Role, User
+from apps.accounts.models import Role, User
 
 
 class MetricsApiTests(TestCase):

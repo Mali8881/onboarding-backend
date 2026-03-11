@@ -1,7 +1,7 @@
 from django.conf import settings
 from django.db import models
 
-from accounts.models import Department
+from apps.accounts.models import Department
 
 
 class Board(models.Model):

@@ -4,7 +4,7 @@ from django.http import HttpRequest, HttpResponse
 from django.utils import translation
 from django.utils.deprecation import MiddlewareMixin
 
-from common.i18n import pick_language, tr
+from apps.common.i18n import pick_language, tr
 
 
 class APILanguageMiddleware(MiddlewareMixin):

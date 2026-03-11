@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from rest_framework.views import exception_handler as drf_exception_handler
 
-from common.i18n import tr
+from apps.common.i18n import tr
 
 
 def _first_value(value):

@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.views import APIView
 
-from accounts.access_policy import AccessPolicy
+from apps.accounts.access_policy import AccessPolicy
 
 from .models import ProcessInstance, ProcessTemplate, StepInstance, StepTemplate
 from .permissions import CanManageBpmTemplates

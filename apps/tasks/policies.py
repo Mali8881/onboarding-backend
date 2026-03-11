@@ -1,12 +1,18 @@
 from __future__ import annotations
 
-from accounts.access_policy import AccessPolicy
+from apps.accounts.access_policy import AccessPolicy
 
 
 class TaskPolicy:
     @staticmethod
     def is_admin_like(user) -> bool:
         return AccessPolicy.is_admin_like(user)
+
+    @staticmethod
+    def is_department_admin(user) -> bool:
+        # Backward-compatible alias used by tasks views:
+        # department-scoped admin equals "admin" role (incl. legacy department head names).
+        return AccessPolicy.is_admin(user)
 
     @classmethod
     def can_manage_team(cls, actor) -> bool:

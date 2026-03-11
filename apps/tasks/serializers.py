@@ -2,7 +2,7 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers
 from rest_framework.exceptions import ErrorDetail
 
-from common.i18n import request_language, status_label, tr
+from apps.common.i18n import request_language, status_label, tr
 
 from .models import Board, Column, Task
 

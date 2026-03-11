@@ -39,89 +39,51 @@
 
 ---
 
-## 3. Структура backend (ключевые приложения)
-
-- `accounts/` — пользователи, роли, отделы, должности, оргструктура
-- `onboarding_core/` — onboarding сценарии и отчеты
-- `regulations/` — регламенты, подтверждение ознакомления, тестовые проверки
-- `apps/attendance/` — посещаемость
-- `apps/payroll/` — расчет зарплаты и ставки
-- `content/` — новости и инструкции
-- `feedback/` — тикеты/обратная связь
-- `config/` — settings, urls, compat views/urls
-
-Дополнительно:
-- `config/frontend_compat_urls.py` и `config/frontend_compat_views.py` — слой совместимости со старым фронтом.
-
----
-
-## 3.1 Подробная структура проекта и ответственность модулей
+## 3. Структура backend (актуально)
 
 ### Корень проекта (`onboarding-backend/`)
 - `manage.py` — точка входа Django-команд.
 - `requirements.txt` — зависимости backend.
-- `.env` — окружение (секреты, БД, CORS, debug-параметры).
-- `README.md` — документация проекта.
+- `.env.example` — шаблон переменных окружения.
+- `scripts/test.ps1` — единый quality-gate для Windows/PowerShell.
+- `Makefile` — единый quality-gate для Linux/macOS/CI.
 
 ### Конфигурация (`config/`)
-- `settings.py` — глобальные настройки Django/DRF.
-- `urls.py` — главный роутинг API и страниц.
-- `frontend_compat_urls.py` / `frontend_compat_views.py` — совместимость со старым frontend-контрактом.
-- `spa_views.py` — отдача SPA/шаблонов в web-режиме.
+- `settings/base.py` — базовые настройки проекта.
+- `settings/dev.py` — настройки разработки.
+- `settings/test.py` — настройки для тестов/CI.
+- `settings/prod.py` — настройки продакшна.
+- `urls.py` — главный роутинг.
+- `frontend_compat_urls.py` / `frontend_compat_views.py` — слой совместимости со старым frontend-контрактом.
 
-### Домен пользователей и оргструктуры (`accounts/`)
-- Пользователи, роли, отделы, должности.
-- Иерархия компании и данные для страниц "Компания" / "Пользователи".
-- Авторизация/профиль и доступы по ролям.
-
-### Онбординг (`onboarding_core/`)
-- Программы onboarding по дням/этапам.
-- Задачи, отчеты, статусы прохождения.
-- Логика для стажеров и кураторов.
-
-### Регламенты (`regulations/`)
-- Хранение регламентов (файлы/ссылки/описания).
-- Подтверждение ознакомления.
-- Проверка знаний/мини-тесты (в зависимости от текущей версии схемы).
-
-### Посещаемость (`apps/attendance/`)
-- Check-in/check-out.
-- Дневные статусы (в офисе, не отмечен и т.д.).
-- История посещаемости по сотрудникам/месяцу.
-
-### Зарплаты (`apps/payroll/`)
-- Модели оплаты (оклад/почасовая/поминутная).
-- Ставки сотрудников.
-- Пересчет и выдача итоговых payroll-данных.
-
-### Контент (`content/`)
-- Новости, инструкции и информационные блоки.
-- Данные для дашбордов и внутренних страниц.
-
-### Обратная связь (`feedback/`)
-- Тикеты/обращения сотрудников.
-- Статусы обработки и ответы.
-
-### Отчеты (`reports/`)
-- Агрегированные отчеты для управленческих страниц.
+### Доменные приложения (`apps/`)
+- `apps/accounts/` — пользователи, роли, оргструктура.
+- `apps/onboarding_core/` — онбординг-сценарии.
+- `apps/regulations/` — регламенты и проверки.
+- `apps/reports/` — отчеты.
+- `apps/content/` — новости/инструкции.
+- `apps/common/` — общие модели/утилиты.
+- `apps/work_schedule/` — графики и недельные планы.
+- `apps/security/` — security-домен.
+- `apps/attendance/`, `apps/payroll/`, `apps/tasks/`, `apps/kb/`, `apps/metrics/`, `apps/bpm/` — прикладные модули.
 
 ### Статические и медиа файлы
-- `static/` — статические ресурсы backend.
-- `media/` — загруженные файлы (регламенты, вложения и пр.).
-- `templates/` — серверные HTML-шаблоны (если используются).
+- `static/` — исходные статические ресурсы.
+- `staticfiles/` — артефакты `collectstatic` (в git не храним).
+- `media/` — пользовательские загрузки (в git не храним).
+- `templates/` — серверные шаблоны.
 
-### Frontend-папки (локально)
-- `vpluse_front_clean` / `vpluse_front-main` / `vpluse_front` — React/Vite frontend (в зависимости от вашей рабочей копии).
-- Ответственность frontend:
-  - рендер интерфейса;
-  - отправка запросов в backend API;
-  - локализация (RU/EN/KG);
-  - валидация формы на уровне UI.
+### Naming-конвенции
+- Python-пакеты/модули: `snake_case`.
+- Django app path: только `apps.<app_name>`.
+- `AppConfig.name`: строго `apps.<app_name>`.
+- Миграции не импортируют старые root-path (`accounts.*`, `regulations.*` и т.п.).
+- Новые приложения создаются сразу внутри `apps/`.
 
 ### Граница ответственности backend vs frontend
 - Backend — источник истины для бизнес-логики, прав и расчетов.
-- Frontend — отображение, UX, фильтрация/поиск на клиенте, отправка корректных payload.
-- Любые итоговые значения (зарплата, статусы, доступы) должны финально определяться backend.
+- Frontend — отображение, UX, клиентская валидация и отправка payload.
+- Итоговые значения (зарплата, статусы, доступы) определяет backend.
 
 ---
 
@@ -195,6 +157,19 @@ python manage.py runserver
 
 Backend: `http://127.0.0.1:8000`
 
+### Режимы настроек (Django settings)
+
+- Локальная разработка: `config.settings.dev`
+- Тесты/CI: `config.settings.test`
+- Продакшн: `config.settings.prod`
+
+Пример для прод-запуска:
+
+```bash
+set DJANGO_SETTINGS_MODULE=config.settings.prod
+python manage.py check
+```
+
 ---
 
 ## 7. Запуск frontend (локально)
@@ -255,6 +230,16 @@ python manage.py makemigrations
 python manage.py migrate
 python manage.py createsuperuser
 python manage.py showmigrations
+```
+
+Единый quality-gate перед merge:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\test.ps1
+```
+
+```bash
+make test
 ```
 
 Планировщик дедлайнов:

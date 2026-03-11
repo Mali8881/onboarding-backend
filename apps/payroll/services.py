@@ -9,7 +9,7 @@ from decimal import Decimal
 from django.contrib.auth import get_user_model
 from django.db import transaction
 
-from accounts.models import Role
+from apps.accounts.models import Role
 
 from .models import HourlyRateHistory, PayrollCompensation, PayrollRecord
 

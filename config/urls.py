@@ -1,4 +1,4 @@
-﻿from django.contrib import admin
+from django.contrib import admin
 from django.conf import settings
 from django.conf.urls.static import static
 from django.urls import include, path, re_path
@@ -44,13 +44,13 @@ urlpatterns = [
     path("api/v1/auth/login/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("api/v1/auth/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
 
-    path("api/v1/accounts/", include("accounts.urls")),
-    path("api/v1/onboarding/", include("onboarding_core.urls")),
-    path("api/v1/reports/", include("reports.urls")),
-    path("api/v1/security/", include("security.urls")),
-    path("api/v1/regulations/", include("regulations.urls")),
-    path("api/v1/common/", include("common.urls")),
-    path("api/v1/content/", include("content.urls")),
+    path("api/v1/accounts/", include("apps.accounts.urls")),
+    path("api/v1/onboarding/", include("apps.onboarding_core.urls")),
+    path("api/v1/reports/", include("apps.reports.urls")),
+    path("api/v1/security/", include("apps.security.urls")),
+    path("api/v1/regulations/", include("apps.regulations.urls")),
+    path("api/v1/common/", include("apps.common.urls")),
+    path("api/v1/content/", include("apps.content.urls")),
     path("api/v1/attendance/", include("apps.attendance.urls")),
     path("api/v1/tasks/", include("apps.tasks.urls")),
     path("api/v1/payroll/", include("apps.payroll.urls")),
@@ -61,7 +61,7 @@ urlpatterns = [
     # because the frontend uses /api/auth/*, /api/v1/auth/* paths interchangeably.
     path("api/v1/", include("config.frontend_compat_urls")),
     path("api/", include("config.frontend_compat_urls")),
-    path("api/", include("work_schedule.urls")),
+    path("api/", include("apps.work_schedule.urls")),
 
     path("assets/<path:asset_path>", spa_asset, name="spa-asset"),
     path("vite.svg", spa_vite_icon, name="spa-vite-icon"),

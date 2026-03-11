@@ -1,0 +1,44 @@
+name: quality-gate
+
+on:
+  push:
+    paths:
+      - "**.py"
+      - "requirements.txt"
+      - "pytest.ini"
+      - "Makefile"
+      - "scripts/test.ps1"
+      - ".github/workflows/quality-gate.yml"
+  pull_request:
+    paths:
+      - "**.py"
+      - "requirements.txt"
+      - "pytest.ini"
+      - "Makefile"
+      - "scripts/test.ps1"
+      - ".github/workflows/quality-gate.yml"
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: sqlite:////tmp/onboarding_ci.sqlite3
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Django check
+        run: make check
+
+      - name: Quality gate
+        run: make test

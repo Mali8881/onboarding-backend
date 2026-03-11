@@ -1,6 +1,6 @@
 from rest_framework.permissions import BasePermission
 
-from accounts.access_policy import AccessPolicy
+from apps.accounts.access_policy import AccessPolicy
 
 
 class CanManageBpmTemplates(BasePermission):

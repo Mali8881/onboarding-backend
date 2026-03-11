@@ -1,4 +1,4 @@
-﻿from datetime import timedelta
+from datetime import timedelta
 
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
@@ -8,10 +8,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.access_policy import AccessPolicy
-from accounts.models import Role, User
-from onboarding_core.models import OnboardingDay
-from work_schedule.models import WeeklyWorkPlan
+from apps.accounts.access_policy import AccessPolicy
+from apps.accounts.models import Role, User
+from apps.onboarding_core.models import OnboardingDay
+from apps.work_schedule.models import WeeklyWorkPlan
 from .audit import TasksAuditService
 from .models import Board, Column, Task
 from .policies import TaskPolicy

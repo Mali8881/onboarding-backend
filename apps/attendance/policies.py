@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import date
 
-from accounts.access_policy import AccessPolicy
-from accounts.models import Role
+from apps.accounts.access_policy import AccessPolicy
+from apps.accounts.models import Role
 
 
 class AttendancePolicy:

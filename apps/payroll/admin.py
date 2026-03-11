@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth import get_user_model
 
-from accounts.models import Role
+from apps.accounts.models import Role
 from .policies import PayrollPolicy
 
 from .models import PayrollCompensation

@@ -1,7 +1,7 @@
 from django.conf import settings
 from django.db import models
 
-from accounts.models import Role
+from apps.accounts.models import Role
 
 
 class ProcessTemplate(models.Model):

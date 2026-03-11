@@ -2,10 +2,19 @@
 venv/
 __pycache__/
 *.pyc
+.pytest_cache/
+.venv/
+.ruff_cache/
+*.pyo
+*.pyd
+*.sqlite3
+*.log
 
 # Django
 db.sqlite3
 .env
+media/
+staticfiles/
 
 # IDE
 .idea/
@@ -19,9 +28,8 @@ build/
 .DS_Store
 Thumbs.db
 
-.venv/
 # Local artifacts
 *.zip
 /tz.docx
 /tz_extracted.txt
-/et --hard 62286d4
+.claude/

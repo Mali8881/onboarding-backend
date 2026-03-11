@@ -1,4 +1,4 @@
-﻿from datetime import date as dt_date
+from datetime import date as dt_date
 from datetime import timedelta
 
 from django import forms
@@ -13,15 +13,15 @@ from django.urls import reverse
 from django.utils import timezone
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from accounts.access_policy import AccessPolicy
-from accounts.models import Department, LoginHistory, Position, Role, User
+from apps.accounts.access_policy import AccessPolicy
+from apps.accounts.models import Department, LoginHistory, Position, Role, User
 from apps.attendance.models import AttendanceMark, AttendanceSession, OfficeNetwork
 from apps.audit import AuditEvents, log_event
-from content.models import Feedback, Instruction, News
-from onboarding_core.models import OnboardingDay, OnboardingMaterial
-from regulations.models import Regulation
-from reports.models import OnboardingReport
-from work_schedule.models import UserWorkSchedule, WeeklyWorkPlan, WorkSchedule
+from apps.content.models import Feedback, Instruction, News
+from apps.onboarding_core.models import OnboardingDay, OnboardingMaterial
+from apps.regulations.models import Regulation
+from apps.reports.models import OnboardingReport
+from apps.work_schedule.models import UserWorkSchedule, WeeklyWorkPlan, WorkSchedule
 
 STATUS_META = {
     "DRAFT": {"label": "Черновик", "color": "#64748b"},

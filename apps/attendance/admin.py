@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.contrib.auth import get_user_model
 from django.shortcuts import redirect
 
-from accounts.access_policy import AccessPolicy
+from apps.accounts.access_policy import AccessPolicy
 from .models import AttendanceMark, AttendanceSession, OfficeNetwork, WorkCalendarDay
 
 User = get_user_model()

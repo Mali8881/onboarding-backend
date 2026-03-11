@@ -7,8 +7,8 @@ from django.test import TestCase
 from django.core.management import call_command
 from rest_framework.test import APIClient
 
-from accounts.models import Role, User
-from work_schedule.models import ProductionCalendar
+from apps.accounts.models import Role, User
+from apps.work_schedule.models import ProductionCalendar
 
 from .models import AttendanceMark, AttendanceSession, WorkCalendarDay
 

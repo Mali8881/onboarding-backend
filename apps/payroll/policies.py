@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from accounts.access_policy import AccessPolicy
+from apps.accounts.access_policy import AccessPolicy
 
 
 class PayrollPolicy:

@@ -9,8 +9,8 @@ from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.views import APIView
 
-from accounts.access_policy import AccessPolicy
-from accounts.models import Role
+from apps.accounts.access_policy import AccessPolicy
+from apps.accounts.models import Role
 
 from .models import KBArticle, KBCategory, KBViewLog
 from .permissions import CanManageKb

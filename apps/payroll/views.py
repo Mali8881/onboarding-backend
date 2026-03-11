@@ -4,7 +4,7 @@ from django.contrib.auth import get_user_model
 from django.db.models import Avg, Count, DecimalField, Sum, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
-from accounts.models import Role
+from apps.accounts.models import Role
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response

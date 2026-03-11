@@ -9,11 +9,11 @@ from typing import Optional
 
 from django.contrib.auth import get_user_model
 from django.conf import settings
-from accounts.models import Role
-from accounts.access_policy import AccessPolicy
+from apps.accounts.models import Role
+from apps.accounts.access_policy import AccessPolicy
 
 from .models import AttendanceMark, OfficeNetwork, WorkCalendarDay
-from work_schedule.models import WeeklyWorkPlan
+from apps.work_schedule.models import WeeklyWorkPlan
 
 
 User = get_user_model()

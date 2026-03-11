@@ -4,7 +4,7 @@ from decimal import Decimal
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
-from common.i18n import role_label, status_label
+from apps.common.i18n import role_label, status_label
 from .models import HourlyRateHistory, PayrollCompensation, PayrollRecord
 
 

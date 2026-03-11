@@ -15,9 +15,9 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
-from work_schedule.models import ProductionCalendar
-from accounts.models import Role
-from accounts.access_policy import AccessPolicy
+from apps.work_schedule.models import ProductionCalendar
+from apps.accounts.models import Role
+from apps.accounts.access_policy import AccessPolicy
 
 from .audit import AttendanceAuditService
 from .models import AttendanceMark, AttendanceSession, WorkCalendarDay
@@ -44,7 +44,7 @@ from .services import (
     month_bounds,
     office_geofence,
 )
-from work_schedule.models import UserWorkSchedule, WeeklyWorkPlan
+from apps.work_schedule.models import UserWorkSchedule, WeeklyWorkPlan
 
 
 User = get_user_model()

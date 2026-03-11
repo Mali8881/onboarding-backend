@@ -5,8 +5,8 @@ from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from accounts.models import Role, User
-from work_schedule.models import WeeklyWorkPlan
+from apps.accounts.models import Role, User
+from apps.work_schedule.models import WeeklyWorkPlan
 
 from .models import Column, Task
 from .views import MANDATORY_WEEKLY_PLAN_TASK_TITLE
