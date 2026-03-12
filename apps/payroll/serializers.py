@@ -203,6 +203,7 @@ class PayrollCompensationSerializer(serializers.ModelSerializer):
     class Meta:
         model = PayrollCompensation
         fields = (
+            "id",
             "user",
             "username",
             "role",

@@ -258,7 +258,7 @@ class PayrollApiTests(TestCase):
         response = self.client.get("/api/v1/payroll/admin/hourly-rates/")
         self.assertEqual(response.status_code, 200)
         self.assertGreaterEqual(len(response.data), 1)
-        expected = {"user", "username", "role", "pay_type", "hourly_rate", "minute_rate", "fixed_salary"}
+        expected = {"id", "user", "username", "role", "pay_type", "hourly_rate", "minute_rate", "fixed_salary"}
         self.assertTrue(expected.issubset(set(response.data[0].keys())))
 
         # keep model import used to avoid lint complaints in strict environments
@@ -298,6 +298,22 @@ class PayrollApiTests(TestCase):
         response = self.client.delete(f"/api/v1/payroll/admin/hourly-rates/{self.employee.id}/")
         self.assertEqual(response.status_code, 204)
         self.assertFalse(PayrollCompensation.objects.filter(user=self.employee).exists())
+
+    def test_hourly_rates_detail_accepts_compensation_id(self):
+        self.client.force_authenticate(user=self.super_admin)
+        compensation = PayrollCompensation.objects.create(
+            user=self.employee,
+            pay_type=PayrollCompensation.PayType.HOURLY,
+            hourly_rate=Decimal("210.00"),
+        )
+        response = self.client.patch(
+            f"/api/v1/payroll/admin/hourly-rates/{compensation.id}/",
+            {"pay_type": "minute", "minute_rate": "1.25"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(int(response.data["user"]), self.employee.id)
+        self.assertEqual(response.data["pay_type"], "minute")
 
     def test_record_status_patch_accepts_uppercase_values(self):
         self.client.force_authenticate(user=self.super_admin)

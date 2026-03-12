@@ -288,9 +288,21 @@ class HourlyRateAdminAPIView(APIView):
 class HourlyRateDetailAdminAPIView(APIView):
     permission_classes = [IsAuthenticated, IsPayrollCompensationEditor]
 
+    @staticmethod
+    def _resolve_target_user(identifier: int):
+        # Support both historical style (user_id in URL) and REST style (compensation id in URL).
+        comp = PayrollCompensation.objects.select_related("user", "user__role").filter(id=identifier).first()
+        if comp:
+            return comp.user
+        return User.objects.select_related("role").filter(id=identifier).first()
+
     def patch(self, request, user_id: int):
+        target_user = self._resolve_target_user(user_id)
+        if not target_user:
+            return Response({"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+
         payload = dict(request.data)
-        payload["user_id"] = user_id
+        payload["user_id"] = target_user.id
         has_legacy_rate = any(key in payload for key in ("rate", "hourly_rate", "hourlyRate"))
         has_pay_type = any(key in payload for key in ("pay_type", "payModel", "pay_model", "model", "type"))
         if has_legacy_rate and not has_pay_type:
@@ -335,13 +347,13 @@ class HourlyRateDetailAdminAPIView(APIView):
         )
 
     def delete(self, request, user_id: int):
-        user = User.objects.select_related("role").filter(id=user_id).first()
-        if not user:
+        target_user = self._resolve_target_user(user_id)
+        if not target_user:
             return Response({"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND)
-        reason = PayrollPolicy.compensation_edit_denial_reason(request.user, user)
+        reason = PayrollPolicy.compensation_edit_denial_reason(request.user, target_user)
         if reason:
             return Response({"detail": reason}, status=status.HTTP_403_FORBIDDEN)
-        PayrollCompensation.objects.filter(user_id=user_id).delete()
+        PayrollCompensation.objects.filter(user_id=target_user.id).delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 

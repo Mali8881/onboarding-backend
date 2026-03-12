@@ -74,6 +74,19 @@ class LogoutApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data.get("detail"), "Logged out.")
 
+    def test_legacy_my_password_route_is_available(self):
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(
+            "/api/v1/accounts/me/password/",
+            {
+                "current_password": "StrongPass123!",
+                "new_password": "NewStrongPass123!",
+                "new_password_confirm": "NewStrongPass123!",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+
 
 class OrgApiTests(TestCase):
     def setUp(self):

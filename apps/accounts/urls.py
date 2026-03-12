@@ -30,6 +30,7 @@ urlpatterns = [
     path("me/profile/", MyProfileAPIView.as_view(), name="my-profile"),
     path("logout/", LogoutAPIView.as_view(), name="logout"),
     path("me/team/", MeTeamAPIView.as_view(), name="my-team"),
+    path("me/password/", MyProfilePasswordAPIView.as_view(), name="my-password-legacy"),
     path("me/profile/password/", MyProfilePasswordAPIView.as_view(), name="my-profile-password"),
     path("employee/home/", EmployeeHomeAPIView.as_view(), name="employee-home"),
     path("company/structure/", CompanyStructureAPIView.as_view(), name="company-structure"),
