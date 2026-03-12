@@ -268,6 +268,20 @@ class MyProfilePasswordAPIView(APIView):
         return Response(serializer.data)
 
 
+class LogoutAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        refresh = request.data.get("refresh")
+        if refresh:
+            try:
+                token = RefreshToken(refresh)
+                token.blacklist()
+            except Exception:
+                pass
+        return Response({"detail": "Logged out."}, status=status.HTTP_200_OK)
+
+
 class MeTeamAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -684,6 +698,51 @@ class PositionDetailAPIView(_OrgAdminMixin, RetrieveUpdateDestroyAPIView):
             ip_address=self._ip(request),
         )
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class DepartmentTransferUsersAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk: int):
+        if not AccessPolicy.is_admin_like(request.user):
+            return Response({"detail": "Only admin-like roles can perform this action."}, status=status.HTTP_403_FORBIDDEN)
+
+        source = Department.objects.filter(id=pk).first()
+        if not source:
+            return Response({"detail": "Department not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        target_department_id = request.data.get("target_department_id")
+        if not target_department_id:
+            return Response({"target_department_id": ["This field is required."]}, status=status.HTTP_400_BAD_REQUEST)
+
+        target = Department.objects.filter(id=target_department_id, is_active=True).first()
+        if not target:
+            return Response({"target_department_id": ["Target department not found."]}, status=status.HTTP_404_NOT_FOUND)
+        if target.id == source.id:
+            return Response(
+                {"target_department_id": ["Target department must be different."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        users_qs = User.objects.filter(department_id=source.id)
+        moved_count = users_qs.count()
+        users_qs.update(department_id=target.id, subdivision=None)
+
+        delete_source = bool(request.data.get("delete_source", False))
+        deleted = False
+        if delete_source and not User.objects.filter(department_id=source.id).exists():
+            source.delete()
+            deleted = True
+
+        return Response(
+            {
+                "moved_count": moved_count,
+                "source_department_id": source.id,
+                "target_department_id": target.id,
+                "deleted_source": deleted,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class SubdivisionListCreateAPIView(_OrgAdminMixin, ListCreateAPIView):

@@ -1,5 +1,6 @@
 from django.test import TestCase
 from rest_framework.test import APIClient
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import (
     Department,
@@ -51,6 +52,27 @@ class PasswordResetApiTests(TestCase):
 
         token.refresh_from_db()
         self.assertTrue(token.is_used)
+
+
+class LogoutApiTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.role, _ = Role.objects.get_or_create(
+            name=Role.Name.EMPLOYEE,
+            defaults={"level": Role.Level.EMPLOYEE},
+        )
+        self.user = User.objects.create_user(
+            username="logout_user",
+            password="StrongPass123!",
+            role=self.role,
+        )
+
+    def test_logout_endpoint_exists_and_returns_ok(self):
+        self.client.force_authenticate(user=self.user)
+        refresh = str(RefreshToken.for_user(self.user))
+        response = self.client.post("/api/v1/accounts/logout/", {"refresh": refresh}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data.get("detail"), "Logged out.")
 
 
 class OrgApiTests(TestCase):
@@ -118,6 +140,46 @@ class OrgApiTests(TestCase):
         member = next(m for m in support["members"] if m["id"] == self.employee.id)
         self.assertIn("full_name", member)
         self.assertNotIn("telegram", member)
+
+
+class DepartmentTransferUsersApiTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.role_admin, _ = Role.objects.get_or_create(
+            name=Role.Name.ADMIN,
+            defaults={"level": Role.Level.ADMIN},
+        )
+        self.role_employee, _ = Role.objects.get_or_create(
+            name=Role.Name.EMPLOYEE,
+            defaults={"level": Role.Level.EMPLOYEE},
+        )
+        self.admin = User.objects.create_user(
+            username="transfer_admin",
+            password="StrongPass123!",
+            role=self.role_admin,
+        )
+        self.employee = User.objects.create_user(
+            username="transfer_employee",
+            password="StrongPass123!",
+            role=self.role_employee,
+        )
+
+    def test_admin_can_transfer_users_between_departments(self):
+        self.client.force_authenticate(self.admin)
+        source = Department.objects.create(name="Source", is_active=True)
+        target = Department.objects.create(name="Target", is_active=True)
+        self.employee.department = source
+        self.employee.save(update_fields=["department"])
+
+        response = self.client.post(
+            f"/api/v1/accounts/org/departments/{source.id}/transfer-users/",
+            {"target_department_id": target.id},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data.get("moved_count"), 1)
+        self.employee.refresh_from_db()
+        self.assertEqual(self.employee.department_id, target.id)
 
 
 class LoginLandingTests(TestCase):

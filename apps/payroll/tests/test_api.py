@@ -264,6 +264,41 @@ class PayrollApiTests(TestCase):
         # keep model import used to avoid lint complaints in strict environments
         self.assertTrue(PayrollCompensation.objects.count() >= 0)
 
+    def test_admin_employees_endpoint_returns_users(self):
+        self.client.force_authenticate(user=self.super_admin)
+        response = self.client.get("/api/v1/payroll/admin/employees/")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(isinstance(response.data, list))
+        self.assertTrue(any(int(item.get("id", 0)) == self.employee.id for item in response.data))
+
+    def test_legacy_hourly_rates_alias_points_to_admin_view(self):
+        self.client.force_authenticate(user=self.super_admin)
+        response = self.client.get("/api/v1/payroll/hourly-rates/")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(isinstance(response.data, list))
+
+    def test_hourly_rates_detail_patch_updates_compensation(self):
+        self.client.force_authenticate(user=self.super_admin)
+        response = self.client.patch(
+            f"/api/v1/payroll/admin/hourly-rates/{self.employee.id}/",
+            {"pay_type": "hourly", "hourly_rate": "275.00"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(int(response.data["user"]), self.employee.id)
+        self.assertEqual(str(response.data["hourly_rate"]), "275.00")
+
+    def test_hourly_rates_detail_delete_removes_compensation(self):
+        self.client.force_authenticate(user=self.super_admin)
+        PayrollCompensation.objects.create(
+            user=self.employee,
+            pay_type=PayrollCompensation.PayType.HOURLY,
+            hourly_rate=Decimal("210.00"),
+        )
+        response = self.client.delete(f"/api/v1/payroll/admin/hourly-rates/{self.employee.id}/")
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(PayrollCompensation.objects.filter(user=self.employee).exists())
+
     def test_record_status_patch_accepts_uppercase_values(self):
         self.client.force_authenticate(user=self.super_admin)
         self._recalculate()

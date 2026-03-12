@@ -72,6 +72,39 @@ class PayrollAdminAPIView(APIView):
         )
 
 
+class PayrollAdminEmployeesAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsPayrollViewer]
+
+    def get(self, request):
+        users_qs = User.objects.filter(is_active=True).exclude(role__name=Role.Name.INTERN).select_related(
+            "role",
+            "department",
+            "position",
+        )
+        users = [
+            item
+            for item in users_qs.order_by("id")
+            if PayrollPolicy.can_edit_compensation_for_user(request.user, item)
+        ]
+        return Response(
+            [
+                {
+                    "id": user.id,
+                    "username": user.username,
+                    "full_name": f"{user.first_name} {user.last_name}".strip() or user.username,
+                    "role": user.role.name if user.role_id else "",
+                    "department_id": user.department_id,
+                    "department_name": user.department.name if user.department_id else "",
+                    "position_id": user.position_id,
+                    "position_name": user.position.name if user.position_id else (user.custom_position or ""),
+                    "current_hourly_rate": user.current_hourly_rate,
+                }
+                for user in users
+            ],
+            status=status.HTTP_200_OK,
+        )
+
+
 class PayrollFundSummaryAPIView(APIView):
     permission_classes = [IsAuthenticated, IsPayrollViewer]
 
@@ -250,6 +283,66 @@ class HourlyRateAdminAPIView(APIView):
             PayrollCompensationSerializer(comp, context={"request": request}).data,
             status=status.HTTP_200_OK,
         )
+
+
+class HourlyRateDetailAdminAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsPayrollCompensationEditor]
+
+    def patch(self, request, user_id: int):
+        payload = dict(request.data)
+        payload["user_id"] = user_id
+        has_legacy_rate = any(key in payload for key in ("rate", "hourly_rate", "hourlyRate"))
+        has_pay_type = any(key in payload for key in ("pay_type", "payModel", "pay_model", "model", "type"))
+        if has_legacy_rate and not has_pay_type:
+            serializer = HourlyRateUpdateSerializer(data=payload)
+            serializer.is_valid(raise_exception=True)
+            user = User.objects.get(id=serializer.validated_data["user_id"])
+            reason = PayrollPolicy.compensation_edit_denial_reason(request.user, user)
+            if reason:
+                return Response({"detail": reason}, status=status.HTTP_403_FORBIDDEN)
+            rate = serializer.validated_data["rate"]
+            start_date = serializer.validated_data.get("start_date") or date.today()
+            history = PayrollService.set_hourly_rate(user=user, rate=rate, start_date=start_date)
+            PayrollAuditService.log_hourly_rate_changed(request, history=history)
+            return Response(HourlyRateHistorySerializer(history).data, status=status.HTTP_200_OK)
+
+        serializer = PayrollCompensationUpdateSerializer(data=payload)
+        serializer.is_valid(raise_exception=True)
+        user = User.objects.get(id=serializer.validated_data["user_id"])
+        reason = PayrollPolicy.compensation_edit_denial_reason(request.user, user)
+        if reason:
+            return Response({"detail": reason}, status=status.HTTP_403_FORBIDDEN)
+        pay_type = serializer.validated_data["pay_type"]
+        comp = PayrollService.get_or_create_compensation(user=user)
+        comp.pay_type = pay_type
+
+        if pay_type == PayrollCompensation.PayType.HOURLY:
+            rate = serializer.validated_data["hourly_rate"]
+            start_date = serializer.validated_data.get("start_date") or date.today()
+            history = PayrollService.set_hourly_rate(user=user, rate=rate, start_date=start_date)
+            PayrollAuditService.log_hourly_rate_changed(request, history=history)
+            comp.refresh_from_db()
+        else:
+            if pay_type == PayrollCompensation.PayType.MINUTE:
+                comp.minute_rate = serializer.validated_data["minute_rate"]
+            elif pay_type == PayrollCompensation.PayType.FIXED_SALARY:
+                comp.fixed_salary = serializer.validated_data["fixed_salary"]
+            comp.save(update_fields=["pay_type", "minute_rate", "fixed_salary", "updated_at"])
+
+        return Response(
+            PayrollCompensationSerializer(comp, context={"request": request}).data,
+            status=status.HTTP_200_OK,
+        )
+
+    def delete(self, request, user_id: int):
+        user = User.objects.select_related("role").filter(id=user_id).first()
+        if not user:
+            return Response({"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+        reason = PayrollPolicy.compensation_edit_denial_reason(request.user, user)
+        if reason:
+            return Response({"detail": reason}, status=status.HTTP_403_FORBIDDEN)
+        PayrollCompensation.objects.filter(user_id=user_id).delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class HourlyRateHistoryAdminAPIView(APIView):
