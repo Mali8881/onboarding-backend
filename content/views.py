@@ -314,6 +314,9 @@ class AdminCourseViewSet(ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_permissions(self):
+        # drf-spectacular introspection should not trigger runtime permission denial.
+        if getattr(self, "swagger_fake_view", False):
+            return super().get_permissions()
         if not (AccessPolicy.is_admin(self.request.user) or AccessPolicy.is_super_admin(self.request.user)):
             self.permission_denied(self.request, message="Only admin or super admin can manage courses.")
         return super().get_permissions()

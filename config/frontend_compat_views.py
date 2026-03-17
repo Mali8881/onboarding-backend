@@ -4,6 +4,8 @@ from django.contrib.auth import authenticate
 from django.db import IntegrityError
 from django.db.models import Q
 from django.utils import timezone
+from django.utils import translation
+from drf_spectacular.utils import extend_schema
 from rest_framework import serializers, status
 from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.permissions import IsAuthenticated
@@ -38,6 +40,7 @@ from reports.models import OnboardingReport
 from work_schedule.models import ProductionCalendar
 from work_schedule.views import MyScheduleAPIView, WorkScheduleListAPIView
 from django.contrib.sessions.models import Session
+from common.i18n import role_label
 
 
 def _role_to_front(role: Role | None) -> str:
@@ -57,14 +60,7 @@ def _role_to_front(role: Role | None) -> str:
 def _user_to_front_payload(user: User) -> dict:
     full_name = f"{user.first_name} {user.last_name}".strip() or user.username
     role_front = _role_to_front(user.role)
-    role_label_map = {
-        "intern": "Стажер",
-        "employee": "Сотрудник",
-        "projectmanager": "Тимлид",
-        "department_head": "Руководитель отдела",
-        "admin": "Админ",
-        "superadmin": "Суперадмин",
-    }
+    current_lang = translation.get_language() or "ru"
     return {
         "id": user.id,
         "username": user.username,
@@ -73,7 +69,7 @@ def _user_to_front_payload(user: User) -> dict:
         "last_name": user.last_name,
         "full_name": full_name,
         "role": role_front,
-        "role_label": role_label_map.get(role_front, role_front),
+        "role_label": role_label(role_front, current_lang),
         "department": user.department_id,
         "department_name": user.department.name if user.department_id else "",
         "subdivision": user.subdivision_id,
@@ -133,7 +129,36 @@ def _resolve_role(value: str | None) -> Role | None:
     return Role.objects.filter(name=role_name).first()
 
 
+class FrontendLoginRequestSerializer(serializers.Serializer):
+    username = serializers.CharField()
+    password = serializers.CharField()
+
+
+class FrontendLoginResponseSerializer(serializers.Serializer):
+    access = serializers.CharField()
+    refresh = serializers.CharField()
+    landing = serializers.CharField()
+    user = serializers.DictField()
+
+
+class FrontendLogoutRequestSerializer(serializers.Serializer):
+    refresh = serializers.CharField(required=False, allow_blank=True)
+
+
+class FrontendMessageSerializer(serializers.Serializer):
+    detail = serializers.CharField()
+
+
+class FrontendSetRoleRequestSerializer(serializers.Serializer):
+    role = serializers.CharField()
+
+
 class FrontendLoginAPIView(APIView):
+    @extend_schema(
+        tags=["Frontend API"],
+        request=FrontendLoginRequestSerializer,
+        responses={200: FrontendLoginResponseSerializer},
+    )
     def post(self, request):
         username = (request.data.get("username") or "").strip()
         password = request.data.get("password") or ""
@@ -162,6 +187,11 @@ class FrontendLoginAPIView(APIView):
 class FrontendLogoutAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=["Frontend API"],
+        request=FrontendLogoutRequestSerializer,
+        responses={200: FrontendMessageSerializer},
+    )
     def post(self, request):
         refresh = request.data.get("refresh")
         if refresh:
@@ -176,9 +206,11 @@ class FrontendLogoutAPIView(APIView):
 class FrontendMeAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(tags=["Frontend API"], responses={200: serializers.DictField()})
     def get(self, request):
         return Response(_user_to_front_payload(request.user))
 
+    @extend_schema(tags=["Frontend API"], request=serializers.DictField(), responses={200: serializers.DictField()})
     def patch(self, request):
         serializer = UserProfileUpdateSerializer(request.user, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
@@ -398,6 +430,11 @@ class FrontendUsersToggleStatusAPIView(APIView):
 class FrontendUsersSetRoleAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=["Frontend API"],
+        request=FrontendSetRoleRequestSerializer,
+        responses={200: serializers.DictField()},
+    )
     def post(self, request, user_id: int):
         _ensure_admin_like(request.user)
         target = User.objects.filter(id=user_id).first()

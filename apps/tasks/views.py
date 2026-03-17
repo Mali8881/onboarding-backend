@@ -1,4 +1,4 @@
-﻿from datetime import timedelta
+from datetime import date, timedelta
 
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
@@ -13,7 +13,7 @@ from accounts.models import Role, User
 from onboarding_core.models import OnboardingDay
 from work_schedule.models import WeeklyWorkPlan
 from .audit import TasksAuditService
-from .models import Board, Column, Task
+from .models import Board, Column, Task, TaskMoveLog
 from .policies import TaskPolicy
 from .serializers import TaskCreateSerializer, TaskMoveSerializer, TaskSerializer
 
@@ -198,18 +198,6 @@ class TaskDetailAPIView(APIView):
             return Response({"detail": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
         return Response(TaskSerializer(task).data)
 
-    def patch(self, request, pk):
-        task = get_object_or_404(Task.objects.select_related("assignee"), pk=pk)
-        if not TaskPolicy.can_edit_task(request.user, task):
-            return Response({"detail": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
-        serializer = TaskSerializer(task, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
-        changed_fields = sorted(serializer.validated_data.keys())
-        if changed_fields:
-            TasksAuditService.log_task_updated(request, task, changed_fields)
-        return Response(serializer.data)
-
 
 class TaskMoveAPIView(APIView):
     permission_classes = [IsAuthenticated]
@@ -232,6 +220,45 @@ class TaskMoveAPIView(APIView):
         task.column = new_column
         task.save(update_fields=["column", "updated_at"])
         TasksAuditService.log_task_moved(request, task, old_column_id, task.column_id)
+        TaskMoveLog.objects.create(
+            task=task,
+            actor=request.user,
+            from_column_id=old_column_id,
+            to_column_id=task.column_id,
+        )
         return Response(TaskSerializer(task).data)
 
 
+class TaskMoveLogAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        raw_date = request.query_params.get("date")
+        if raw_date:
+            try:
+                report_date = date.fromisoformat(raw_date)
+            except ValueError:
+                return Response(
+                    {"detail": "Invalid date format. Use YYYY-MM-DD."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        else:
+            report_date = timezone.localdate()
+
+        qs = (
+            TaskMoveLog.objects.select_related("task", "from_column", "to_column")
+            .filter(actor=request.user, created_at__date=report_date)
+            .order_by("created_at", "id")
+        )
+        payload = [
+            {
+                "id": item.id,
+                "task_id": item.task_id,
+                "task_title": item.task.title if item.task_id else "",
+                "from_column_order": item.from_column.order if item.from_column_id else None,
+                "to_column_order": item.to_column.order if item.to_column_id else None,
+                "moved_at": item.created_at,
+            }
+            for item in qs
+        ]
+        return Response(payload)

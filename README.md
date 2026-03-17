@@ -165,6 +165,47 @@ pytest apps/payroll/tests/test_api.py
 - Для статики используется `whitenoise` (если установлен)
 - В production рекомендуется `DEBUG=false`, корректный `ALLOWED_HOSTS`, HTTPS и валидные `CSRF_TRUSTED_ORIGINS`
 
+## Deploy в Google Cloud Run
+В репозитории есть готовые файлы для Cloud Run:
+- `Dockerfile`
+- `.dockerignore`
+- `start-cloudrun.sh`
+- `.env.cloudrun.example`
+
+Что нужно перед деплоем:
+1. Подготовить PostgreSQL с внешним доступом или Cloud SQL и получить `DATABASE_URL`.
+2. Подготовить `SECRET_KEY`.
+3. Определить frontend-домен и прописать его в `CORS_ALLOWED_ORIGINS` и `CSRF_TRUSTED_ORIGINS`.
+
+Пример деплоя через `gcloud`:
+```bash
+gcloud config set project project-88d05a80-3e89-49ce-87c
+
+gcloud run deploy onboarding-backend \
+  --source . \
+  --region us-central1 \
+  --allow-unauthenticated \
+  --set-env-vars DEBUG=false \
+  --set-env-vars SECRET_KEY=replace-me \
+  --set-env-vars ALLOWED_HOSTS=* \
+  --set-env-vars DATABASE_URL=postgres://USER:PASSWORD@HOST:5432/DBNAME \
+  --set-env-vars CORS_ALLOWED_ORIGINS=https://your-frontend-domain.com \
+  --set-env-vars CSRF_TRUSTED_ORIGINS=https://your-frontend-domain.com
+```
+
+Cloud Run при старте контейнера автоматически выполнит:
+```bash
+python manage.py collectstatic --noinput
+python manage.py migrate --noinput
+gunicorn config.wsgi:application --bind 0.0.0.0:$PORT
+```
+
+После первого деплоя при необходимости отдельно выполните инициализацию ролей:
+```bash
+python manage.py init_rbac
+```
+Эту команду удобнее запускать один раз через Cloud Run Job или локально против production-базы.
+
 ## Роли в системе
 Базовые роли:
 - `SUPER_ADMIN`
