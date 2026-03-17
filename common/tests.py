@@ -1,5 +1,7 @@
-from django.test import TestCase
 from unittest.mock import patch
+
+from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from accounts.models import Role, User
@@ -53,3 +55,29 @@ class NotificationsApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(Notification.objects.filter(user=self.user, is_read=False).exists())
         log_notifications_marked_read_all.assert_called_once()
+
+    def test_list_excludes_expired_notifications(self):
+        Notification.objects.create(
+            user=self.user,
+            title="Expired",
+            message="Old meeting",
+            type=Notification.Type.INFO,
+            is_pinned=True,
+            expires_at=timezone.now() - timezone.timedelta(minutes=1),
+        )
+        active = Notification.objects.create(
+            user=self.user,
+            title="Active",
+            message="Upcoming meeting",
+            type=Notification.Type.INFO,
+            is_pinned=True,
+            expires_at=timezone.now() + timezone.timedelta(minutes=30),
+        )
+
+        response = self.client.get("/api/v1/common/notifications/")
+
+        self.assertEqual(response.status_code, 200)
+        ids = [item["id"] for item in response.data["items"]]
+        self.assertIn(self.notification.id, ids)
+        self.assertIn(active.id, ids)
+        self.assertEqual(len(ids), 2)

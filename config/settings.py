@@ -85,6 +85,8 @@ INSTALLED_APPS = [
     "apps.kb.apps.KbConfig",
     "apps.metrics.apps.MetricsConfig",
     "apps.bpm.apps.BpmConfig",
+    "apps.gamification.apps.GamificationConfig",
+    "apps.desks.apps.DesksConfig",
 ]
 
 if HAS_UNFOLD:

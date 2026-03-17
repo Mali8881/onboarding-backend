@@ -57,6 +57,8 @@ urlpatterns = [
     path("api/v1/kb/", include("apps.kb.urls")),
     path("api/v1/metrics/", include("apps.metrics.urls")),
     path("api/v1/bpm/", include("apps.bpm.urls")),
+    path("api/v1/gamification/", include("apps.gamification.urls")),
+    path("api/v1/desks/", include("apps.desks.urls")),
     path("api/", include("work_schedule.urls")),
     path("api/", include("config.frontend_compat_urls")),
 
