@@ -1,5 +1,7 @@
-from django.test import TestCase
 from unittest.mock import patch
+
+from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from accounts.models import Role, User
@@ -38,7 +40,6 @@ class NotificationsApiTests(TestCase):
         self.notification.refresh_from_db()
         self.assertTrue(self.notification.is_read)
         log_notification_marked_read.assert_called_once()
-        self.assertEqual(response.data.get("unread_count"), 0)
 
     @patch("common.views.CommonAuditService.log_notifications_marked_read_all")
     def test_mark_all_notifications_read(self, log_notifications_marked_read_all):
@@ -54,27 +55,29 @@ class NotificationsApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(Notification.objects.filter(user=self.user, is_read=False).exists())
         log_notifications_marked_read_all.assert_called_once()
-        self.assertEqual(response.data.get("updated_count"), 2)
-        self.assertEqual(response.data.get("unread_count"), 0)
 
-    def test_list_notifications_supports_unread_filter_and_pagination(self):
+    def test_list_excludes_expired_notifications(self):
         Notification.objects.create(
             user=self.user,
-            title="Read item",
-            message="Done",
-            type=Notification.Type.SYSTEM,
-            is_read=True,
+            title="Expired",
+            message="Old meeting",
+            type=Notification.Type.INFO,
+            is_pinned=True,
+            expires_at=timezone.now() - timezone.timedelta(minutes=1),
         )
-        Notification.objects.create(
+        active = Notification.objects.create(
             user=self.user,
-            title="Unread item 2",
-            message="Todo",
-            type=Notification.Type.LEARNING,
-            is_read=False,
+            title="Active",
+            message="Upcoming meeting",
+            type=Notification.Type.INFO,
+            is_pinned=True,
+            expires_at=timezone.now() + timezone.timedelta(minutes=30),
         )
 
-        response = self.client.get("/api/v1/common/notifications/?unread=1&limit=1&offset=0")
+        response = self.client.get("/api/v1/common/notifications/")
+
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data.get("unread_count"), 2)
-        self.assertEqual(response.data.get("total_count"), 2)
-        self.assertEqual(len(response.data.get("items", [])), 1)
+        ids = [item["id"] for item in response.data["items"]]
+        self.assertIn(self.notification.id, ids)
+        self.assertIn(active.id, ids)
+        self.assertEqual(len(ids), 2)

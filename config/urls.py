@@ -24,6 +24,9 @@ urlpatterns = [
     path("health/", health_check, name="health"),
     path("ckeditor5/", include("django_ckeditor_5.urls")),
 
+    # Optional legacy frontend login route (some frontends use /login directly).
+    path("login/", spa_index, name="spa-login"),
+
     # Unified web login: all roles enter only via /admin
     path("admin/login/portal/", spa_portal, name="admin-login-portal"),
     path("admin/login/", unified_admin_login, name="admin-login"),
@@ -57,6 +60,8 @@ urlpatterns = [
     path("api/v1/kb/", include("apps.kb.urls")),
     path("api/v1/metrics/", include("apps.metrics.urls")),
     path("api/v1/bpm/", include("apps.bpm.urls")),
+    path("api/v1/gamification/", include("apps.gamification.urls")),
+    path("api/v1/desks/", include("apps.desks.urls")),
     # Frontend compatibility endpoints: exposed on both /api/ and /api/v1/
     # because the frontend uses /api/auth/*, /api/v1/auth/* paths interchangeably.
     path("api/v1/", include("config.frontend_compat_urls")),

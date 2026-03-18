@@ -1,4 +1,5 @@
 from rest_framework import serializers
+
 from common.models import Notification
 
 
@@ -10,11 +11,9 @@ class NotificationSerializer(serializers.ModelSerializer):
             "title",
             "message",
             "type",
-            "code",
-            "severity",
-            "entity_type",
-            "entity_id",
-            "action_url",
+            "event_key",
+            "is_pinned",
             "is_read",
+            "expires_at",
             "created_at",
         )

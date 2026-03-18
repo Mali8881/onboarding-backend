@@ -19,6 +19,71 @@ from .models import (
     WorkSchedule,
 )
 
+def _week_start_for(target: date) -> date:
+    # Monday as start of week (0=Mon..6=Sun)
+    return target - timedelta(days=target.weekday())
+
+
+def resolve_user_shift_for_date(user: User, target_date: date):
+    """
+    Resolve user's shift settings for a specific date.
+
+    Returns a dict compatible with gamification/services.py:
+    - mode: "work" | "day_off"
+    - start_time/end_time: time (or ISO string from weekly plan)
+    """
+    if not user or not target_date:
+        return {"mode": "day_off"}
+
+    # 1) Prefer weekly plan for the week (if exists).
+    week_start = _week_start_for(target_date)
+    plan = WeeklyWorkPlan.objects.filter(user=user, week_start=week_start).first()
+    if plan and plan.days:
+        for item in plan.days:
+            if not isinstance(item, dict):
+                continue
+            raw_day = item.get("date")
+            if not raw_day:
+                continue
+            try:
+                day_value = raw_day if isinstance(raw_day, date) else date.fromisoformat(str(raw_day))
+            except ValueError:
+                continue
+            if day_value != target_date:
+                continue
+
+            mode = str(item.get("mode") or "work").strip().lower()
+            if mode == "day_off":
+                return {"mode": "day_off"}
+            return {
+                "mode": mode or "work",
+                "start_time": item.get("start_time"),
+                "end_time": item.get("end_time"),
+            }
+
+    # 2) Fallback to user's approved schedule (or company default).
+    schedule = get_user_work_schedule(user)
+    if not schedule:
+        return {"mode": "day_off"}
+
+    weekday = target_date.weekday()
+    prod_day = ProductionCalendar.objects.filter(date=target_date).first()
+
+    is_working_day = False
+    if prod_day:
+        if prod_day.is_working_day:
+            is_working_day = True
+        elif not prod_day.is_holiday and weekday in (schedule.work_days or []):
+            is_working_day = True
+    else:
+        if weekday in (schedule.work_days or []):
+            is_working_day = True
+
+    if not is_working_day:
+        return {"mode": "day_off"}
+
+    return {"mode": "work", "start_time": schedule.start_time, "end_time": schedule.end_time}
+
 
 def get_user_work_schedule(user):
     """

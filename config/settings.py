@@ -99,6 +99,8 @@ INSTALLED_APPS = [
     "apps.kb.apps.KbConfig",
     "apps.metrics.apps.MetricsConfig",
     "apps.bpm.apps.BpmConfig",
+    "apps.gamification.apps.GamificationConfig",
+    "apps.desks.apps.DesksConfig",
 ]
 
 if HAS_UNFOLD:
@@ -441,6 +443,11 @@ SPECTACULAR_SETTINGS = {
     "DESCRIPTION": "API for onboarding platform",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
+    "SORT_OPERATIONS": True,
+    "SWAGGER_UI_SETTINGS": {
+        "persistAuthorization": True,
+        "displayRequestDuration": True,
+    },
 }
 
 # ======================

@@ -1,4 +1,4 @@
-﻿from datetime import timedelta
+from datetime import date, timedelta
 
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
@@ -239,3 +239,37 @@ class TaskMoveAPIView(APIView):
         return Response(TaskSerializer(task, context={"request": request}).data)
 
 
+
+class TaskMoveLogAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        raw_date = request.query_params.get("date")
+        if raw_date:
+            try:
+                report_date = date.fromisoformat(raw_date)
+            except ValueError:
+                return Response(
+                    {"detail": "Invalid date format. Use YYYY-MM-DD."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        else:
+            report_date = timezone.localdate()
+
+        qs = (
+            TaskMoveLog.objects.select_related("task", "from_column", "to_column")
+            .filter(actor=request.user, created_at__date=report_date)
+            .order_by("created_at", "id")
+        )
+        payload = [
+            {
+                "id": item.id,
+                "task_id": item.task_id,
+                "task_title": item.task.title if item.task_id else "",
+                "from_column_order": item.from_column.order if item.from_column_id else None,
+                "to_column_order": item.to_column.order if item.to_column_id else None,
+                "moved_at": item.created_at,
+            }
+            for item in qs
+        ]
+        return Response(payload)
