@@ -156,7 +156,7 @@ class OnboardingDayDetailSerializer(serializers.ModelSerializer):
             for regulation_id in RegulationKnowledgeCheck.objects.filter(
                 user=user,
                 regulation__in=regulations_qs,
-                passed=True,
+                is_passed=True,
             ).values_list("regulation_id", flat=True)
         }
         read_progress = RegulationReadProgress.objects.filter(

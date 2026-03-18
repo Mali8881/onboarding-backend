@@ -183,7 +183,7 @@ class PayrollApiTests(TestCase):
             format="json",
         )
         self.assertEqual(missing_fixed_salary.status_code, 400)
-        self.assertIn("fixed_salary", missing_fixed_salary.data)
+        self.assertIn("fixed_salary", (missing_fixed_salary.data.get("errors") or {}))
 
         invalid_legacy_pay_type = self.client.post(
             "/api/v1/payroll/admin/hourly-rates/",
@@ -191,7 +191,7 @@ class PayrollApiTests(TestCase):
             format="json",
         )
         self.assertEqual(invalid_legacy_pay_type.status_code, 400)
-        self.assertIn("pay_type", invalid_legacy_pay_type.data)
+        self.assertIn("pay_type", (invalid_legacy_pay_type.data.get("errors") or {}))
 
     def test_recalculate_applies_compensation_without_attendance(self):
         self.client.force_authenticate(user=self.super_admin)
@@ -251,7 +251,7 @@ class PayrollApiTests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 400)
-        self.assertIn("pay_type", response.data)
+        self.assertIn("pay_type", (response.data.get("errors") or {}))
 
     def test_compensation_get_returns_contract_fields(self):
         self.client.force_authenticate(user=self.super_admin)

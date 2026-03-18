@@ -13,9 +13,8 @@ from regulations.models import (
     Regulation,
     RegulationAcknowledgement,
     RegulationFeedback,
+    RegulationKnowledgeCheck,
     RegulationReadProgress,
-    RegulationQuiz,
-    RegulationQuizAttempt,
 )
 
 
@@ -82,8 +81,8 @@ class OnboardingFlowTests(TestCase):
         )
         response = self.client.post(f"/api/v1/onboarding/days/{self.day1.id}/complete/")
         self.assertEqual(response.status_code, 409)
-        self.assertIn("missing_regulations", response.data)
-        self.assertEqual(str(reg.id), response.data["missing_regulations"][0]["id"])
+        self.assertIn("missing_regulations", (response.data.get("errors") or {}))
+        self.assertEqual(str(reg.id), response.data["errors"]["missing_regulations"][0]["id"])
 
     def test_can_complete_first_day_after_mandatory_ack(self):
         reg = Regulation.objects.create(
@@ -93,6 +92,10 @@ class OnboardingFlowTests(TestCase):
             language=Regulation.Language.RU,
             is_active=True,
             is_mandatory_on_day_one=True,
+            quiz_questions=[
+                {"question": "Q1", "options": ["a", "b"], "correct_answer": "a", "tags": ["Тест"]},
+            ],
+            quiz_allowed_mistakes=0,
         )
         RegulationAcknowledgement.objects.create(
             user=self.user,
@@ -110,8 +113,16 @@ class OnboardingFlowTests(TestCase):
             regulation=reg,
             text="ok",
         )
-        quiz = RegulationQuiz.objects.create(regulation=reg, title="Day 1 quiz", is_active=True)
-        RegulationQuizAttempt.objects.create(user=self.user, quiz=quiz, score_percent=100, passed=True)
+        RegulationKnowledgeCheck.objects.create(
+            user=self.user,
+            regulation=reg,
+            answer="a",
+            answers_json=["a"],
+            score=1,
+            total_questions=1,
+            incorrect_answers=0,
+            is_passed=True,
+        )
         response = self.client.post(f"/api/v1/onboarding/days/{self.day1.id}/complete/")
         self.assertEqual(response.status_code, 200)
 
@@ -123,6 +134,10 @@ class OnboardingFlowTests(TestCase):
             language=Regulation.Language.RU,
             is_active=True,
             is_mandatory_on_day_one=True,
+            quiz_questions=[
+                {"question": "Q1", "options": ["a", "b"], "correct_answer": "a", "tags": ["Тест"]},
+            ],
+            quiz_allowed_mistakes=0,
         )
         self.day1.regulations.add(reg)
         RegulationAcknowledgement.objects.create(
@@ -134,12 +149,20 @@ class OnboardingFlowTests(TestCase):
 
         response = self.client.post(f"/api/v1/onboarding/days/{self.day1.id}/complete/")
         self.assertEqual(response.status_code, 409)
-        self.assertIn("missing_steps", response.data)
+        self.assertIn("missing_steps", (response.data.get("errors") or {}))
 
         RegulationReadProgress.objects.create(user=self.user, regulation=reg, is_read=True)
         RegulationFeedback.objects.create(user=self.user, regulation=reg, text="ok")
-        quiz = RegulationQuiz.objects.create(regulation=reg, title="Day 1 flow quiz", is_active=True)
-        RegulationQuizAttempt.objects.create(user=self.user, quiz=quiz, score_percent=100, passed=True)
+        RegulationKnowledgeCheck.objects.create(
+            user=self.user,
+            regulation=reg,
+            answer="a",
+            answers_json=["a"],
+            score=1,
+            total_questions=1,
+            incorrect_answers=0,
+            is_passed=True,
+        )
 
         second = self.client.post(f"/api/v1/onboarding/days/{self.day1.id}/complete/")
         self.assertEqual(second.status_code, 200)

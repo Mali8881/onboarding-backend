@@ -6,6 +6,8 @@ __pycache__/
 # Django
 db.sqlite3
 .env
+media/
+staticfiles/
 
 # IDE
 .idea/
@@ -24,4 +26,4 @@ Thumbs.db
 *.zip
 /tz.docx
 /tz_extracted.txt
-/et --hard 62286d4
+*.log
